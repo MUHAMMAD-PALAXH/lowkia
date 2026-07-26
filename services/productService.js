@@ -91,24 +91,31 @@ const pickUpdatableFields = (payload = {}) => {
 // Validation helpers
 // ==========================================================
 
-const validateMasterRefs = async (data) => {
+const validateMasterRefs = async (data, { required = false } = {}) => {
     const categoryId = toObjectId(data.proCategoryId);
     const subCategoryId = toObjectId(data.proSubCategoryId);
     const brandId = toObjectId(data.proBrandId);
 
-    if (!categoryId) throw new AppError("Category is required.", 400);
-    if (!subCategoryId) throw new AppError("Sub category is required.", 400);
-    if (!brandId) throw new AppError("Brand is required.", 400);
+    if (required) {
+        if (!categoryId) throw new AppError("Category is required.", 400);
+        if (!subCategoryId) throw new AppError("Sub category is required.", 400);
+        if (!brandId) throw new AppError("Brand is required.", 400);
+    }
 
-    const [category, subCategory, brand] = await Promise.all([
-        Category.exists({ _id: categoryId }),
-        SubCategory.exists({ _id: subCategoryId }),
-        Brand.exists({ _id: brandId })
-    ]);
-
-    if (!category) throw new AppError("Selected category not found.", 404);
-    if (!subCategory) throw new AppError("Selected sub category not found.", 404);
-    if (!brand) throw new AppError("Selected brand not found.", 404);
+    if (categoryId) {
+        const category = await Category.exists({ _id: categoryId });
+        if (!category) throw new AppError("Selected category not found.", 404);
+    }
+    if (subCategoryId) {
+        const subCategory = await SubCategory.exists({ _id: subCategoryId });
+        if (!subCategory) {
+            throw new AppError("Selected sub category not found.", 404);
+        }
+    }
+    if (brandId) {
+        const brand = await Brand.exists({ _id: brandId });
+        if (!brand) throw new AppError("Selected brand not found.", 404);
+    }
 
     return { categoryId, subCategoryId, brandId };
 };

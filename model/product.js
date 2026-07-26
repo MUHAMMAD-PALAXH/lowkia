@@ -46,21 +46,21 @@ const productSchema = new mongoose.Schema(
         proCategoryId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Category",
-            required: true,
+            default: null,
             index: true
         },
 
         proSubCategoryId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "SubCategory",
-            required: true,
+            default: null,
             index: true
         },
 
         proBrandId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Brand",
-            required: true,
+            default: null,
             index: true
         },
 

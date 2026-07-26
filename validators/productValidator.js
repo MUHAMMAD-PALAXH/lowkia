@@ -151,18 +151,15 @@ const createProductValidator = [
         .withMessage("Product name must be between 2 and 200 characters.")
         .trim(),
     body("proCategoryId")
-        .notEmpty()
-        .withMessage("Category is required.")
+        .optional({ checkFalsy: true })
         .isMongoId()
         .withMessage("Invalid category id."),
     body("proSubCategoryId")
-        .notEmpty()
-        .withMessage("Sub category is required.")
+        .optional({ checkFalsy: true })
         .isMongoId()
         .withMessage("Invalid sub category id."),
     body("proBrandId")
-        .notEmpty()
-        .withMessage("Brand is required.")
+        .optional({ checkFalsy: true })
         .isMongoId()
         .withMessage("Invalid brand id."),
     ...sharedOptionalFields
