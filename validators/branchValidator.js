@@ -6,25 +6,57 @@ const mongoIdParam = param("id")
     .isMongoId()
     .withMessage("Invalid branch id.");
 
+// Accept real JSON booleans from Flutter/GetConnect (true/false),
+// not only string "true"/"false".
+const optionalBoolean = (field) =>
+    body(field)
+        .optional({ nullable: true })
+        .custom((value) => {
+            if (value === undefined || value === null || value === "") {
+                return true;
+            }
+            if (typeof value === "boolean") {
+                return true;
+            }
+            if (value === "true" || value === "false" || value === 1 || value === 0 || value === "1" || value === "0") {
+                return true;
+            }
+            throw new Error(`${field} must be boolean.`);
+        })
+        .customSanitizer((value) => {
+            if (value === true || value === "true" || value === 1 || value === "1") {
+                return true;
+            }
+            if (value === false || value === "false" || value === 0 || value === "0") {
+                return false;
+            }
+            return value;
+        });
+
 const warehouseIdsRule = body("warehouseIds")
-    .optional()
-    .isArray()
-    .withMessage("warehouseIds must be an array.")
+    .optional({ nullable: true })
     .custom((ids) => {
-        if (!Array.isArray(ids)) return true;
-        const invalid = ids.some(
-            (id) => typeof id !== "string" && typeof id !== "object"
-        );
-        if (invalid) {
-            throw new Error("Each warehouse id must be valid.");
+        if (ids === undefined || ids === null || ids === "") {
+            return true;
+        }
+        if (!Array.isArray(ids)) {
+            throw new Error("warehouseIds must be an array.");
         }
         return true;
     });
 
 const warehouseIdsItemRule = body("warehouseIds.*")
-    .optional()
-    .isMongoId()
-    .withMessage("Invalid warehouse id in warehouseIds.");
+    .optional({ nullable: true })
+    .custom((id) => {
+        if (id === undefined || id === null || id === "") {
+            return true;
+        }
+        const value = String(id);
+        if (!/^[a-fA-F0-9]{24}$/.test(value)) {
+            throw new Error("Invalid warehouse id in warehouseIds.");
+        }
+        return true;
+    });
 
 const createBranchValidator = [
     body("name")
@@ -35,27 +67,28 @@ const createBranchValidator = [
         .trim(),
     body("city")
         .custom((value, { req }) => {
-            if ((!value || !String(value).trim()) && !req.body.location) {
+            const city = value != null ? String(value).trim() : "";
+            const location = req.body.location != null ? String(req.body.location).trim() : "";
+            const address = req.body.address != null ? String(req.body.address).trim() : "";
+            if (!city && !location && !address) {
                 throw new Error("City is required.");
             }
             return true;
-        })
-        .optional({ nullable: true })
-        .trim(),
+        }),
     body("location")
-        .optional()
+        .optional({ nullable: true, checkFalsy: true })
         .isString()
         .trim(),
     body("address")
-        .optional()
+        .optional({ nullable: true, checkFalsy: true })
         .isString()
         .trim(),
     body("postalCode")
-        .optional()
+        .optional({ nullable: true, checkFalsy: true })
         .isString()
         .trim(),
     body("country")
-        .optional()
+        .optional({ nullable: true, checkFalsy: true })
         .isString()
         .trim(),
     body("email")
@@ -66,26 +99,21 @@ const createBranchValidator = [
     body("phone")
         .optional({ checkFalsy: true })
         .isString()
-        .isLength({ min: 6, max: 20 })
-        .withMessage("Phone must be between 6 and 20 characters.")
+        .isLength({ min: 6, max: 25 })
+        .withMessage("Phone must be between 6 and 25 characters.")
         .trim(),
     body("status")
-        .optional()
+        .optional({ checkFalsy: true })
         .isIn(STATUSES)
         .withMessage(`status must be one of: ${STATUSES.join(", ")}`),
-    body("isHeadOffice")
-        .optional()
-        .isBoolean()
-        .withMessage("isHeadOffice must be boolean."),
-    body("isActive")
-        .optional()
-        .isBoolean(),
+    optionalBoolean("isHeadOffice"),
+    optionalBoolean("isActive"),
     body("managerId")
         .optional({ checkFalsy: true })
         .isMongoId()
         .withMessage("Invalid managerId."),
     body("description")
-        .optional()
+        .optional({ nullable: true })
         .isString(),
     body("branchCode")
         .not()
@@ -103,16 +131,15 @@ const updateBranchValidator = [
         .withMessage("Branch name must be between 2 and 150 characters.")
         .trim(),
     body("city")
-        .optional()
-        .notEmpty()
-        .withMessage("City cannot be empty.")
+        .optional({ checkFalsy: true })
+        .isString()
         .trim(),
     body("location")
-        .optional()
+        .optional({ nullable: true, checkFalsy: true })
         .isString()
         .trim(),
     body("address")
-        .optional()
+        .optional({ nullable: true, checkFalsy: true })
         .isString()
         .trim(),
     body("email")
@@ -123,15 +150,15 @@ const updateBranchValidator = [
     body("phone")
         .optional({ checkFalsy: true })
         .isString()
-        .isLength({ min: 6, max: 20 })
+        .isLength({ min: 6, max: 25 })
+        .withMessage("Phone must be between 6 and 25 characters.")
         .trim(),
     body("status")
-        .optional()
+        .optional({ checkFalsy: true })
         .isIn(STATUSES)
         .withMessage(`status must be one of: ${STATUSES.join(", ")}`),
-    body("isHeadOffice")
-        .optional()
-        .isBoolean(),
+    optionalBoolean("isHeadOffice"),
+    optionalBoolean("isActive"),
     body("managerId")
         .optional({ checkFalsy: true })
         .isMongoId(),
@@ -183,7 +210,6 @@ const listBranchValidator = [
         .isMongoId(),
     query("isHeadOffice")
         .optional()
-        .isIn(["true", "false", true, false])
 ];
 
 module.exports = {

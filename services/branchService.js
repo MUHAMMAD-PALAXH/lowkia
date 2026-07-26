@@ -181,7 +181,18 @@ const createBranch = async (payload, actorId = null) => {
     }
 
     if (!data.city?.trim()) {
-        throw new AppError("City is required.", 400);
+        const fallback =
+            data.location?.trim() ||
+            data.address?.trim() ||
+            "";
+        if (!fallback) {
+            throw new AppError("City is required.", 400);
+        }
+        data.city = fallback;
+    }
+
+    if (!data.address?.trim() && data.location?.trim()) {
+        data.address = data.location.trim();
     }
 
     const duplicate = await Branch.findOne({
