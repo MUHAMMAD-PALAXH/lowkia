@@ -51,6 +51,13 @@ const productVariantSchema = new mongoose.Schema(
 
         attributes: [attributeSchema],
 
+        // Human label e.g. "Red/M" — kept for edit UI round-trip
+        combinationString: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+
         // ======================================================
         // Identification
         // ======================================================

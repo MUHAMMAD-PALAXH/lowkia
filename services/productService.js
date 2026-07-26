@@ -345,6 +345,7 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
             const payload = {
                 productId: product._id,
                 attributes,
+                combinationString: label,
                 sku,
                 purchasePrice: Number(raw.purchasePrice) || 0,
                 costPrice: Number(raw.costPrice) || 0,
