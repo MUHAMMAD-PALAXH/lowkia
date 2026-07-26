@@ -92,7 +92,6 @@ const companySchema = new mongoose.Schema(
 
     logo: {
       url: String,
-      publicId: String,
       default: "",
     },
 
