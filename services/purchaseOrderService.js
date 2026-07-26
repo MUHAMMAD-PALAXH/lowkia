@@ -687,8 +687,10 @@ const getProductPurchaseContext = async (productId) => {
         isDeleted: { $ne: true }
     })
         .select(
-            "sku combinationString purchasePrice costPrice sellingPrice wholesalePrice quantity attributes status"
+            "sku barcode combinationString purchasePrice costPrice sellingPrice wholesalePrice quantity attributes status isDefaultVariant"
         )
+        .populate("attributes.variantTypeId", "type name")
+        .populate("attributes.variantId", "name")
         .lean();
 
     const history = await PurchaseOrder.find({
