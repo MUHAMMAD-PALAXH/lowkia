@@ -343,27 +343,37 @@ const productVariantSchema = new mongoose.Schema(
 // Indexes
 // ==========================================================
 
-// One SKU per company
-productVariantSchema.index({ sku: 1 }, {
-
+// One SKU per company (active rows only — soft-deleted may share history)
+productVariantSchema.index(
+    { sku: 1 },
+    {
         unique: true,
-        sparse: true
-    });
+        sparse: true,
+        partialFilterExpression: { isDeleted: false, sku: { $type: "string" } }
+    }
+);
 
 // One Barcode per company
-productVariantSchema.index({ barcode: 1 }, {
-
+productVariantSchema.index(
+    { barcode: 1 },
+    {
         unique: true,
-        sparse: true
-    });
+        sparse: true,
+        partialFilterExpression: {
+            isDeleted: false,
+            barcode: { $type: "string" }
+        }
+    }
+);
 
-// Prevent duplicate variant combinations
-productVariantSchema.index({ productId: 1,
-        attributes: 1
-     }, {
-
-        unique: true
-    });
+// One active combination per product (soft-deleted do not block re-save)
+productVariantSchema.index(
+    { productId: 1, attributes: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { isDeleted: false }
+    }
+);
 
 // Product Wise
 productVariantSchema.index({ productId: 1 });

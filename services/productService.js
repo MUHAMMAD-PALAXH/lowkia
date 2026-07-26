@@ -266,14 +266,9 @@ const mapVariantWriteError = (err) => {
                 400
             );
         }
-        if (fields.includes("attributes") || fields.includes("productId")) {
-            return new AppError(
-                "Duplicate variant combination. Check Color/Size selections — each combo must be unique.",
-                400
-            );
-        }
+        // Combination conflicts are recovered in syncVariants — only surface if recovery failed
         return new AppError(
-            "Duplicate variant data. Check SKU, barcode, and combinations.",
+            "Could not save a variant combination. Please try again.",
             400
         );
     }
@@ -281,6 +276,46 @@ const mapVariantWriteError = (err) => {
         return new AppError(err.message, 400);
     }
     return err;
+};
+
+/** Prefer active row, otherwise revive a soft-deleted match. */
+const findVariantForUpsert = async (productId, existingId, attributes) => {
+    if (existingId) {
+        const byId = await ProductVariant.findOne({
+            _id: existingId,
+            productId
+        });
+        if (byId) return byId;
+    }
+
+    if (attributes.length > 0) {
+        const active = await ProductVariant.findOne({
+            productId,
+            isDeleted: { $ne: true },
+            attributes
+        });
+        if (active) return active;
+
+        return ProductVariant.findOne({
+            productId,
+            isDeleted: true,
+            attributes
+        }).sort({ updatedAt: -1 });
+    }
+
+    // Simple / default variant (no attributes)
+    const activeDefault = await ProductVariant.findOne({
+        productId,
+        isDeleted: { $ne: true },
+        $or: [{ attributes: { $size: 0 } }, { attributes: [] }]
+    });
+    if (activeDefault) return activeDefault;
+
+    return ProductVariant.findOne({
+        productId,
+        isDeleted: true,
+        $or: [{ attributes: { $size: 0 } }, { attributes: [] }]
+    }).sort({ updatedAt: -1 });
 };
 
 const syncVariants = async (product, variantsInput, actorId = null) => {
@@ -303,6 +338,28 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
         { $unset: { barcode: 1 } }
     );
 
+    // Drop legacy unique indexes that blocked soft-deleted + edit re-saves.
+    // New partial indexes are defined on the model.
+    try {
+        const indexes = await ProductVariant.collection.indexes();
+        for (const idx of indexes) {
+            const name = idx.name || "";
+            if (
+                name === "productId_1_attributes_1" ||
+                name === "sku_1" ||
+                name === "barcode_1"
+            ) {
+                // Only drop if it is the old non-partial unique form
+                if (idx.unique && !idx.partialFilterExpression) {
+                    await ProductVariant.collection.dropIndex(name);
+                }
+            }
+        }
+        await ProductVariant.syncIndexes();
+    } catch (_) {
+        // Index heal is best-effort; upsert logic below still recovers conflicts.
+    }
+
     try {
         for (let index = 0; index < variantsInput.length; index += 1) {
             const raw = variantsInput[index];
@@ -313,8 +370,6 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
                 (raw.combinationString || "").toString().trim() ||
                 `Variant ${index + 1}`;
 
-            // Multi-variant rows must keep Color/Size attributes, otherwise Mongo's
-            // unique (productId, attributes) index collides on empty arrays.
             if (variantsInput.length > 1 && attributes.length === 0) {
                 throw new AppError(
                     `Variant "${label}" is missing Color/Size attributes. Re-select variant values and try again.`,
@@ -333,20 +388,24 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
                 sku = `${productCode}-${slug || index + 1}`;
             }
             if (sku) {
+                // Same payload may list the same SKU twice — auto-suffix instead of failing.
                 if (seenSkus.has(sku)) {
-                    throw new AppError(
-                        `Duplicate SKU "${sku}" in this product. Each combination needs a unique SKU.`,
-                        400
-                    );
+                    sku = `${sku}-${index + 1}`;
                 }
                 seenSkus.add(sku);
             }
+
+            const existingId = toObjectId(raw._id || raw.id);
+            let variantDoc = await findVariantForUpsert(
+                product._id,
+                existingId,
+                attributes
+            );
 
             const payload = {
                 productId: product._id,
                 attributes,
                 combinationString: label,
-                sku,
                 purchasePrice: Number(raw.purchasePrice) || 0,
                 costPrice: Number(raw.costPrice) || 0,
                 sellingPrice,
@@ -361,41 +420,70 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
                 status: raw.status || "Active",
                 isDefaultVariant: raw.isDefaultVariant === true || index === 0,
                 updatedBy: toObjectId(actorId),
-                createdBy: toObjectId(actorId)
+                isDeleted: false,
+                deletedAt: null,
+                deletedBy: null
             };
 
-            // Only Non-IMEI variants get barcodes. Never write "" — sparse unique
-            // indexes treat empty string as a value and break multi-variant IMEI.
+            if (sku) payload.sku = sku;
+            else if (!variantDoc?.sku) payload.sku = undefined;
+
+            // Non-IMEI: keep existing barcode on edit; generate only for new rows.
             if (product.trackingType === "Non-IMEI") {
                 const incoming = (raw.barcode || "").toString().trim();
-                payload.barcode = incoming || (await generateProductBarcode());
+                if (incoming) {
+                    payload.barcode = incoming;
+                } else if (!variantDoc?.barcode) {
+                    payload.barcode = await generateProductBarcode();
+                }
             }
 
-            const existingId = toObjectId(raw._id || raw.id);
-            let variantDoc = null;
-
-            if (existingId) {
+            if (variantDoc) {
                 const $set = { ...payload };
-                delete $set.createdBy;
-                if (product.trackingType === "IMEI") {
-                    delete $set.barcode;
-                }
-                variantDoc = await ProductVariant.findOneAndUpdate(
-                    { _id: existingId, productId: product._id },
+                if (!payload.sku && variantDoc.sku) delete $set.sku;
+                if (!payload.barcode && variantDoc.barcode) delete $set.barcode;
+                variantDoc = await ProductVariant.findByIdAndUpdate(
+                    variantDoc._id,
                     { $set },
                     { new: true }
                 );
-                if (variantDoc) keptIds.push(variantDoc._id);
             } else {
-                variantDoc = await ProductVariant.create(payload);
-                keptIds.push(variantDoc._id);
+                payload.createdBy = toObjectId(actorId);
+                try {
+                    variantDoc = await ProductVariant.create(payload);
+                } catch (err) {
+                    // Race / legacy unique index: update the conflicting row instead.
+                    if (err && err.code === 11000) {
+                        const conflict = await findVariantForUpsert(
+                            product._id,
+                            null,
+                            attributes
+                        );
+                        if (!conflict) throw err;
+                        const $set = { ...payload };
+                        delete $set.createdBy;
+                        variantDoc = await ProductVariant.findByIdAndUpdate(
+                            conflict._id,
+                            { $set },
+                            { new: true }
+                        );
+                    } else {
+                        throw err;
+                    }
+                }
             }
 
-            // IMEI lives on the variant (ItemTrack). Stock quantity for Non-IMEI
-            // is informational only until the Inventory module posts stock.
+            if (!variantDoc) {
+                throw new AppError(
+                    `Failed to save variant "${label}".`,
+                    500
+                );
+            }
+
+            keptIds.push(variantDoc._id);
+
             if (
                 product.trackingType === "IMEI" &&
-                variantDoc &&
                 Array.isArray(raw.imeis) &&
                 raw.imeis.length
             ) {
@@ -430,7 +518,6 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
             }
         }
 
-        // Variants removed from the payload are soft deleted, never hard deleted
         await ProductVariant.updateMany(
             {
                 productId: product._id,
