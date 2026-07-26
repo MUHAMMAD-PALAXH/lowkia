@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Sales Quotation Item Schema
 // ==========================================================
@@ -10,7 +9,9 @@ const mongoose = require("mongoose");
 const salesQuotationItemSchema = new mongoose.Schema(
 {
 
+
     productId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Product",
         required:true
@@ -18,6 +19,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     productVariantId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"ProductVariant",
         default:null
@@ -25,6 +27,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     sku:{
+
         type:String,
         default:"",
         trim:true
@@ -32,6 +35,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     productName:{
+
         type:String,
         required:true,
         trim:true
@@ -39,6 +43,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     quantity:{
+
         type:Number,
         required:true,
         min:1
@@ -46,6 +51,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     unitId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Unit",
         default:null
@@ -53,6 +59,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     unitPrice:{
+
         type:Number,
         required:true,
         min:0
@@ -60,6 +67,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     discount:{
+
         type:Number,
         default:0,
         min:0
@@ -67,6 +75,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     tax:{
+
         type:Number,
         default:0,
         min:0
@@ -74,6 +83,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     total:{
+
         type:Number,
         default:0,
         min:0
@@ -81,6 +91,7 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 
     remarks:{
+
         type:String,
         default:""
     }
@@ -88,13 +99,9 @@ const salesQuotationItemSchema = new mongoose.Schema(
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
 
 
 // ==========================================================
@@ -106,30 +113,13 @@ const salesQuotationSchema = new mongoose.Schema(
 {
 
 
-// ==========================================================
-// Company & Branch
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
-
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true,
     index:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -138,6 +128,7 @@ branchId:{
 
 
 quotationNumber:{
+
     type:String,
     required:true,
     unique:true,
@@ -146,28 +137,24 @@ quotationNumber:{
 },
 
 
-
 referenceNumber:{
+
     type:String,
     default:""
 },
 
 
-
 quotationDate:{
+
     type:Date,
     default:Date.now
 },
 
 
-
 validUntil:{
+
     type:Date,
 },
-
-
-
-
 
 
 // ==========================================================
@@ -176,28 +163,29 @@ validUntil:{
 
 
 customerId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Customer",
     required:true
 },
 
 
-
 customerName:{
+
     type:String,
     required:true
 },
 
 
-
 customerPhone:{
+
     type:String,
     default:""
 },
 
 
-
 customerEmail:{
+
     type:String,
     default:""
 },
@@ -208,20 +196,17 @@ customerEmail:{
 
 
 shippingAddress:{
+
     type:String,
     default:""
 },
-
 
 
 billingAddress:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -234,58 +219,51 @@ items:[
 ],
 
 
-
-
-
-
 // ==========================================================
 // Pricing Summary
 // ==========================================================
 
 
 subtotal:{
+
     type:Number,
     default:0
 },
-
 
 
 discount:{
+
     type:Number,
     default:0
 },
-
 
 
 tax:{
+
     type:Number,
     default:0
 },
-
 
 
 shippingCost:{
+
     type:Number,
     default:0
 },
-
 
 
 otherCharges:{
+
     type:Number,
     default:0
 },
-
 
 
 grandTotal:{
+
     type:Number,
     default:0
 },
-
-
-
-
 
 
 // ==========================================================
@@ -294,6 +272,7 @@ grandTotal:{
 
 
 status:{
+
     type:String,
     enum:[
         "Draft",
@@ -308,23 +287,19 @@ status:{
 },
 
 
-
 convertedToSalesOrder:{
+
     type:Boolean,
     default:false
 },
 
 
-
 salesOrderId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"SalesOrder",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -333,28 +308,25 @@ salesOrderId:{
 
 
 requiresApproval:{
+
     type:Boolean,
     default:false
 },
 
 
-
 approvedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 approvedAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -363,14 +335,11 @@ approvedAt:{
 
 
 salesPersonId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -379,20 +348,17 @@ salesPersonId:{
 
 
 customerNote:{
+
     type:String,
     default:""
 },
-
 
 
 internalNote:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -404,19 +370,23 @@ attachments:[
 
 {
 
+
     fileName:{
+
         type:String,
         default:""
     },
 
 
     fileUrl:{
+
         type:String,
         default:""
     },
 
 
     uploadedAt:{
+
         type:Date,
         default:Date.now
     }
@@ -432,37 +402,34 @@ attachments:[
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     required:true
 },
 
 
-
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
 
 
 cancelledBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 cancelledAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -471,36 +438,33 @@ cancelledAt:{
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 deletedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
-
 
 
 // ==========================================================
@@ -508,61 +472,25 @@ deletedBy:{
 // ==========================================================
 
 
-salesQuotationSchema.index(
-{
-    companyId:1,
-    quotationNumber:1
-},
-{
+salesQuotationSchema.index({ quotationNumber:1 }, {
+
     unique:true
 });
 
 
-
-salesQuotationSchema.index({
-
-    customerId:1
-
-});
+salesQuotationSchema.index({ customerId:1 });
 
 
-
-salesQuotationSchema.index({
-
-    status:1
-
-});
+salesQuotationSchema.index({ status:1 });
 
 
-
-salesQuotationSchema.index({
-
-    quotationDate:-1
-
-});
+salesQuotationSchema.index({ quotationDate:-1 });
 
 
-
-salesQuotationSchema.index({
-
-    salesOrderId:1
-
-});
+salesQuotationSchema.index({ salesOrderId:1 });
 
 
-
-salesQuotationSchema.index({
-
-    companyId:1,
-
-    isDeleted:1
-
-});
-
-
-
-
-
+salesQuotationSchema.index({ isDeleted:1 });
 
 
 // ==========================================================
@@ -573,6 +501,7 @@ salesQuotationSchema.index({
 salesQuotationSchema.methods.calculateTotal =
 function()
 {
+
 
     this.subtotal = 0;
 
@@ -599,12 +528,10 @@ function()
         item.tax;
 
 
-
         this.subtotal += item.total;
 
 
     });
-
 
 
     this.grandTotal =
@@ -628,19 +555,15 @@ function()
         this.otherCharges;
 
 
-
     return this.grandTotal;
 
 };
 
 
-
-
-
-
 salesQuotationSchema.methods.convertToOrder =
 function(orderId)
 {
+
 
     this.status="Converted";
 
@@ -660,32 +583,26 @@ function(orderId)
 // ==========================================================
 
 
-// Company Quotations
+// All Quotations
 
 
-salesQuotationSchema.statics.getCompanyQuotations =
-function(companyId)
+salesQuotationSchema.statics.getAllQuotations =
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         isDeleted:false
 
     })
     .sort({
+
 
         quotationDate:-1
 
     });
 
 };
-
-
-
-
-
 
 
 // Customer Quotations
@@ -695,7 +612,9 @@ salesQuotationSchema.statics.getCustomerQuotations =
 function(customerId)
 {
 
+
     return this.find({
+
 
         customerId,
 
@@ -704,6 +623,7 @@ function(customerId)
     })
     .sort({
 
+
         quotationDate:-1
 
     });
@@ -711,23 +631,17 @@ function(customerId)
 };
 
 
-
-
-
-
-
 // Pending Quotations
 
 
 salesQuotationSchema.statics.getPending =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         status:{
+
             $in:[
                 "Draft",
                 "Sent"
@@ -741,29 +655,23 @@ function(companyId)
 };
 
 
-
-
-
-
-
 // Expired Quotations
 
 
 salesQuotationSchema.statics.getExpired =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
-
         validUntil:{
+
             $lt:new Date()
         },
 
 
         status:{
+
             $ne:"Converted"
         },
 
@@ -776,21 +684,15 @@ function(companyId)
 };
 
 
-
-
-
-
-
 // Monthly Report
 
 
 salesQuotationSchema.statics.getMonthlyReport =
-function(
-    companyId,
-    month,
+function(month,
     year
 )
 {
+
 
     const startDate =
     new Date(
@@ -808,13 +710,9 @@ function(
     );
 
 
-
     return this.find({
-
-        companyId,
-
-
         quotationDate:{
+
             $gte:startDate,
             $lte:endDate
         },
@@ -827,12 +725,6 @@ function(
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // QUERY HELPERS
 // ==========================================================
@@ -842,7 +734,9 @@ salesQuotationSchema.query.active =
 function()
 {
 
+
     return this.where({
+
 
         isDeleted:false
 
@@ -851,15 +745,13 @@ function()
 };
 
 
-
-
-
-
 salesQuotationSchema.query.converted =
 function()
 {
 
+
     return this.where({
+
 
         status:"Converted",
 
@@ -870,17 +762,16 @@ function()
 };
 
 
-
-
-
-
 salesQuotationSchema.query.pending =
 function()
 {
 
+
     return this.where({
 
+
         status:{
+
             $in:[
                 "Draft",
                 "Sent"
@@ -895,12 +786,6 @@ function()
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // JSON CONFIG
 // ==========================================================
@@ -909,6 +794,7 @@ function()
 salesQuotationSchema.set(
 "toJSON",
 {
+
 
     virtuals:true,
 
@@ -920,6 +806,7 @@ salesQuotationSchema.set(
         ret
     ){
 
+
         delete ret._id;
 
         return ret;
@@ -927,12 +814,6 @@ salesQuotationSchema.set(
     }
 
 });
-
-
-
-
-
-
 
 
 // ==========================================================

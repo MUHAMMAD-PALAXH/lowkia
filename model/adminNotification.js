@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Notification Schema
 // ==========================================================
@@ -11,30 +10,13 @@ const notificationSchema = new mongoose.Schema(
 {
 
 
-// ==========================================================
-// Company & Branch
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
-
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     default:null,
     index:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -43,6 +25,7 @@ branchId:{
 
 
 notificationNumber:{
+
     type:String,
     required:true,
     unique:true,
@@ -51,8 +34,8 @@ notificationNumber:{
 },
 
 
-
 notificationType:{
+
     type:String,
     enum:[
 
@@ -86,16 +69,13 @@ notificationType:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Notification Priority
 // ==========================================================
 
 
 priority:{
+
     type:String,
     enum:[
 
@@ -112,24 +92,21 @@ priority:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Sender Information
 // ==========================================================
 
 
 senderId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 senderType:{
+
     type:String,
     enum:[
 
@@ -148,16 +125,13 @@ senderType:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Receiver Information
 // ==========================================================
 
 
 receiverId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     required:true,
@@ -165,15 +139,11 @@ receiverId:{
 },
 
 
-
 receiverRole:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -182,28 +152,25 @@ receiverRole:{
 
 
 title:{
+
     type:String,
     required:true,
     trim:true
 },
 
 
-
 message:{
+
     type:String,
     required:true
 },
 
 
-
 shortMessage:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -212,6 +179,7 @@ shortMessage:{
 
 
 referenceType:{
+
     type:String,
     enum:[
 
@@ -246,8 +214,8 @@ referenceType:{
 },
 
 
-
 referenceId:{
+
     type:mongoose.Schema.Types.ObjectId,
     default:null,
     index:true
@@ -259,13 +227,14 @@ referenceId:{
 
 
 actionUrl:{
+
     type:String,
     default:""
 },
 
 
-
 actionType:{
+
     type:String,
     enum:[
 
@@ -287,10 +256,6 @@ actionType:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Delivery Channels
 // ==========================================================
@@ -299,6 +264,7 @@ actionType:{
 channels:[
 
 {
+
 
     type:String,
 
@@ -321,31 +287,24 @@ channels:[
 ],
 
 
-
-
-
-
 // ==========================================================
 // Read Status
 // ==========================================================
 
 
 isRead:{
+
     type:Boolean,
     default:false,
     index:true
 },
 
 
-
 readAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -354,20 +313,17 @@ readAt:{
 
 
 pushSent:{
+
     type:Boolean,
     default:false
 },
 
 
-
 pushSentAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -376,20 +332,17 @@ pushSentAt:{
 
 
 emailSent:{
+
     type:Boolean,
     default:false
 },
 
 
-
 emailSentAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -398,13 +351,10 @@ emailSentAt:{
 
 
 expiresAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -413,6 +363,7 @@ expiresAt:{
 
 
 status:{
+
     type:String,
     enum:[
 
@@ -439,21 +390,18 @@ status:{
 
 
 templateId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"NotificationTemplate",
     default:null
 },
 
 
-
 templateName:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -462,27 +410,24 @@ templateName:{
 
 
 isScheduled:{
+
     type:Boolean,
     default:false
 },
 
 
-
 scheduledAt:{
+
     type:Date,
     default:null
 },
-
 
 
 sentAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -491,13 +436,14 @@ sentAt:{
 
 
 deviceToken:{
+
     type:String,
     default:""
 },
 
 
-
 platform:{
+
     type:String,
     enum:[
 
@@ -516,33 +462,32 @@ platform:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Extra Data
 // ==========================================================
 
 
 metadata:{
+
     type:Object,
     default:{}
 },
-
 
 
 attachments:[
 
 {
 
+
     fileName:{
+
         type:String,
         default:""
     },
 
 
     fileUrl:{
+
         type:String,
         default:""
     }
@@ -552,32 +497,25 @@ attachments:[
 ],
 
 
-
-
-
-
 // ==========================================================
 // Audit Information
 // ==========================================================
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
 
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -586,38 +524,33 @@ updatedBy:{
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 deletedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -625,18 +558,14 @@ deletedBy:{
 // ==========================================================
 
 
-notificationSchema.index(
-{
-    companyId:1,
-    notificationNumber:1
-},
-{
+notificationSchema.index({ notificationNumber:1 }, {
+
     unique:true
 });
 
 
-
 notificationSchema.index({
+
 
     receiverId:1,
 
@@ -647,24 +576,14 @@ notificationSchema.index({
 });
 
 
+notificationSchema.index({ notificationType:1 });
 
-notificationSchema.index({
 
-    notificationType:1
-
-});
-
+notificationSchema.index({ priority:1 });
 
 
 notificationSchema.index({
 
-    priority:1
-
-});
-
-
-
-notificationSchema.index({
 
     referenceType:1,
 
@@ -673,40 +592,18 @@ notificationSchema.index({
 });
 
 
-
-notificationSchema.index({
-
-    status:1
-
-});
+notificationSchema.index({ status:1 });
 
 
-
-notificationSchema.index({
-
-    scheduledAt:1
-
-});
+notificationSchema.index({ scheduledAt:1 });
 
 
-
-notificationSchema.index({
-
-    expiresAt:1
-
-});
-
-
-
-
-
-
+notificationSchema.index({ expiresAt:1 });
 
 
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Mark As Read
@@ -715,6 +612,7 @@ notificationSchema.index({
 notificationSchema.methods.markAsRead =
 function()
 {
+
 
     this.isRead=true;
 
@@ -727,17 +625,13 @@ function()
 };
 
 
-
-
-
-
-
 // Send Notification
 
 
 notificationSchema.methods.markSent =
 function()
 {
+
 
     this.status="Sent";
 
@@ -750,17 +644,13 @@ function()
 };
 
 
-
-
-
-
-
 // Mark Failed
 
 
 notificationSchema.methods.markFailed =
 function()
 {
+
 
     this.status="Failed";
 
@@ -770,17 +660,13 @@ function()
 };
 
 
-
-
-
-
-
 // Cancel Notification
 
 
 notificationSchema.methods.cancel =
 function()
 {
+
 
     this.status="Cancelled";
 
@@ -790,16 +676,9 @@ function()
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
-
 
 
 // User Notifications
@@ -809,7 +688,9 @@ notificationSchema.statics.getUserNotifications =
 function(receiverId)
 {
 
+
     return this.find({
+
 
         receiverId,
 
@@ -818,16 +699,12 @@ function(receiverId)
     })
     .sort({
 
+
         createdAt:-1
 
     });
 
 };
-
-
-
-
-
 
 
 // Unread Notifications
@@ -837,7 +714,9 @@ notificationSchema.statics.getUnread =
 function(receiverId)
 {
 
+
     return this.find({
+
 
         receiverId,
 
@@ -850,6 +729,7 @@ function(receiverId)
     })
     .sort({
 
+
         createdAt:-1
 
     });
@@ -857,51 +737,37 @@ function(receiverId)
 };
 
 
+// All Notifications
 
 
-
-
-
-// Company Notifications
-
-
-notificationSchema.statics.getCompanyNotifications =
-function(companyId)
+notificationSchema.statics.getAllNotifications =
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         isDeleted:false
 
     })
     .sort({
 
+
         createdAt:-1
 
     });
 
 };
-
-
-
-
-
 
 
 // Stock Alerts
 
 
 notificationSchema.statics.getStockAlerts =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
-
         notificationType:"Stock",
 
 
@@ -910,12 +776,6 @@ function(companyId)
     });
 
 };
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -927,7 +787,9 @@ notificationSchema.query.unread =
 function()
 {
 
+
     return this.where({
+
 
         isRead:false
 
@@ -936,18 +798,16 @@ function()
 };
 
 
-
-
-
-
-
 notificationSchema.query.highPriority =
 function()
 {
 
+
     return this.where({
 
+
         priority:{
+
             $in:[
                 "High",
                 "Critical"
@@ -959,12 +819,6 @@ function()
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // JSON CONFIG
 // ==========================================================
@@ -973,6 +827,7 @@ function()
 notificationSchema.set(
 "toJSON",
 {
+
 
     virtuals:true,
 
@@ -984,6 +839,7 @@ notificationSchema.set(
         ret
     ){
 
+
         delete ret._id;
 
         return ret;
@@ -991,12 +847,6 @@ notificationSchema.set(
     }
 
 });
-
-
-
-
-
-
 
 
 // ==========================================================

@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Sales Return Item Schema
 // ==========================================================
@@ -10,7 +9,9 @@ const mongoose = require("mongoose");
 const salesReturnItemSchema = new mongoose.Schema(
 {
 
+
     productId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Product",
         required:true
@@ -18,6 +19,7 @@ const salesReturnItemSchema = new mongoose.Schema(
 
 
     productVariantId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"ProductVariant",
         default:null
@@ -25,24 +27,28 @@ const salesReturnItemSchema = new mongoose.Schema(
 
 
     sku:{
+
         type:String,
         default:""
     },
 
 
     productName:{
+
         type:String,
         required:true
     },
 
 
     invoiceQuantity:{
+
         type:Number,
         default:0
     },
 
 
     returnQuantity:{
+
         type:Number,
         required:true,
         min:1
@@ -50,6 +56,7 @@ const salesReturnItemSchema = new mongoose.Schema(
 
 
     unitId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Unit",
         default:null
@@ -57,30 +64,35 @@ const salesReturnItemSchema = new mongoose.Schema(
 
 
     unitPrice:{
+
         type:Number,
         default:0
     },
 
 
     discount:{
+
         type:Number,
         default:0
     },
 
 
     tax:{
+
         type:Number,
         default:0
     },
 
 
     total:{
+
         type:Number,
         default:0
     },
 
 
     returnReason:{
+
         type:String,
         enum:[
             "Damaged",
@@ -94,6 +106,7 @@ const salesReturnItemSchema = new mongoose.Schema(
 
 
     condition:{
+
         type:String,
         enum:[
             "Good",
@@ -106,14 +119,9 @@ const salesReturnItemSchema = new mongoose.Schema(
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -125,30 +133,13 @@ const salesReturnSchema = new mongoose.Schema(
 {
 
 
-// ==========================================================
-// Company & Branch
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
-
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true,
     index:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -157,6 +148,7 @@ branchId:{
 
 
 returnNumber:{
+
     type:String,
     required:true,
     unique:true,
@@ -165,22 +157,18 @@ returnNumber:{
 },
 
 
-
 returnDate:{
+
     type:Date,
     default:Date.now
 },
 
 
-
 referenceNumber:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -189,30 +177,27 @@ referenceNumber:{
 
 
 salesInvoiceId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"SalesInvoice",
     required:true
 },
 
 
-
 salesOrderId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"SalesOrder",
     default:null
 },
 
 
-
 deliveryId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Delivery",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -221,28 +206,25 @@ deliveryId:{
 
 
 customerId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Customer",
     required:true
 },
 
 
-
 customerName:{
+
     type:String,
     required:true
 },
 
 
-
 customerPhone:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -251,14 +233,11 @@ customerPhone:{
 
 
 warehouseId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Warehouse",
     required:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -277,34 +256,35 @@ items:[
 
 
 subtotal:{
+
     type:Number,
     default:0
 },
-
 
 
 discount:{
+
     type:Number,
     default:0
 },
-
 
 
 tax:{
+
     type:Number,
     default:0
 },
-
 
 
 refundAmount:{
+
     type:Number,
     default:0
 },
 
 
-
 refundStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -316,8 +296,8 @@ refundStatus:{
 },
 
 
-
 refundMethod:{
+
     type:String,
     enum:[
         "Cash",
@@ -330,10 +310,6 @@ refundMethod:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Stock Return Information
 // ==========================================================
@@ -342,6 +318,7 @@ refundMethod:{
 stockMovementIds:[
 
 {
+
 
     type:mongoose.Schema.Types.ObjectId,
 
@@ -352,22 +329,18 @@ stockMovementIds:[
 ],
 
 
-
 stockUpdated:{
+
     type:Boolean,
     default:false
 },
 
 
-
 stockUpdatedAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -376,6 +349,7 @@ stockUpdatedAt:{
 
 
 status:{
+
     type:String,
     enum:[
         "Draft",
@@ -390,23 +364,19 @@ status:{
 },
 
 
-
 approvedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 approvedAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -415,27 +385,24 @@ approvedAt:{
 
 
 returnReason:{
+
     type:String,
     default:""
 },
-
 
 
 customerNote:{
+
     type:String,
     default:""
 },
-
 
 
 internalNote:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -444,37 +411,34 @@ internalNote:{
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     required:true
 },
 
 
-
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
 
 
 cancelledBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 cancelledAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -483,38 +447,33 @@ cancelledAt:{
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 deletedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -522,70 +481,28 @@ deletedAt:{
 // ==========================================================
 
 
-salesReturnSchema.index(
-{
-    companyId:1,
-    returnNumber:1
-},
-{
+salesReturnSchema.index({ returnNumber:1 }, {
+
     unique:true
 });
 
 
-
-salesReturnSchema.index({
-
-    salesInvoiceId:1
-
-});
+salesReturnSchema.index({ salesInvoiceId:1 });
 
 
-
-salesReturnSchema.index({
-
-    customerId:1
-
-});
+salesReturnSchema.index({ customerId:1 });
 
 
-
-salesReturnSchema.index({
-
-    warehouseId:1
-
-});
+salesReturnSchema.index({ warehouseId:1 });
 
 
-
-salesReturnSchema.index({
-
-    status:1
-
-});
+salesReturnSchema.index({ status:1 });
 
 
-
-salesReturnSchema.index({
-
-    returnDate:-1
-
-});
+salesReturnSchema.index({ returnDate:-1 });
 
 
-
-salesReturnSchema.index({
-
-    companyId:1,
-
-    isDeleted:1
-
-});
-
-
-
-
-
-
+salesReturnSchema.index({ isDeleted:1 });
 
 
 // ==========================================================
@@ -599,6 +516,7 @@ salesReturnSchema.index({
 salesReturnSchema.methods.calculateTotal =
 function()
 {
+
 
     this.subtotal = 0;
 
@@ -625,12 +543,10 @@ function()
         item.tax;
 
 
-
         this.subtotal += item.total;
 
 
     });
-
 
 
     this.refundAmount =
@@ -640,15 +556,9 @@ function()
         this.discount;
 
 
-
     return this.refundAmount;
 
 };
-
-
-
-
-
 
 
 // Approve Return
@@ -657,6 +567,7 @@ function()
 salesReturnSchema.methods.approve =
 function(userId)
 {
+
 
     this.status="Approved";
 
@@ -672,17 +583,13 @@ function(userId)
 };
 
 
-
-
-
-
-
 // Receive Returned Product
 
 
 salesReturnSchema.methods.receive =
 function()
 {
+
 
     this.status="Received";
 
@@ -692,17 +599,13 @@ function()
 };
 
 
-
-
-
-
-
 // Update Stock
 
 
 salesReturnSchema.methods.updateStock =
 function(movementIds)
 {
+
 
     this.stockMovementIds = movementIds;
 
@@ -718,17 +621,13 @@ function(movementIds)
 };
 
 
-
-
-
-
-
 // Process Refund
 
 
 salesReturnSchema.methods.processRefund =
 function()
 {
+
 
     this.status="Refunded";
 
@@ -741,44 +640,31 @@ function()
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
 
 
+// All Returns
 
-// Company Returns
 
-
-salesReturnSchema.statics.getCompanyReturns =
-function(companyId)
+salesReturnSchema.statics.getAllReturns =
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         isDeleted:false
 
     })
     .sort({
+
 
         returnDate:-1
 
     });
 
 };
-
-
-
-
-
 
 
 // Customer Return History
@@ -788,7 +674,9 @@ salesReturnSchema.statics.getCustomerReturns =
 function(customerId)
 {
 
+
     return this.find({
+
 
         customerId,
 
@@ -799,24 +687,17 @@ function(customerId)
 };
 
 
-
-
-
-
-
 // Pending Returns
 
 
 salesReturnSchema.statics.getPendingReturns =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
-
         status:{
+
             $in:[
                 "Draft",
                 "Pending Approval"
@@ -831,21 +712,15 @@ function(companyId)
 };
 
 
-
-
-
-
-
 // Monthly Return Report
 
 
 salesReturnSchema.statics.getMonthlyReport =
-function(
-    companyId,
-    month,
+function(month,
     year
 )
 {
+
 
     const startDate =
     new Date(
@@ -863,13 +738,9 @@ function(
     );
 
 
-
     return this.find({
-
-        companyId,
-
-
         returnDate:{
+
             $gte:startDate,
             $lte:endDate
         },
@@ -882,12 +753,6 @@ function(
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // QUERY HELPERS
 // ==========================================================
@@ -897,7 +762,9 @@ salesReturnSchema.query.active =
 function()
 {
 
+
     return this.where({
+
 
         isDeleted:false
 
@@ -906,15 +773,13 @@ function()
 };
 
 
-
-
-
-
 salesReturnSchema.query.completed =
 function()
 {
 
+
     return this.where({
+
 
         status:"Refunded",
 
@@ -925,17 +790,16 @@ function()
 };
 
 
-
-
-
-
 salesReturnSchema.query.pending =
 function()
 {
 
+
     return this.where({
 
+
         status:{
+
             $in:[
                 "Draft",
                 "Pending Approval"
@@ -950,12 +814,6 @@ function()
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // JSON CONFIG
 // ==========================================================
@@ -964,6 +822,7 @@ function()
 salesReturnSchema.set(
 "toJSON",
 {
+
 
     virtuals:true,
 
@@ -975,6 +834,7 @@ salesReturnSchema.set(
         ret
     ){
 
+
         delete ret._id;
 
         return ret;
@@ -982,12 +842,6 @@ salesReturnSchema.set(
     }
 
 });
-
-
-
-
-
-
 
 
 // ==========================================================

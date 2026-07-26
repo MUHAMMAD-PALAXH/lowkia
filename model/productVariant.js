@@ -6,19 +6,23 @@ const mongoose = require("mongoose");
 
 const attributeSchema = new mongoose.Schema(
     {
+
         variantTypeId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "VariantType",
             required: true
         },
 
         variantId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Variant",
             required: true
         }
     },
     {
+
         _id: false
     }
 );
@@ -28,23 +32,13 @@ const attributeSchema = new mongoose.Schema(
 // ==========================================================
 
 const productVariantSchema = new mongoose.Schema(
-    {
-        // ======================================================
-        // Company
-        // ======================================================
+{
 
-        companyId: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Company",
-            required: true,
-            index: true
-        },
-
-        // ======================================================
         // Product
         // ======================================================
 
         productId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Product",
             required: true,
@@ -62,18 +56,21 @@ const productVariantSchema = new mongoose.Schema(
         // ======================================================
 
         sku: {
+
             type: String,
             trim: true,
             uppercase: true
         },
 
         barcode: {
+
             type: String,
             trim: true,
             default: ""
         },
 
         qrCode: {
+
             type: String,
             default: ""
         },
@@ -83,24 +80,28 @@ const productVariantSchema = new mongoose.Schema(
         // ======================================================
 
         purchasePrice: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         costPrice: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         sellingPrice: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         wholesalePrice: {
+
             type: Number,
             default: 0,
             min: 0
@@ -111,21 +112,25 @@ const productVariantSchema = new mongoose.Schema(
         // ======================================================
 
         price: {
+
             type: Number,
             default: 0
         },
 
         offerPrice: {
+
             type: Number,
             default: 0
         },
 
         quantity: {
+
             type: Number,
             default: 0
         },
 
         tax: {
+
             type: Number,
             default: 0
         },
@@ -135,6 +140,7 @@ const productVariantSchema = new mongoose.Schema(
         // ======================================================
 
         unitId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Unit",
             default: null
@@ -145,35 +151,41 @@ const productVariantSchema = new mongoose.Schema(
         // ======================================================
 
         minimumStock: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         maximumStock: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         reorderLevel: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         reorderQuantity: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         allowBackorder: {
+
             type: Boolean,
             default: false
         },
 
         trackInventory: {
+
             type: Boolean,
             default: true
         },
@@ -183,32 +195,38 @@ const productVariantSchema = new mongoose.Schema(
         // ======================================================
 
         weight: {
+
             type: Number,
             default: 0
         },
 
         weightUnit: {
+
             type: String,
             enum: ["mg", "g", "kg", "ton"],
             default: "kg"
         },
 
         length: {
+
             type: Number,
             default: 0
         },
 
         width: {
+
             type: Number,
             default: 0
         },
 
         height: {
+
             type: Number,
             default: 0
         },
 
         dimensionUnit: {
+
             type: String,
             enum: ["mm", "cm", "m", "inch", "ft"],
             default: "cm"
@@ -220,17 +238,21 @@ const productVariantSchema = new mongoose.Schema(
 
         images: [
             {
+
                 url: {
+
                     type: String,
                     default: ""
                 },
 
                 publicId: {
+
                     type: String,
                     default: ""
                 },
 
                 isPrimary: {
+
                     type: Boolean,
                     default: false
                 }
@@ -242,17 +264,20 @@ const productVariantSchema = new mongoose.Schema(
         // ======================================================
 
         status: {
+
             type: String,
             enum: ["Active", "Inactive", "Out of Stock", "Discontinued"],
             default: "Active"
         },
 
         isDefaultVariant: {
+
             type: Boolean,
             default: false
         },
 
         isFeatured: {
+
             type: Boolean,
             default: false
         },
@@ -262,12 +287,14 @@ const productVariantSchema = new mongoose.Schema(
         // ======================================================
 
         createdBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
         },
 
         updatedBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
@@ -278,23 +305,27 @@ const productVariantSchema = new mongoose.Schema(
         // ======================================================
 
         isDeleted: {
+
             type: Boolean,
             default: false,
             index: true
         },
 
         deletedAt: {
+
             type: Date,
             default: null
         },
 
         deletedBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
         }
     },
     {
+
         timestamps: true,
         versionKey: false
     }
@@ -305,82 +336,51 @@ const productVariantSchema = new mongoose.Schema(
 // ==========================================================
 
 // One SKU per company
-productVariantSchema.index(
-    {
-        companyId: 1,
-        sku: 1
-    },
-    {
+productVariantSchema.index({ sku: 1 }, {
+
         unique: true,
         sparse: true
-    }
-);
+    });
 
 // One Barcode per company
-productVariantSchema.index(
-    {
-        companyId: 1,
-        barcode: 1
-    },
-    {
+productVariantSchema.index({ barcode: 1 }, {
+
         unique: true,
         sparse: true
-    }
-);
+    });
 
 // Prevent duplicate variant combinations
-productVariantSchema.index(
-    {
-        companyId: 1,
-        productId: 1,
+productVariantSchema.index({ productId: 1,
         attributes: 1
-    },
-    {
+     }, {
+
         unique: true
-    }
-);
+    });
 
 // Product Wise
-productVariantSchema.index({
-    companyId: 1,
-    productId: 1
-});
+productVariantSchema.index({ productId: 1 });
 
 // Status
-productVariantSchema.index({
-    companyId: 1,
-    status: 1
-});
+productVariantSchema.index({ status: 1 });
 
 // Default Variant
-productVariantSchema.index({
-    companyId: 1,
-    isDefaultVariant: 1
-});
+productVariantSchema.index({ isDefaultVariant: 1 });
 
 // Featured Variant
-productVariantSchema.index({
-    companyId: 1,
-    isFeatured: 1
-});
+productVariantSchema.index({ isFeatured: 1 });
 
 // Inventory Tracking
-productVariantSchema.index({
-    companyId: 1,
-    trackInventory: 1
-});
+productVariantSchema.index({ trackInventory: 1 });
 
 // Soft Delete
-productVariantSchema.index({
-    companyId: 1,
-    isDeleted: 1
-});
+productVariantSchema.index({ isDeleted: 1 });
 
 // ==========================================================
 // Virtual
 // ==========================================================
 
 productVariantSchema.virtual("id").get(function () {
+
     return this._id.toHexString();
 });
 
@@ -390,6 +390,7 @@ productVariantSchema.virtual("id").get(function () {
 
 // Soft Delete
 productVariantSchema.methods.softDelete = function (userId) {
+
     this.isDeleted = true;
     this.deletedAt = new Date();
     this.deletedBy = userId;
@@ -398,12 +399,14 @@ productVariantSchema.methods.softDelete = function (userId) {
 
 // Activate
 productVariantSchema.methods.activate = function () {
+
     this.status = "Active";
     return this.save();
 };
 
 // Deactivate
 productVariantSchema.methods.deactivate = function () {
+
     this.status = "Inactive";
     return this.save();
 };
@@ -413,14 +416,15 @@ productVariantSchema.methods.deactivate = function () {
 // ==========================================================
 
 // Get Active Variants
-productVariantSchema.statics.getActiveVariants = function (companyId, productId = null) {
+productVariantSchema.statics.getActiveVariants = function(productId = null) {
+
     const filter = {
-        companyId,
         status: "Active",
         isDeleted: false
     };
 
     if (productId) {
+
         filter.productId = productId;
     }
 
@@ -428,15 +432,16 @@ productVariantSchema.statics.getActiveVariants = function (companyId, productId 
         .populate("attributes.variantTypeId", "name")
         .populate("attributes.variantId", "name")
         .sort({
+
             isDefaultVariant: -1,
             sellingPrice: 1
         });
 };
 
 // Get Default Variant
-productVariantSchema.statics.getDefaultVariant = function (companyId, productId) {
+productVariantSchema.statics.getDefaultVariant = function(productId) {
+
     return this.findOne({
-        companyId,
         productId,
         isDefaultVariant: true,
         isDeleted: false
@@ -448,7 +453,9 @@ productVariantSchema.statics.getDefaultVariant = function (companyId, productId)
 // ==========================================================
 
 productVariantSchema.query.active = function () {
+
     return this.where({
+
         status: "Active",
         isDeleted: false
     });
@@ -459,9 +466,11 @@ productVariantSchema.query.active = function () {
 // ==========================================================
 
 productVariantSchema.set("toJSON", {
+
     virtuals: true,
     versionKey: false,
     transform: function (doc, ret) {
+
         delete ret._id;
         return ret;
     }

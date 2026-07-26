@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Salary Component Schema
 // ==========================================================
@@ -9,13 +8,16 @@ const mongoose = require("mongoose");
 const salaryComponentSchema = new mongoose.Schema(
 {
 
+
     name:{
+
         type:String,
         required:true
     },
 
 
     type:{
+
         type:String,
         enum:[
             "Earning",
@@ -26,23 +28,23 @@ const salaryComponentSchema = new mongoose.Schema(
 
 
     amount:{
+
         type:Number,
         default:0
     },
 
 
     description:{
+
         type:String,
         default:""
     }
 
 },
 {
+
     _id:false
 });
-
-
-
 
 
 // ==========================================================
@@ -53,34 +55,20 @@ const salaryComponentSchema = new mongoose.Schema(
 const payrollSchema = new mongoose.Schema(
 {
 
-// ==========================================================
-// Company Information
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
 
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true
 },
 
 
-
 departmentId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Department"
 },
-
-
-
 
 
 // ==========================================================
@@ -89,6 +77,7 @@ departmentId:{
 
 
 employeeId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Employee",
     required:true,
@@ -97,24 +86,24 @@ employeeId:{
 
 
 employeeCode:{
+
     type:String,
     required:true
 },
 
 
 employeeName:{
+
     type:String,
     required:true
 },
 
 
-
 designation:{
+
     type:String,
     default:""
 },
-
-
 
 
 // ==========================================================
@@ -123,23 +112,24 @@ designation:{
 
 
 payrollMonth:{
+
     type:Number,
     required:true
 },
 
 
 payrollYear:{
+
     type:Number,
     required:true
 },
 
 
 payrollPeriod:{
+
     type:String,
     default:""
 },
-
-
 
 
 // ==========================================================
@@ -148,12 +138,14 @@ payrollPeriod:{
 
 
 basicSalary:{
+
     type:Number,
     default:0
 },
 
 
 grossSalary:{
+
     type:Number,
     default:0
 },
@@ -170,34 +162,38 @@ salaryComponents:[
 
 
 totalWorkingDays:{
+
     type:Number,
     default:0
 },
 
 
 presentDays:{
+
     type:Number,
     default:0
 },
 
 
 absentDays:{
+
     type:Number,
     default:0
 },
 
 
 leaveDays:{
+
     type:Number,
     default:0
 },
 
 
 halfDays:{
+
     type:Number,
     default:0
 },
-
 
 
 // ==========================================================
@@ -206,22 +202,24 @@ halfDays:{
 
 
 totalWorkingHours:{
+
     type:Number,
     default:0
 },
 
 
 overtimeHours:{
+
     type:Number,
     default:0
 },
 
 
 overtimeAmount:{
+
     type:Number,
     default:0
 },
-
 
 
 // ==========================================================
@@ -230,28 +228,31 @@ overtimeAmount:{
 
 
 allowanceAmount:{
+
     type:Number,
     default:0
 },
 
 
 bonusAmount:{
+
     type:Number,
     default:0
 },
 
 
 commissionAmount:{
+
     type:Number,
     default:0
 },
 
 
 otherEarnings:{
+
     type:Number,
     default:0
 },
-
 
 
 // ==========================================================
@@ -260,46 +261,52 @@ otherEarnings:{
 
 
 lateDeduction:{
+
     type:Number,
     default:0
 },
 
 
 absentDeduction:{
+
     type:Number,
     default:0
 },
 
 
 leaveDeduction:{
+
     type:Number,
     default:0
 },
 
 
 taxAmount:{
+
     type:Number,
     default:0
 },
 
 
 loanDeduction:{
+
     type:Number,
     default:0
 },
 
 
 advanceSalaryDeduction:{
+
     type:Number,
     default:0
 },
 
 
 otherDeduction:{
+
     type:Number,
     default:0
 },
-
 
 
 // ==========================================================
@@ -308,22 +315,24 @@ otherDeduction:{
 
 
 totalEarnings:{
+
     type:Number,
     default:0
 },
 
 
 totalDeductions:{
+
     type:Number,
     default:0
 },
 
 
 netSalary:{
+
     type:Number,
     default:0
 },
-
 
 
 // ==========================================================
@@ -332,16 +341,17 @@ netSalary:{
 
 
 advanceSalaryId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdvanceSalary"
 },
 
 
 loanId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"EmployeeLoan"
 },
-
 
 
 // ==========================================================
@@ -350,6 +360,7 @@ loanId:{
 
 
 payrollStatus:{
+
     type:String,
     enum:[
         "Draft",
@@ -362,8 +373,8 @@ payrollStatus:{
 },
 
 
-
 paymentStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -375,8 +386,8 @@ paymentStatus:{
 },
 
 
-
 paymentMethod:{
+
     type:String,
     enum:[
         "Cash",
@@ -388,8 +399,8 @@ paymentMethod:{
 },
 
 
-
 paymentDate:{
+
     type:Date
 },
 
@@ -400,21 +411,23 @@ paymentDate:{
 
 
 payslipNumber:{
+
     type:String,
     default:""
 },
 
 
 payslipGenerated:{
+
     type:Boolean,
     default:false
 },
 
 
 payslipGeneratedAt:{
+
     type:Date
 },
-
 
 
 // ==========================================================
@@ -423,6 +436,7 @@ payslipGeneratedAt:{
 
 
 approvalStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -433,26 +447,24 @@ approvalStatus:{
 },
 
 
-
 approvedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
-
 approvedAt:{
+
     type:Date
 },
 
 
-
 approvalNote:{
+
     type:String,
     default:""
 },
-
-
 
 
 // ==========================================================
@@ -461,31 +473,30 @@ approvalNote:{
 
 
 ledgerEntryId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Ledger"
 },
 
 
-
 expenseAccountId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Account"
 },
 
 
-
 isLedgerPosted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 ledgerPostedAt:{
+
     type:Date
 },
-
-
 
 
 // ==========================================================
@@ -494,48 +505,52 @@ ledgerPostedAt:{
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
 deletedAt:{
+
     type:Date
 },
 
 
 notes:{
+
     type:String,
     default:""
 }
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
 
 
 // ==========================================================
@@ -545,45 +560,31 @@ notes:{
 
 // One employee one payroll per month
 
-payrollSchema.index(
-{
-    companyId:1,
-    employeeId:1,
+payrollSchema.index({ employeeId:1,
     payrollMonth:1,
     payrollYear:1
-},
-{
+ }, {
+
     unique:true
 });
 
 
-
-payrollSchema.index({
-    companyId:1,
-    payrollMonth:1,
+payrollSchema.index({ payrollMonth:1,
     payrollYear:1
-});
-
+ });
 
 
 payrollSchema.index({
+
     branchId:1,
     payrollStatus:1
 });
 
 
-
-payrollSchema.index({
-    paymentStatus:1
-});
+payrollSchema.index({ paymentStatus:1 });
 
 
-
-payrollSchema.index({
-    approvalStatus:1
-});
-
-
+payrollSchema.index({ approvalStatus:1 });
 
 
 // ==========================================================
@@ -591,13 +592,11 @@ payrollSchema.index({
 // ==========================================================
 
 
-
 // Calculate Salary
 
 
 payrollSchema.methods.calculateSalary =
 function(){
-
 
 
     this.totalEarnings =
@@ -613,8 +612,6 @@ function(){
         this.otherEarnings +
 
         this.overtimeAmount;
-
-
 
 
     this.totalDeductions =
@@ -634,8 +631,6 @@ function(){
         this.otherDeduction;
 
 
-
-
     this.netSalary =
 
         this.totalEarnings -
@@ -643,13 +638,10 @@ function(){
         this.totalDeductions;
 
 
-
     return this.netSalary;
 
 
 };
-
-
 
 
 // Approve Payroll
@@ -673,8 +665,6 @@ function(userId){
 };
 
 
-
-
 // Mark Paid
 
 
@@ -694,14 +684,9 @@ function(){
 };
 
 
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
-
 
 
 // Employee Payroll History
@@ -713,12 +698,14 @@ function(employeeId){
 
     return this.find({
 
+
         employeeId,
 
         isDeleted:false
 
     })
     .sort({
+
 
         payrollYear:-1,
 
@@ -730,25 +717,16 @@ function(employeeId){
 };
 
 
-
-
-
-
 // Monthly Payroll Report
 
 
 payrollSchema.statics.getMonthlyPayroll =
-function(
-    companyId,
-    month,
+function(month,
     year
 ){
 
 
     return this.find({
-
-        companyId,
-
         payrollMonth:month,
 
         payrollYear:year,
@@ -761,17 +739,11 @@ function(
 };
 
 
-
-
-
-
 // Payroll Summary
 
 
 payrollSchema.statics.getPayrollSummary =
-async function(
-    companyId,
-    month,
+async function(month,
     year
 ){
 
@@ -781,11 +753,9 @@ async function(
 
         {
 
+
             $match:
             {
-
-                companyId,
-
                 payrollMonth:month,
 
                 payrollYear:year,
@@ -799,20 +769,24 @@ async function(
 
         {
 
+
             $group:
             {
+
 
                 _id:null,
 
 
                 totalSalary:
                 {
+
                     $sum:"$netSalary"
                 },
 
 
                 totalEmployees:
                 {
+
                     $sum:1
                 }
 
@@ -828,9 +802,6 @@ async function(
 };
 
 
-
-
-
 // ==========================================================
 // QUERY HELPER
 // ==========================================================
@@ -842,15 +813,13 @@ function(){
 
     return this.where({
 
+
         isDeleted:false
 
     });
 
 
 };
-
-
-
 
 
 // ==========================================================
@@ -862,6 +831,7 @@ payrollSchema.set(
 "toJSON",
 {
 
+
     virtuals:true,
 
 
@@ -870,6 +840,7 @@ payrollSchema.set(
         ret
     ){
 
+
         delete ret.__v;
 
         return ret;
@@ -877,9 +848,6 @@ payrollSchema.set(
     }
 
 });
-
-
-
 
 
 // ==========================================================

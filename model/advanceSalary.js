@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Installment Schema
 // ==========================================================
@@ -9,29 +8,35 @@ const mongoose = require("mongoose");
 const installmentSchema = new mongoose.Schema(
 {
 
+
     installmentNumber:{
+
         type:Number,
         required:true
     },
 
 
     amount:{
+
         type:Number,
         default:0
     },
 
 
     dueDate:{
+
         type:Date
     },
 
 
     paidDate:{
+
         type:Date
     },
 
 
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -44,11 +49,9 @@ const installmentSchema = new mongoose.Schema(
 
 },
 {
+
     _id:false
 });
-
-
-
 
 
 // ==========================================================
@@ -59,33 +62,20 @@ const installmentSchema = new mongoose.Schema(
 const advanceSalarySchema = new mongoose.Schema(
 {
 
-// ==========================================================
-// Company Information
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
 
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true
 },
 
 
-
 departmentId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Department"
 },
-
-
 
 
 // ==========================================================
@@ -94,6 +84,7 @@ departmentId:{
 
 
 employeeId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Employee",
     required:true,
@@ -102,17 +93,17 @@ employeeId:{
 
 
 employeeCode:{
+
     type:String,
     required:true
 },
 
 
 employeeName:{
+
     type:String,
     required:true
 },
-
-
 
 
 // ==========================================================
@@ -121,6 +112,7 @@ employeeName:{
 
 
 requestNumber:{
+
     type:String,
     required:true,
     unique:true
@@ -128,29 +120,31 @@ requestNumber:{
 
 
 requestDate:{
+
     type:Date,
     default:Date.now
 },
 
 
 advanceAmount:{
+
     type:Number,
     required:true
 },
 
 
 approvedAmount:{
+
     type:Number,
     default:0
 },
 
 
-
 reason:{
+
     type:String,
     required:true
 },
-
 
 
 // ==========================================================
@@ -159,6 +153,7 @@ reason:{
 
 
 repaymentType:{
+
     type:String,
     enum:[
         "Single Payment",
@@ -169,12 +164,14 @@ repaymentType:{
 
 
 installmentCount:{
+
     type:Number,
     default:1
 },
 
 
 installmentAmount:{
+
     type:Number,
     default:0
 },
@@ -190,8 +187,8 @@ installments:[
 // ==========================================================
 
 
-
 approvalStatus:{
+
     type:String,
     enum:[
         "Draft",
@@ -204,8 +201,6 @@ approvalStatus:{
 },
 
 
-
-
 // ==========================================================
 // Manager Approval
 // ==========================================================
@@ -213,7 +208,9 @@ approvalStatus:{
 
 managerApproval:{
 
+
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -225,24 +222,25 @@ managerApproval:{
 
 
     approvedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser"
     },
 
 
     approvedAt:{
+
         type:Date
     },
 
 
     comment:{
+
         type:String,
         default:""
     }
 
 },
-
-
 
 
 // ==========================================================
@@ -252,7 +250,9 @@ managerApproval:{
 
 hrApproval:{
 
+
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -264,24 +264,25 @@ hrApproval:{
 
 
     approvedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser"
     },
 
 
     approvedAt:{
+
         type:Date
     },
 
 
     comment:{
+
         type:String,
         default:""
     }
 
 },
-
-
 
 
 // ==========================================================
@@ -290,6 +291,7 @@ hrApproval:{
 
 
 paymentStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -301,8 +303,8 @@ paymentStatus:{
 },
 
 
-
 paymentMethod:{
+
     type:String,
     enum:[
         "Cash",
@@ -314,26 +316,24 @@ paymentMethod:{
 },
 
 
-
 paymentDate:{
+
     type:Date
 },
 
 
-
 transactionId:{
+
     type:String,
     default:""
 },
 
 
-
 paidBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
-
-
 
 
 // ==========================================================
@@ -342,32 +342,31 @@ paidBy:{
 
 
 isPayrollAdjusted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 payrollId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Payroll"
 },
 
 
-
 deductedAmount:{
+
     type:Number,
     default:0
 },
-
 
 
 remainingAmount:{
+
     type:Number,
     default:0
 },
-
-
 
 
 // ==========================================================
@@ -376,20 +375,21 @@ remainingAmount:{
 
 
 ledgerEntryId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Ledger"
 },
 
 
-
 isLedgerPosted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 ledgerPostedAt:{
+
     type:Date
 },
 
@@ -400,54 +400,58 @@ ledgerPostedAt:{
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 cancelledBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 cancelledAt:{
+
     type:Date
 },
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
 deletedAt:{
+
     type:Date
 },
 
 
 notes:{
+
     type:String,
     default:""
 }
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
 
 
 // ==========================================================
@@ -455,19 +459,14 @@ notes:{
 // ==========================================================
 
 
+advanceSalarySchema.index({ requestNumber:1 }, {
 
-advanceSalarySchema.index(
-{
-    companyId:1,
-    requestNumber:1
-},
-{
     unique:true
 });
 
 
-
 advanceSalarySchema.index({
+
 
     employeeId:1,
 
@@ -476,39 +475,18 @@ advanceSalarySchema.index({
 });
 
 
-
-advanceSalarySchema.index({
-
-    companyId:1,
-
-    approvalStatus:1
-
-});
+advanceSalarySchema.index({ approvalStatus:1 });
 
 
-
-advanceSalarySchema.index({
-
-    paymentStatus:1
-
-});
+advanceSalarySchema.index({ paymentStatus:1 });
 
 
-
-advanceSalarySchema.index({
-
-    payrollId:1
-
-});
-
-
-
+advanceSalarySchema.index({ payrollId:1 });
 
 
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Calculate Remaining Amount
@@ -525,22 +503,17 @@ function(){
         this.deductedAmount;
 
 
-
     if(this.remainingAmount < 0)
     {
+
         this.remainingAmount = 0;
     }
-
 
 
     return this.remainingAmount;
 
 
 };
-
-
-
-
 
 
 // Approve Advance Salary
@@ -562,16 +535,10 @@ function(userId){
     this.hrApproval.approvedAt = new Date();
 
 
-
     return this.save();
 
 
 };
-
-
-
-
-
 
 
 // Reject Advance Salary
@@ -596,16 +563,10 @@ function(userId, reason){
     this.hrApproval.comment=reason;
 
 
-
     return this.save();
 
 
 };
-
-
-
-
-
 
 
 // Mark Payment Complete
@@ -613,7 +574,6 @@ function(userId, reason){
 
 advanceSalarySchema.methods.markPaid =
 function(transactionId){
-
 
 
     this.paymentStatus="Paid";
@@ -625,16 +585,10 @@ function(transactionId){
     this.transactionId=transactionId;
 
 
-
     return this.save();
 
 
 };
-
-
-
-
-
 
 
 // Cancel Request
@@ -653,21 +607,15 @@ function(userId){
     this.cancelledAt=new Date();
 
 
-
     return this.save();
 
 
 };
 
 
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
-
 
 
 // Employee Advance History
@@ -679,6 +627,7 @@ function(employeeId){
 
     return this.find({
 
+
         employeeId,
 
         isDeleted:false
@@ -686,6 +635,7 @@ function(employeeId){
     })
     .sort({
 
+
         requestDate:-1
 
     });
@@ -694,23 +644,14 @@ function(employeeId){
 };
 
 
-
-
-
-
-
-
 // Pending Approval List
 
 
 advanceSalarySchema.statics.getPendingApproval =
-function(companyId){
+function(){
 
 
     return this.find({
-
-        companyId,
-
         approvalStatus:"Pending",
 
         isDeleted:false
@@ -718,6 +659,7 @@ function(companyId){
     })
     .sort({
 
+
         requestDate:-1
 
     });
@@ -726,18 +668,11 @@ function(companyId){
 };
 
 
-
-
-
-
-
-// Company Advance Summary
+// Advance Summary
 
 
 advanceSalarySchema.statics.getSummary =
-async function(
-    companyId
-){
+async function(){
 
 
     return this.aggregate([
@@ -745,11 +680,9 @@ async function(
 
         {
 
+
             $match:
             {
-
-                companyId,
-
                 isDeleted:false
 
             }
@@ -759,26 +692,31 @@ async function(
 
         {
 
+
             $group:
             {
+
 
                 _id:null,
 
 
                 totalAdvance:
                 {
+
                     $sum:"$approvedAmount"
                 },
 
 
                 totalDeducted:
                 {
+
                     $sum:"$deductedAmount"
                 },
 
 
                 totalRemaining:
                 {
+
                     $sum:"$remainingAmount"
                 }
 
@@ -793,11 +731,6 @@ async function(
 };
 
 
-
-
-
-
-
 // ==========================================================
 // QUERY HELPER
 // ==========================================================
@@ -809,16 +742,13 @@ function(){
 
     return this.where({
 
+
         isDeleted:false
 
     });
 
 
 };
-
-
-
-
 
 
 // ==========================================================
@@ -832,6 +762,7 @@ advanceSalarySchema.set(
 
 {
 
+
     virtuals:true,
 
 
@@ -840,6 +771,7 @@ advanceSalarySchema.set(
         ret
     ){
 
+
         delete ret.__v;
 
         return ret;
@@ -847,10 +779,6 @@ advanceSalarySchema.set(
     }
 
 });
-
-
-
-
 
 
 // ==========================================================

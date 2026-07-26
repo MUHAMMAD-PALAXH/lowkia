@@ -5,63 +5,75 @@ const mongoose = require("mongoose");
 // ==========================================================
 const stockAdjustmentItemSchema = new mongoose.Schema(
   {
+
     productId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Product",
       required: true,
     },
 
     productVariantId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "ProductVariant",
       default: null,
     },
 
     sku: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     productName: {
+
       type: String,
       required: true,
       trim: true,
     },
 
     systemQuantity: {
+
       type: Number,
       required: true,
       min: 0,
     },
 
     actualQuantity: {
+
       type: Number,
       required: true,
       min: 0,
     },
 
     adjustmentQuantity: {
+
       type: Number,
       default: 0,
     },
 
     unitCost: {
+
       type: Number,
       default: 0,
     },
 
     totalCost: {
+
       type: Number,
       default: 0,
     },
 
     reason: {
+
       type: String,
       default: "",
     },
   },
   {
+
     _id: false,
   }
 );
@@ -70,18 +82,13 @@ const stockAdjustmentItemSchema = new mongoose.Schema(
 // Stock Adjustment Schema
 // ==========================================================
 const stockAdjustmentSchema = new mongoose.Schema(
-  {
-    // ==========================================================
-    // Company & Branch
-    // ==========================================================
-    companyId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Company",
-      required: true,
-      index: true,
-    },
+{
 
+// ==========================================================
+    // Branch
+    // ==========================================================
     branchId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
       required: true,
@@ -92,6 +99,7 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // Adjustment Identity
     // ==========================================================
     adjustmentNumber: {
+
       type: String,
       required: true,
       unique: true,
@@ -100,11 +108,13 @@ const stockAdjustmentSchema = new mongoose.Schema(
     },
 
     adjustmentDate: {
+
       type: Date,
       default: Date.now,
     },
 
     referenceNumber: {
+
       type: String,
       default: "",
     },
@@ -113,6 +123,7 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // Warehouse
     // ==========================================================
     warehouseId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Warehouse",
       required: true,
@@ -123,18 +134,21 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // Adjustment Information
     // ==========================================================
     adjustmentType: {
+
       type: String,
       enum: ["Increase", "Decrease"],
       required: true,
     },
 
     adjustmentReason: {
+
       type: String,
       enum: ["Damage", "Expired", "Lost", "Physical Count", "Opening Correction", "System Error", "Other"],
       required: true,
     },
 
     description: {
+
       type: String,
       default: "",
     },
@@ -148,39 +162,46 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // Approval Workflow
     // ==========================================================
     status: {
+
       type: String,
       enum: ["Draft", "Pending Approval", "Approved", "Rejected", "Completed", "Cancelled"],
       default: "Draft",
     },
 
     requiresApproval: {
+
       type: Boolean,
       default: true,
     },
 
     approvedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     approvedAt: {
+
       type: Date,
       default: null,
     },
 
     rejectedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     rejectedAt: {
+
       type: Date,
       default: null,
     },
 
     rejectionReason: {
+
       type: String,
       default: "",
     },
@@ -189,22 +210,26 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // Stock Integration
     // ==========================================================
     stockMovementId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "StockMovement",
       default: null,
     },
 
     isStockUpdated: {
+
       type: Boolean,
       default: false,
     },
 
     stockUpdatedAt: {
+
       type: Date,
       default: null,
     },
 
     stockUpdatedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
@@ -214,23 +239,27 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // Accounting Integration
     // ==========================================================
     journalId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Journal",
       default: null,
     },
 
     isJournalPosted: {
+
       type: Boolean,
       default: false,
     },
 
     ledgerId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ledger",
       default: null,
     },
 
     isLedgerPosted: {
+
       type: Boolean,
       default: false,
     },
@@ -240,24 +269,30 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // ==========================================================
     attachments: [
       {
+
         fileName: {
+
           type: String,
           default: "",
         },
         fileUrl: {
+
           type: String,
           default: "",
         },
         fileType: {
+
           type: String,
           default: "",
         },
         uploadedBy: {
+
           type: mongoose.Schema.Types.ObjectId,
           ref: "AdminUser",
           default: null,
         },
         uploadedAt: {
+
           type: Date,
           default: Date.now,
         },
@@ -268,11 +303,13 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // Notes
     // ==========================================================
     note: {
+
       type: String,
       default: "",
     },
 
     internalNote: {
+
       type: String,
       default: "",
     },
@@ -281,24 +318,28 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // Audit Information
     // ==========================================================
     createdBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       required: true,
     },
 
     updatedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     cancelledBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     cancelledAt: {
+
       type: Date,
       default: null,
     },
@@ -307,22 +348,26 @@ const stockAdjustmentSchema = new mongoose.Schema(
     // Soft Delete
     // ==========================================================
     isDeleted: {
+
       type: Boolean,
       default: false,
     },
 
     deletedAt: {
+
       type: Date,
       default: null,
     },
 
     deletedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
   },
   {
+
     timestamps: true, // Adds createdAt & updatedAt
   }
 );
@@ -331,23 +376,24 @@ const stockAdjustmentSchema = new mongoose.Schema(
 // DATABASE INDEXES
 // ==========================================================
 
-stockAdjustmentSchema.index({ companyId: 1, adjustmentNumber: 1 }, { unique: true });
-stockAdjustmentSchema.index({ companyId: 1, adjustmentDate: -1 });
+stockAdjustmentSchema.index({ adjustmentNumber: 1  }, { unique: true });
+stockAdjustmentSchema.index({ adjustmentDate: -1  });
 stockAdjustmentSchema.index({ warehouseId: 1, adjustmentDate: -1 });
 stockAdjustmentSchema.index({ status: 1 });
 stockAdjustmentSchema.index({ adjustmentReason: 1 });
 stockAdjustmentSchema.index({ stockMovementId: 1 });
 stockAdjustmentSchema.index({ createdBy: 1, createdAt: -1 });
-stockAdjustmentSchema.index({ companyId: 1, isDeleted: 1 });
+stockAdjustmentSchema.index({ isDeleted: 1  });
 
 // Additional useful indexes
-stockAdjustmentSchema.index({ companyId: 1, status: 1, adjustmentDate: -1 });
-stockAdjustmentSchema.index({ companyId: 1, adjustmentReason: 1, status: 1 });
+stockAdjustmentSchema.index({ status: 1, adjustmentDate: -1  });
+stockAdjustmentSchema.index({ adjustmentReason: 1, status: 1  });
 
 // ==========================================================
 // VIRTUAL FIELDS
 // ==========================================================
 stockAdjustmentSchema.virtual("id").get(function () {
+
   return this._id.toHexString();
 });
 
@@ -356,7 +402,9 @@ stockAdjustmentSchema.virtual("id").get(function () {
 // ==========================================================
 
 stockAdjustmentSchema.methods.calculateAdjustment = function () {
+
   this.items.forEach((item) => {
+
     item.adjustmentQuantity = item.actualQuantity - item.systemQuantity;
     item.totalCost = item.adjustmentQuantity * item.unitCost;
   });
@@ -365,6 +413,7 @@ stockAdjustmentSchema.methods.calculateAdjustment = function () {
 };
 
 stockAdjustmentSchema.methods.approve = function (userId) {
+
   this.status = "Approved";
   this.approvedBy = userId;
   this.approvedAt = new Date();
@@ -372,6 +421,7 @@ stockAdjustmentSchema.methods.approve = function (userId) {
 };
 
 stockAdjustmentSchema.methods.reject = function (userId, reason) {
+
   this.status = "Rejected";
   this.rejectedBy = userId;
   this.rejectedAt = new Date();
@@ -380,6 +430,7 @@ stockAdjustmentSchema.methods.reject = function (userId, reason) {
 };
 
 stockAdjustmentSchema.methods.completeStockUpdate = function (movementId, userId) {
+
   this.isStockUpdated = true;
   this.stockMovementId = movementId;
   this.stockUpdatedBy = userId;
@@ -392,43 +443,46 @@ stockAdjustmentSchema.methods.completeStockUpdate = function (movementId, userId
 // STATIC METHODS
 // ==========================================================
 
-stockAdjustmentSchema.statics.getCompanyAdjustments = function (companyId) {
+stockAdjustmentSchema.statics.getAllAdjustments = function() {
+
   return this.find({
-    companyId,
     isDeleted: false,
   }).sort({ adjustmentDate: -1 });
 };
 
 stockAdjustmentSchema.statics.getWarehouseAdjustments = function (warehouseId) {
+
   return this.find({
+
     warehouseId,
     isDeleted: false,
   }).sort({ adjustmentDate: -1 });
 };
 
-stockAdjustmentSchema.statics.getPendingApproval = function (companyId) {
+stockAdjustmentSchema.statics.getPendingApproval = function() {
+
   return this.find({
-    companyId,
     status: "Pending Approval",
     isDeleted: false,
   }).sort({ createdAt: -1 });
 };
 
-stockAdjustmentSchema.statics.getDamageReport = function (companyId) {
+stockAdjustmentSchema.statics.getDamageReport = function() {
+
   return this.find({
-    companyId,
     adjustmentReason: "Damage",
     isDeleted: false,
   });
 };
 
-stockAdjustmentSchema.statics.getMonthlyReport = function (companyId, month, year) {
+stockAdjustmentSchema.statics.getMonthlyReport = function(month, year) {
+
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0);
 
   return this.find({
-    companyId,
     adjustmentDate: {
+
       $gte: startDate,
       $lte: endDate,
     },
@@ -441,18 +495,23 @@ stockAdjustmentSchema.statics.getMonthlyReport = function (companyId, month, yea
 // ==========================================================
 
 stockAdjustmentSchema.query.active = function () {
+
   return this.where({ isDeleted: false });
 };
 
 stockAdjustmentSchema.query.pending = function () {
+
   return this.where({
+
     status: "Pending Approval",
     isDeleted: false,
   });
 };
 
 stockAdjustmentSchema.query.completed = function () {
+
   return this.where({
+
     status: "Completed",
     isDeleted: false,
   });
@@ -462,9 +521,11 @@ stockAdjustmentSchema.query.completed = function () {
 // JSON CONFIG
 // ==========================================================
 stockAdjustmentSchema.set("toJSON", {
+
   virtuals: true,
   versionKey: false,
   transform: function (doc, ret) {
+
     delete ret._id;
     return ret;
   },

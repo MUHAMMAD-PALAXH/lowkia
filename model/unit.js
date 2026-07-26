@@ -6,24 +6,12 @@ const mongoose = require("mongoose");
 
 const unitSchema = new mongoose.Schema(
 {
-    // ======================================================
-    // Company
-    // ======================================================
 
-    companyId:{
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"Company",
-        required:true,
-        index:true
-    },
-
-
-
-    // ======================================================
     // Basic Information
     // ======================================================
 
     unitCode:{
+
         type:String,
         required:true,
         trim:true,
@@ -31,6 +19,7 @@ const unitSchema = new mongoose.Schema(
     },
 
     unitName:{
+
         type:String,
         required:true,
         trim:true,
@@ -38,6 +27,7 @@ const unitSchema = new mongoose.Schema(
     },
 
     shortName:{
+
         type:String,
         required:true,
         trim:true,
@@ -46,11 +36,11 @@ const unitSchema = new mongoose.Schema(
     },
 
     description:{
+
         type:String,
         default:"",
         trim:true
     },
-
 
 
     // ======================================================
@@ -58,6 +48,7 @@ const unitSchema = new mongoose.Schema(
     // ======================================================
 
     unitType:{
+
         type:String,
         enum:[
             "Quantity",
@@ -72,28 +63,29 @@ const unitSchema = new mongoose.Schema(
     },
 
 
-
     // ======================================================
     // Conversion
     // ======================================================
 
     baseUnit:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Unit",
         default:null
     },
 
     conversionFactor:{
+
         type:Number,
         default:1,
         min:1
     },
 
     isBaseUnit:{
+
         type:Boolean,
         default:true
     },
-
 
 
     // ======================================================
@@ -101,11 +93,13 @@ const unitSchema = new mongoose.Schema(
     // ======================================================
 
     sortOrder:{
+
         type:Number,
         default:0
     },
 
     status:{
+
         type:String,
         enum:[
             "Active",
@@ -115,16 +109,15 @@ const unitSchema = new mongoose.Schema(
     },
 
 
-
     // ======================================================
     // Statistics
     // ======================================================
 
     totalProducts:{
+
         type:Number,
         default:0
     },
-
 
 
     // ======================================================
@@ -132,17 +125,18 @@ const unitSchema = new mongoose.Schema(
     // ======================================================
 
     createdBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser",
         default:null
     },
 
     updatedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser",
         default:null
     },
-
 
 
     // ======================================================
@@ -150,16 +144,19 @@ const unitSchema = new mongoose.Schema(
     // ======================================================
 
     isDeleted:{
+
         type:Boolean,
         default:false
     },
 
     deletedAt:{
+
         type:Date,
         default:null
     },
 
     deletedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser",
         default:null
@@ -167,6 +164,7 @@ const unitSchema = new mongoose.Schema(
 
 },
 {
+
     timestamps:true,
     versionKey:false
 });
@@ -176,51 +174,25 @@ const unitSchema = new mongoose.Schema(
 // Indexes
 // ==========================================================
 
-unitSchema.index(
-    {
-        companyId: 1,
-        unitCode: 1
-    },
-    {
+unitSchema.index({ unitCode: 1 }, {
+
         unique: true
-    }
-);
+    });
 
-unitSchema.index(
-    {
-        companyId: 1,
-        unitName: 1
-    },
-    {
+unitSchema.index({ unitName: 1 }, {
+
         unique: true
-    }
-);
+    });
 
-unitSchema.index({
-    companyId: 1,
-    shortName: 1
-});
+unitSchema.index({ shortName: 1 });
 
-unitSchema.index({
-    companyId: 1,
-    unitType: 1
-});
+unitSchema.index({ unitType: 1 });
 
-unitSchema.index({
-    companyId: 1,
-    status: 1
-});
+unitSchema.index({ status: 1 });
 
-unitSchema.index({
-    companyId: 1,
-    isBaseUnit: 1
-});
+unitSchema.index({ isBaseUnit: 1 });
 
-unitSchema.index({
-    companyId: 1,
-    isDeleted: 1
-});
-
+unitSchema.index({ isDeleted: 1 });
 
 
 // ==========================================================
@@ -229,10 +201,10 @@ unitSchema.index({
 
 unitSchema.virtual("id").get(function () {
 
+
     return this._id.toHexString();
 
 });
-
 
 
 // ==========================================================
@@ -242,6 +214,7 @@ unitSchema.virtual("id").get(function () {
 // Soft Delete
 
 unitSchema.methods.softDelete = function (userId) {
+
 
     this.isDeleted = true;
     this.deletedAt = new Date();
@@ -256,6 +229,7 @@ unitSchema.methods.softDelete = function (userId) {
 
 unitSchema.methods.activate = function () {
 
+
     this.status = "Active";
 
     return this.save();
@@ -267,12 +241,12 @@ unitSchema.methods.activate = function () {
 
 unitSchema.methods.deactivate = function () {
 
+
     this.status = "Inactive";
 
     return this.save();
 
 };
-
 
 
 // ==========================================================
@@ -281,17 +255,16 @@ unitSchema.methods.deactivate = function () {
 
 // Get Active Units
 
-unitSchema.statics.getActiveUnits = function (companyId) {
+unitSchema.statics.getActiveUnits = function() {
+
 
     return this.find({
-
-        companyId,
-
         status: "Active",
 
         isDeleted: false
 
     }).sort({
+
 
         unitType: 1,
 
@@ -306,12 +279,10 @@ unitSchema.statics.getActiveUnits = function (companyId) {
 
 // Get Base Units
 
-unitSchema.statics.getBaseUnits = function (companyId) {
+unitSchema.statics.getBaseUnits = function() {
+
 
     return this.find({
-
-        companyId,
-
         isBaseUnit: true,
 
         status: "Active",
@@ -320,12 +291,12 @@ unitSchema.statics.getBaseUnits = function (companyId) {
 
     }).sort({
 
+
         unitName: 1
 
     });
 
 };
-
 
 
 // ==========================================================
@@ -334,7 +305,9 @@ unitSchema.statics.getBaseUnits = function (companyId) {
 
 unitSchema.query.active = function () {
 
+
     return this.where({
+
 
         status: "Active",
 
@@ -345,18 +318,19 @@ unitSchema.query.active = function () {
 };
 
 
-
 // ==========================================================
 // JSON Transform
 // ==========================================================
 
 unitSchema.set("toJSON", {
 
+
     virtuals: true,
 
     versionKey: false,
 
     transform: function (doc, ret) {
+
 
         delete ret._id;
 
@@ -365,7 +339,6 @@ unitSchema.set("toJSON", {
     }
 
 });
-
 
 
 // ==========================================================

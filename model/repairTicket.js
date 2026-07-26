@@ -2,103 +2,104 @@ const mongoose = require("mongoose");
 
 const repairItemSchema = new mongoose.Schema(
 {
+
     productId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Product",
         default:null
     },
 
     productVariantId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"ProductVariant",
         default:null
     },
 
     productName:{
+
         type:String,
         required:true
     },
 
     brand:{
+
         type:String,
         default:""
     },
 
     model:{
+
         type:String,
         default:""
     },
 
     category:{
+
         type:String,
         default:""
     },
 
     serialNumber:{
+
         type:String,
         default:"",
         uppercase:true
     },
 
     imei1:{
+
         type:String,
         default:"",
         uppercase:true
     },
 
     imei2:{
+
         type:String,
         default:"",
         uppercase:true
     },
 
     color:{
+
         type:String,
         default:""
     },
 
     accessories:[
         {
+
             type:String
         }
     ],
 
     problemDescription:{
+
         type:String,
         required:true
     },
 
     technicianRemark:{
+
         type:String,
         default:""
     }
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
 
 
 const repairTicketSchema = new mongoose.Schema(
 {
 
-// ======================================================
-// Company
-// ======================================================
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
 
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true,
@@ -106,17 +107,12 @@ branchId:{
 },
 
 
-
-
-
-
-
-
 // ======================================================
 // Ticket Information
 // ======================================================
 
 ticketNumber:{
+
     type:String,
     required:true,
     unique:true,
@@ -125,30 +121,28 @@ ticketNumber:{
 },
 
 receivedDate:{
+
     type:Date,
     default:Date.now
 },
 
 expectedDeliveryDate:{
+
     type:Date,
     default:null
 },
 
 completedDate:{
+
     type:Date,
     default:null
 },
 
 pickupDate:{
+
     type:Date,
     default:null
 },
-
-
-
-
-
-
 
 
 // ======================================================
@@ -156,41 +150,41 @@ pickupDate:{
 // ======================================================
 
 customerId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Customer",
     default:null
 },
 
 customerName:{
+
     type:String,
     required:true
 },
 
 phone:{
+
     type:String,
     required:true
 },
 
 alternatePhone:{
+
     type:String,
     default:""
 },
 
 email:{
+
     type:String,
     default:""
 },
 
 address:{
+
     type:String,
     default:""
 },
-
-
-
-
-
-
 
 
 // ======================================================
@@ -200,22 +194,18 @@ address:{
 device:repairItemSchema,
 
 
-
-
-
-
-
-
 // ======================================================
 // Warranty
 // ======================================================
 
 isWarranty:{
+
     type:Boolean,
     default:false
 },
 
 warrantyType:{
+
     type:String,
     enum:[
         "Manufacturer",
@@ -227,15 +217,10 @@ warrantyType:{
 },
 
 warrantyExpiry:{
+
     type:Date,
     default:null
 },
-
-
-
-
-
-
 
 
 // ======================================================
@@ -243,6 +228,7 @@ warrantyExpiry:{
 // ======================================================
 
 serviceType:{
+
     type:String,
     enum:[
         "Hardware",
@@ -259,6 +245,7 @@ serviceType:{
 },
 
 priority:{
+
     type:String,
     enum:[
         "Low",
@@ -270,6 +257,7 @@ priority:{
 },
 
 status:{
+
     type:String,
     enum:[
         "Pending",
@@ -288,42 +276,34 @@ status:{
 },
 
 
-
-
-
-
-
-
 // ======================================================
 // Technician
 // ======================================================
 
 assignedTechnician:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 diagnosis:{
+
     type:String,
     default:""
 },
 
 repairSolution:{
+
     type:String,
     default:""
 },
 
 internalNote:{
+
     type:String,
     default:""
 },
-
-
-
-
-
-
 
 
 // ======================================================
@@ -331,56 +311,67 @@ internalNote:{
 // ======================================================
 
 diagnosisCharge:{
+
     type:Number,
     default:0
 },
 
 serviceCharge:{
+
     type:Number,
     default:0
 },
 
 partsCost:{
+
     type:Number,
     default:0
 },
 
 laborCost:{
+
     type:Number,
     default:0
 },
 
 discount:{
+
     type:Number,
     default:0
 },
 
 tax:{
+
     type:Number,
     default:0
 },
 
 otherCharges:{
+
     type:Number,
     default:0
 },
 
 totalAmount:{
+
     type:Number,
     default:0
 },
 
 paidAmount:{
+
     type:Number,
     default:0
 },
 
 dueAmount:{
+
     type:Number,
     default:0
 },
 
 paymentStatus:{
+
     type:String,
     enum:[
         "Unpaid",
@@ -391,12 +382,6 @@ paymentStatus:{
 },
 
 
-
-
-
-
-
-
 // ======================================================
 // Spare Parts Used
 // ======================================================
@@ -404,7 +389,9 @@ paymentStatus:{
 usedParts:[
 {
 
+
     productId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Product"
     },
@@ -421,27 +408,24 @@ usedParts:[
 ],
 
 
-
-
-
-
-
-
 // ======================================================
 // Approval
 // ======================================================
 
 customerApproved:{
+
     type:Boolean,
     default:false
 },
 
 approvalDate:{
+
     type:Date,
     default:null
 },
 
 approvalMethod:{
+
     type:String,
     enum:[
         "Phone",
@@ -454,37 +438,28 @@ approvalMethod:{
 },
 
 
-
-
-
-
-
-
 // ======================================================
 // Delivery
 // ======================================================
 
 deliveredBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 receivedByCustomer:{
+
     type:String,
     default:""
 },
 
 customerSignature:{
+
     type:String,
     default:""
 },
-
-
-
-
-
-
 
 
 // ======================================================
@@ -494,11 +469,13 @@ customerSignature:{
 attachments:[
 {
 
+
     fileName:String,
 
     fileUrl:String,
 
     uploadedAt:{
+
         type:Date,
         default:Date.now
     }
@@ -507,46 +484,43 @@ attachments:[
 ],
 
 
-
-
-
-
-
-
 // ======================================================
 // Audit
 // ======================================================
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     required:true
 },
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 isDeleted:{
+
     type:Boolean,
     default:false
 }
 
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
 
 
 // ======================================================
 // INDEXES
 // ======================================================
 
-repairTicketSchema.index({companyId:1,ticketNumber:1},{unique:true});
+repairTicketSchema.index({ ticketNumber:1 }, {unique:true});
 repairTicketSchema.index({status:1});
 repairTicketSchema.index({phone:1});
 repairTicketSchema.index({customerId:1});
@@ -554,8 +528,7 @@ repairTicketSchema.index({assignedTechnician:1});
 repairTicketSchema.index({receivedDate:-1});
 repairTicketSchema.index({expectedDeliveryDate:1});
 repairTicketSchema.index({pickupDate:1});
-repairTicketSchema.index({companyId:1,branchId:1});
-
+repairTicketSchema.index({ branchId:1 });
 
 
 module.exports = mongoose.model("RepairTicket",repairTicketSchema);

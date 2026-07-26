@@ -2,127 +2,137 @@ const mongoose = require("mongoose");
 
 const emergencyContactSchema = new mongoose.Schema(
 {
+
     name:{
+
         type:String,
         trim:true
     },
 
     relationship:{
+
         type:String,
         trim:true
     },
 
     phone:{
+
         type:String,
         trim:true
     }
 
 },
 {
+
     _id:false
 });
 
 
-
 const bankInformationSchema=new mongoose.Schema(
 {
+
     bankName:{
+
         type:String,
         default:""
     },
 
     accountName:{
+
         type:String,
         default:""
     },
 
     accountNumber:{
+
         type:String,
         default:""
     },
 
     routingNumber:{
+
         type:String,
         default:""
     },
 
     mobileBankName:{
+
         type:String,
         default:""
     },
 
     mobileAccount:{
+
         type:String,
         default:""
     }
 
 },
 {
+
     _id:false
 });
 
 
-
 const leaveBalanceSchema=new mongoose.Schema(
 {
+
     casual:{
+
         type:Number,
         default:10
     },
 
     sick:{
+
         type:Number,
         default:14
     },
 
     annual:{
+
         type:Number,
         default:20
     },
 
     unpaid:{
+
         type:Number,
         default:9999
     }
 
 },
 {
+
     _id:false
 });
-
 
 
 const employeeSchema=new mongoose.Schema(
 {
 
-// ===================================================
-// Company
-// ===================================================
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
 
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true
 },
 
 departmentId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Department"
 },
 
 designationId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Designation"
 },
 
 shiftId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Shift"
 },
@@ -132,6 +142,7 @@ shiftId:{
 // ===================================================
 
 userId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     required:true,
@@ -143,6 +154,7 @@ userId:{
 // ===================================================
 
 employeeCode:{
+
     type:String,
     required:true,
     uppercase:true,
@@ -150,44 +162,52 @@ employeeCode:{
 },
 
 firstName:{
+
     type:String,
     required:true,
     trim:true
 },
 
 lastName:{
+
     type:String,
     required:true,
     trim:true
 },
 
 fullName:{
+
     type:String,
     default:""
 },
 
 email:{
+
     type:String,
     lowercase:true,
     trim:true
 },
 
 phone:{
+
     type:String,
     required:true
 },
 
 alternatePhone:{
+
     type:String,
     default:""
 },
 
 photo:{
+
     type:String,
     default:""
 },
 
 gender:{
+
     type:String,
     enum:[
         "Male",
@@ -197,10 +217,12 @@ gender:{
 },
 
 dateOfBirth:{
+
     type:Date
 },
 
 bloodGroup:{
+
     type:String,
     enum:[
         "A+",
@@ -215,6 +237,7 @@ bloodGroup:{
 },
 
 maritalStatus:{
+
     type:String,
     enum:[
         "Single",
@@ -226,41 +249,49 @@ maritalStatus:{
 },
 
 nationality:{
+
     type:String,
     default:"Bangladesh"
 },
 
 religion:{
+
     type:String,
     default:""
 },
 
 nidNumber:{
+
     type:String,
     default:""
 },
 
 passportNumber:{
+
     type:String,
     default:""
 },
 
 tinNumber:{
+
     type:String,
     default:""
 },
 
 drivingLicense:{
+
     type:String,
     default:""
 },
 
 presentAddress:{
+
     type:String,
     default:""
 },
 
 permanentAddress:{
+
     type:String,
     default:""
 },
@@ -270,19 +301,23 @@ permanentAddress:{
 // ===================================================
 
 joiningDate:{
+
     type:Date,
     required:true
 },
 
 confirmationDate:{
+
     type:Date
 },
 
 probationEndDate:{
+
     type:Date
 },
 
 employmentType:{
+
     type:String,
     enum:[
         "Permanent",
@@ -295,6 +330,7 @@ employmentType:{
 },
 
 employmentStatus:{
+
     type:String,
     enum:[
         "Active",
@@ -307,6 +343,7 @@ employmentStatus:{
 },
 
 reportingManager:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Employee"
 },
@@ -316,6 +353,7 @@ reportingManager:{
 // ===================================================
 
 salaryType:{
+
     type:String,
     enum:[
         "Monthly",
@@ -326,41 +364,49 @@ salaryType:{
 },
 
 basicSalary:{
+
     type:Number,
     default:0
 },
 
 houseRent:{
+
     type:Number,
     default:0
 },
 
 medicalAllowance:{
+
     type:Number,
     default:0
 },
 
 transportAllowance:{
+
     type:Number,
     default:0
 },
 
 foodAllowance:{
+
     type:Number,
     default:0
 },
 
 otherAllowance:{
+
     type:Number,
     default:0
 },
 
 hourlyRate:{
+
     type:Number,
     default:0
 },
 
 overtimeRate:{
+
     type:Number,
     default:0
 },
@@ -370,21 +416,25 @@ overtimeRate:{
 // ===================================================
 
 biometricId:{
+
     type:String,
     default:""
 },
 
 rfidCard:{
+
     type:String,
     default:""
 },
 
 faceId:{
+
     type:String,
     default:""
 },
 
 deviceEmployeeId:{
+
     type:String,
     default:""
 },
@@ -394,6 +444,7 @@ deviceEmployeeId:{
 // ===================================================
 
 leaveBalance:{
+
     type:leaveBalanceSchema,
     default:()=>({})
 },
@@ -403,6 +454,7 @@ leaveBalance:{
 // ===================================================
 
 bankInformation:{
+
     type:bankInformationSchema,
     default:()=>({})
 },
@@ -412,6 +464,7 @@ bankInformation:{
 // ===================================================
 
 emergencyContact:{
+
     type:emergencyContactSchema,
     default:()=>({})
 },
@@ -421,42 +474,50 @@ emergencyContact:{
 // ===================================================
 
 resume:{
+
     type:String,
     default:""
 },
 
 offerLetter:{
+
     type:String,
     default:""
 },
 
 joiningLetter:{
+
     type:String,
     default:""
 },
 
 contractFile:{
+
     type:String,
     default:""
 },
 
 nidFront:{
+
     type:String,
     default:""
 },
 
 nidBack:{
+
     type:String,
     default:""
 },
 
 passportFile:{
+
     type:String,
     default:""
 },
 
 profileDocuments:[
     {
+
         title:String,
         file:String
     }
@@ -467,49 +528,59 @@ profileDocuments:[
 // ===================================================
 
 remarks:{
+
     type:String,
     default:""
 },
 
 isActive:{
+
     type:Boolean,
     default:true
 },
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 deletedAt:{
+
     type:Date
 },
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 lastAttendance:{
+
     type:Date
 },
 
 lastPayrollDate:{
+
     type:Date
 }
 
 },
 {
+
     timestamps:true,
     versionKey:false
 });
@@ -519,47 +590,24 @@ lastPayrollDate:{
 // INDEXES
 // ==========================================================
 
-employeeSchema.index({
-    companyId: 1,
-    employeeCode: 1
-}, {
+employeeSchema.index({ employeeCode: 1 }, {
+
     unique: true
 });
 
-employeeSchema.index({
-    companyId: 1,
-    branchId: 1
-});
+employeeSchema.index({ branchId: 1 });
 
-employeeSchema.index({
-    companyId: 1,
-    departmentId: 1
-});
+employeeSchema.index({ departmentId: 1 });
 
-employeeSchema.index({
-    companyId: 1,
-    designationId: 1
-});
+employeeSchema.index({ designationId: 1 });
 
-employeeSchema.index({
-    companyId: 1,
-    employmentStatus: 1
-});
+employeeSchema.index({ employmentStatus: 1 });
 
-employeeSchema.index({
-    companyId: 1,
-    phone: 1
-});
+employeeSchema.index({ phone: 1 });
 
-employeeSchema.index({
-    companyId: 1,
-    email: 1
-});
+employeeSchema.index({ email: 1 });
 
-employeeSchema.index({
-    reportingManager: 1
-});
-
+employeeSchema.index({ reportingManager: 1 });
 
 
 // ==========================================================
@@ -568,10 +616,10 @@ employeeSchema.index({
 
 employeeSchema.virtual("name").get(function () {
 
+
     return `${this.firstName} ${this.lastName}`;
 
 });
-
 
 
 // ==========================================================
@@ -580,6 +628,7 @@ employeeSchema.virtual("name").get(function () {
 
 employeeSchema.pre("save", function (next) {
 
+
     this.fullName = `${this.firstName} ${this.lastName}`;
 
     next();
@@ -587,12 +636,12 @@ employeeSchema.pre("save", function (next) {
 });
 
 
-
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
 
 employeeSchema.methods.getGrossSalary = function () {
+
 
     return (
 
@@ -613,8 +662,8 @@ employeeSchema.methods.getGrossSalary = function () {
 };
 
 
-
 employeeSchema.methods.isCurrentlyActive = function () {
+
 
     return (
 
@@ -629,17 +678,14 @@ employeeSchema.methods.isCurrentlyActive = function () {
 };
 
 
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
 
-employeeSchema.statics.findActiveEmployees = function (companyId) {
+employeeSchema.statics.findActiveEmployees = function() {
+
 
     return this.find({
-
-        companyId,
-
         isDeleted: false,
 
         isActive: true,
@@ -651,19 +697,12 @@ employeeSchema.statics.findActiveEmployees = function (companyId) {
 };
 
 
-
-employeeSchema.statics.findByBranch = function (
-
-    companyId,
-
-    branchId
+employeeSchema.statics.findByBranch = function(branchId
 
 ) {
 
+
     return this.find({
-
-        companyId,
-
         branchId,
 
         isDeleted: false
@@ -673,19 +712,12 @@ employeeSchema.statics.findByBranch = function (
 };
 
 
-
-employeeSchema.statics.findByDepartment = function (
-
-    companyId,
-
-    departmentId
+employeeSchema.statics.findByDepartment = function(departmentId
 
 ) {
 
+
     return this.find({
-
-        companyId,
-
         departmentId,
 
         isDeleted: false
@@ -695,14 +727,15 @@ employeeSchema.statics.findByDepartment = function (
 };
 
 
-
 // ==========================================================
 // QUERY HELPER
 // ==========================================================
 
 employeeSchema.query.active = function () {
 
+
     return this.where({
+
 
         isDeleted: false,
 
@@ -713,16 +746,17 @@ employeeSchema.query.active = function () {
 };
 
 
-
 // ==========================================================
 // TO JSON
 // ==========================================================
 
 employeeSchema.set("toJSON", {
 
+
     virtuals: true,
 
     transform: function (doc, ret) {
+
 
         delete ret.__v;
 
@@ -731,7 +765,6 @@ employeeSchema.set("toJSON", {
     }
 
 });
-
 
 
 // ==========================================================

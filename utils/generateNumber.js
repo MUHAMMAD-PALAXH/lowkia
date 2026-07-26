@@ -1,32 +1,11 @@
-const Counter = require("../models/counter.model");
+const { generateCode } = require("../services/codeGenerator");
 
-async function generateNumber(prefix) {
-
-    const today = new Date();
-
-    const date = today.toISOString().slice(0,10).replace(/-/g,"");
-
-    const counter = await Counter.findOneAndUpdate(
-
-        {
-            name: prefix
-        },
-
-        {
-            $inc:{
-                sequence:1
-            }
-        },
-
-        {
-            new:true,
-            upsert:true
-        }
-
-    );
-
-    return `${prefix}-${date}-${String(counter.sequence).padStart(6,"0")}`;
-
+/**
+ * Thin wrapper — accepts a module name (e.g. "supplier", "purchase_order")
+ * and returns a global business ID (e.g. SUP-000001).
+ */
+async function generateNumber(module) {
+    return generateCode(module);
 }
 
 module.exports = generateNumber;

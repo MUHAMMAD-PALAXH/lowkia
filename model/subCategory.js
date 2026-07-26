@@ -6,18 +6,7 @@ const mongoose = require("mongoose");
 
 const subCategorySchema = new mongoose.Schema(
 {
-    // ======================================================
-    // Company
-    // ======================================================
 
-    companyId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Company",
-        required: true,
-        index: true
-    },
-
-    // ======================================================
     // Parent Category
     // ======================================================
 
@@ -164,47 +153,23 @@ const subCategorySchema = new mongoose.Schema(
 // Indexes
 // ==========================================================
 
-subCategorySchema.index(
-    {
-        companyId: 1,
-        categoryId: 1,
+subCategorySchema.index({ categoryId: 1,
         name: 1
-    },
-    {
+     }, {
         unique: true
-    }
-);
+    });
 
-subCategorySchema.index({
-    companyId: 1,
-    slug: 1
-});
+subCategorySchema.index({ slug: 1 });
 
-subCategorySchema.index({
-    companyId: 1,
-    status: 1
-});
+subCategorySchema.index({ status: 1 });
 
-subCategorySchema.index({
-    companyId: 1,
-    categoryId: 1
-});
+subCategorySchema.index({ categoryId: 1 });
 
-subCategorySchema.index({
-    companyId: 1,
-    isFeatured: 1
-});
+subCategorySchema.index({ isFeatured: 1 });
 
-subCategorySchema.index({
-    companyId: 1,
-    sortOrder: 1
-});
+subCategorySchema.index({ sortOrder: 1 });
 
-subCategorySchema.index({
-    companyId: 1,
-    isDeleted: 1
-});
-
+subCategorySchema.index({ isDeleted: 1 });
 
 
 // ==========================================================
@@ -216,7 +181,6 @@ subCategorySchema.virtual("id").get(function () {
     return this._id.toHexString();
 
 });
-
 
 
 // ==========================================================
@@ -241,7 +205,6 @@ subCategorySchema.pre("save", function (next) {
 });
 
 
-
 // ==========================================================
 // Instance Methods
 // ==========================================================
@@ -257,18 +220,14 @@ subCategorySchema.methods.softDelete = function (userId) {
 };
 
 
-
 // ==========================================================
 // Static Methods
 // ==========================================================
 
-subCategorySchema.statics.getActiveSubCategories = function (
-    companyId,
-    categoryId = null
+subCategorySchema.statics.getActiveSubCategories = function(categoryId = null
 ) {
 
     const filter = {
-        companyId,
         status: "Active",
         isDeleted: false
     };
@@ -286,7 +245,6 @@ subCategorySchema.statics.getActiveSubCategories = function (
 };
 
 
-
 // ==========================================================
 // Query Helpers
 // ==========================================================
@@ -302,7 +260,6 @@ subCategorySchema.query.active = function () {
     });
 
 };
-
 
 
 // ==========================================================
@@ -324,7 +281,6 @@ subCategorySchema.set("toJSON", {
     }
 
 });
-
 
 
 // ==========================================================

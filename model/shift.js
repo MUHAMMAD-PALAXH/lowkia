@@ -2,22 +2,12 @@ const mongoose = require("mongoose");
 
 const shiftSchema = new mongoose.Schema(
 {
-    // =====================================================
-    // Company
-    // =====================================================
 
-    companyId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Company",
-        required: true,
-        index: true
-    },
-
-    // =====================================================
     // Shift Information
     // =====================================================
 
     shiftCode: {
+
         type: String,
         required: true,
         uppercase: true,
@@ -25,12 +15,14 @@ const shiftSchema = new mongoose.Schema(
     },
 
     shiftName: {
+
         type: String,
         required: true,
         trim: true
     },
 
     description: {
+
         type: String,
         default: ""
     },
@@ -40,26 +32,31 @@ const shiftSchema = new mongoose.Schema(
     // =====================================================
 
     startTime: {
+
         type: String,       // Example: "09:00"
         required: true
     },
 
     endTime: {
+
         type: String,       // Example: "18:00"
         required: true
     },
 
     breakStartTime: {
+
         type: String,
         default: null
     },
 
     breakEndTime: {
+
         type: String,
         default: null
     },
 
     workingHours: {
+
         type: Number,
         default: 8
     },
@@ -69,21 +66,25 @@ const shiftSchema = new mongoose.Schema(
     // =====================================================
 
     lateGraceMinutes: {
+
         type: Number,
         default: 10
     },
 
     earlyLeaveGraceMinutes: {
+
         type: Number,
         default: 10
     },
 
     overtimeAfterMinutes: {
+
         type: Number,
         default: 30
     },
 
     minimumWorkingMinutes: {
+
         type: Number,
         default: 480
     },
@@ -93,6 +94,7 @@ const shiftSchema = new mongoose.Schema(
     // =====================================================
 
     shiftType: {
+
         type: String,
         enum: [
             "Regular",
@@ -104,6 +106,7 @@ const shiftSchema = new mongoose.Schema(
     },
 
     weeklyOff: [{
+
         type: String,
         enum: [
             "Saturday",
@@ -117,11 +120,13 @@ const shiftSchema = new mongoose.Schema(
     }],
 
     employeeCount: {
+
         type: Number,
         default: 0
     },
 
     status: {
+
         type: String,
         enum: [
             "Active",
@@ -135,56 +140,55 @@ const shiftSchema = new mongoose.Schema(
     // =====================================================
 
     createdBy: {
+
         type: mongoose.Schema.Types.ObjectId,
         ref: "AdminUser",
         required: true
     },
 
     updatedBy: {
+
         type: mongoose.Schema.Types.ObjectId,
         ref: "AdminUser"
     },
 
     deletedBy: {
+
         type: mongoose.Schema.Types.ObjectId,
         ref: "AdminUser"
     },
 
     isDeleted: {
+
         type: Boolean,
         default: false
     },
 
     deletedAt: {
+
         type: Date,
         default: null
     }
 
 },
 {
+
     timestamps: true,
     versionKey: false
 });
 
-shiftSchema.index(
-{
-    companyId:1,
-    shiftCode:1
-},
-{
+shiftSchema.index({ shiftCode:1 }, {
+
     unique:true
 });
 
-shiftSchema.index(
-{
-    companyId:1,
-    shiftName:1
-},
-{
+shiftSchema.index({ shiftName:1 }, {
+
     unique:true
 });
 
 shiftSchema.index({
+
     shiftName:"text",
     description:"text"
 });

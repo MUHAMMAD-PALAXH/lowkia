@@ -1,0 +1,144 @@
+const asyncHandler = require("express-async-handler");
+const supplierService = require("../services/supplierService");
+const { success } = require("../utils/apiResponse");
+
+const getActorId = (req) => {
+    return req.user?._id || req.body?.createdBy || req.body?.updatedBy || null;
+};
+
+// ==========================================================
+// Create
+// POST /api/suppliers
+// ==========================================================
+
+exports.createSupplier = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.createSupplier(
+        req.body,
+        getActorId(req)
+    );
+
+    return success(res, "Supplier created successfully.", supplier, 201);
+});
+
+// ==========================================================
+// List
+// GET /api/suppliers
+// ==========================================================
+
+exports.getSuppliers = asyncHandler(async (req, res) => {
+    const result = await supplierService.getSuppliers(req.query);
+    return success(res, "Suppliers retrieved successfully.", result);
+});
+
+// ==========================================================
+// Active list (for dropdowns)
+// GET /api/suppliers/active
+// ==========================================================
+
+exports.getActiveSuppliers = asyncHandler(async (req, res) => {
+    const suppliers = await supplierService.getActiveSuppliers();
+    return success(res, "Active suppliers retrieved successfully.", suppliers);
+});
+
+// ==========================================================
+// Reports
+// ==========================================================
+
+exports.getPurchaseReport = asyncHandler(async (req, res) => {
+    const report = await supplierService.getPurchaseReport();
+    return success(res, "Supplier purchase report retrieved successfully.", report);
+});
+
+exports.getDueReport = asyncHandler(async (req, res) => {
+    const report = await supplierService.getDueReport();
+    return success(res, "Supplier due report retrieved successfully.", report);
+});
+
+// ==========================================================
+// Get by id
+// GET /api/suppliers/:id
+// ==========================================================
+
+exports.getSupplierById = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.getSupplierById(req.params.id);
+    return success(res, "Supplier retrieved successfully.", supplier);
+});
+
+// ==========================================================
+// Update
+// PUT /api/suppliers/:id
+// ==========================================================
+
+exports.updateSupplier = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.updateSupplier(
+        req.params.id,
+        req.body,
+        getActorId(req)
+    );
+
+    return success(res, "Supplier updated successfully.", supplier);
+});
+
+// ==========================================================
+// Soft Delete
+// DELETE /api/suppliers/:id
+// ==========================================================
+
+exports.deleteSupplier = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.deleteSupplier(
+        req.params.id,
+        getActorId(req)
+    );
+
+    return success(res, "Supplier deleted successfully.", supplier);
+});
+
+// ==========================================================
+// Approve / Status / Rating
+// ==========================================================
+
+exports.approveSupplier = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.approveSupplier(
+        req.params.id,
+        getActorId(req)
+    );
+
+    return success(res, "Supplier approved successfully.", supplier);
+});
+
+exports.blockSupplier = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.blockSupplier(
+        req.params.id,
+        getActorId(req)
+    );
+
+    return success(res, "Supplier blocked successfully.", supplier);
+});
+
+exports.activateSupplier = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.activateSupplier(
+        req.params.id,
+        getActorId(req)
+    );
+
+    return success(res, "Supplier activated successfully.", supplier);
+});
+
+exports.deactivateSupplier = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.deactivateSupplier(
+        req.params.id,
+        getActorId(req)
+    );
+
+    return success(res, "Supplier deactivated successfully.", supplier);
+});
+
+exports.rateSupplier = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.rateSupplier(
+        req.params.id,
+        Number(req.body.score),
+        getActorId(req)
+    );
+
+    return success(res, "Supplier rated successfully.", supplier);
+});

@@ -6,7 +6,9 @@ const mongoose = require("mongoose");
 
 const purchaseItemSchema = new mongoose.Schema(
     {
+
         productId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Product",
             required: true,
@@ -14,18 +16,21 @@ const purchaseItemSchema = new mongoose.Schema(
         },
 
         productVariantId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "ProductVariant",
             default: null
         },
 
         sku: {
+
             type: String,
             trim: true,
             default: ""
         },
 
         productName: {
+
             type: String,
             required: true,
             trim: true
@@ -33,6 +38,7 @@ const purchaseItemSchema = new mongoose.Schema(
 
         // Ordered Quantity
         quantity: {
+
             type: Number,
             required: true,
             min: 1
@@ -40,6 +46,7 @@ const purchaseItemSchema = new mongoose.Schema(
 
         // Received from GRN
         receivedQuantity: {
+
             type: Number,
             default: 0,
             min: 0
@@ -47,6 +54,7 @@ const purchaseItemSchema = new mongoose.Schema(
 
         // Remaining Quantity
         pendingQuantity: {
+
             type: Number,
             default: 0,
             min: 0
@@ -54,35 +62,41 @@ const purchaseItemSchema = new mongoose.Schema(
 
         // Pricing
         purchasePrice: {
+
             type: Number,
             required: true,
             min: 0
         },
 
         discount: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         tax: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         total: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         remarks: {
+
             type: String,
             default: ""
         }
     },
     {
+
         _id: false
     }
 );
@@ -92,19 +106,11 @@ const purchaseItemSchema = new mongoose.Schema(
 // ==========================================================
 
 const purchaseOrderSchema = new mongoose.Schema(
-    {
-        // ==========================================================
-        // Company
-        // ==========================================================
+{
 
-        companyId: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Company",
-            required: true,
-            index: true
-        },
-
+        // ==========================================================
         branchId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Branch",
             required: true,
@@ -116,6 +122,7 @@ const purchaseOrderSchema = new mongoose.Schema(
         // ==========================================================
 
         purchaseOrderNo: {
+
             type: String,
             required: true,
             unique: true,
@@ -124,17 +131,20 @@ const purchaseOrderSchema = new mongoose.Schema(
         },
 
         referenceNo: {
+
             type: String,
             default: "",
             trim: true
         },
 
         orderDate: {
+
             type: Date,
             default: Date.now
         },
 
         expectedDeliveryDate: {
+
             type: Date,
             default: null
         },
@@ -144,6 +154,7 @@ const purchaseOrderSchema = new mongoose.Schema(
         // ==========================================================
 
         supplierId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Supplier",
             required: true,
@@ -151,6 +162,7 @@ const purchaseOrderSchema = new mongoose.Schema(
         },
 
         warehouseId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Warehouse",
             required: true,
@@ -168,36 +180,42 @@ const purchaseOrderSchema = new mongoose.Schema(
         // ======================================================
 
         subtotal: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         discount: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         tax: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         shippingCost: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         otherCharges: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         grandTotal: {
+
             type: Number,
             default: 0,
             min: 0
@@ -208,30 +226,35 @@ const purchaseOrderSchema = new mongoose.Schema(
         // ======================================================
 
         paymentStatus: {
+
             type: String,
             enum: ["Pending", "Partial", "Paid"],
             default: "Pending"
         },
 
         paidAmount: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         dueAmount: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         paymentTerms: {
+
             type: String,
             enum: ["Cash", "7 Days", "15 Days", "30 Days", "60 Days", "90 Days", "Custom"],
             default: "Cash"
         },
 
         paymentDueDate: {
+
             type: Date,
             default: null
         },
@@ -241,6 +264,7 @@ const purchaseOrderSchema = new mongoose.Schema(
         // ======================================================
 
         status: {
+
             type: String,
             enum: [
                 "Draft",
@@ -260,17 +284,20 @@ const purchaseOrderSchema = new mongoose.Schema(
 
         grnIds: [
             {
+
                 type: mongoose.Schema.Types.ObjectId,
                 ref: "GRN"
             }
         ],
 
         totalReceivedAmount: {
+
             type: Number,
             default: 0
         },
 
         isFullyReceived: {
+
             type: Boolean,
             default: false
         },
@@ -280,33 +307,39 @@ const purchaseOrderSchema = new mongoose.Schema(
         // ======================================================
 
         requiresApproval: {
+
             type: Boolean,
             default: false
         },
 
         approvedBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
         },
 
         approvedAt: {
+
             type: Date,
             default: null
         },
 
         rejectionReason: {
+
             type: String,
             default: ""
         },
 
         rejectedBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
         },
 
         rejectedAt: {
+
             type: Date,
             default: null
         },
@@ -316,11 +349,13 @@ const purchaseOrderSchema = new mongoose.Schema(
         // ======================================================
 
         supplierNote: {
+
             type: String,
             default: ""
         },
 
         internalNote: {
+
             type: String,
             default: ""
         },
@@ -331,15 +366,19 @@ const purchaseOrderSchema = new mongoose.Schema(
 
         attachments: [
             {
+
                 fileName: {
+
                     type: String,
                     default: ""
                 },
                 fileUrl: {
+
                     type: String,
                     default: ""
                 },
                 uploadedAt: {
+
                     type: Date,
                     default: Date.now
                 }
@@ -351,24 +390,28 @@ const purchaseOrderSchema = new mongoose.Schema(
         // ======================================================
 
         createdBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             required: true
         },
 
         updatedBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
         },
 
         cancelledBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
         },
 
         cancelledAt: {
+
             type: Date,
             default: null
         },
@@ -378,22 +421,26 @@ const purchaseOrderSchema = new mongoose.Schema(
         // ======================================================
 
         isDeleted: {
+
             type: Boolean,
             default: false
         },
 
         deletedAt: {
+
             type: Date,
             default: null
         },
 
         deletedBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
         }
     },
     {
+
         timestamps: true,
         versionKey: false
     }
@@ -403,43 +450,38 @@ const purchaseOrderSchema = new mongoose.Schema(
 // INDEXES
 // ==========================================================
 
-purchaseOrderSchema.index(
-    {
-        companyId: 1,
-        purchaseOrderNo: 1
-    },
-    {
+purchaseOrderSchema.index({ purchaseOrderNo: 1 }, {
+
         unique: true
-    }
-);
+    });
 
 purchaseOrderSchema.index({
+
     supplierId: 1,
     orderDate: -1
 });
 
 purchaseOrderSchema.index({
+
     warehouseId: 1,
     orderDate: -1
 });
 
 purchaseOrderSchema.index({
+
     branchId: 1,
     status: 1
 });
 
 purchaseOrderSchema.index({
+
     status: 1,
     createdAt: -1
 });
 
-purchaseOrderSchema.index({
-    paymentStatus: 1
-});
+purchaseOrderSchema.index({ paymentStatus: 1 });
 
-purchaseOrderSchema.index({
-    expectedDeliveryDate: 1
-});
+purchaseOrderSchema.index({ expectedDeliveryDate: 1 });
 
 // ==========================================================
 // INSTANCE METHODS
@@ -447,9 +489,11 @@ purchaseOrderSchema.index({
 
 // Calculate Purchase Total
 purchaseOrderSchema.methods.calculateTotal = function () {
+
     this.subtotal = 0;
 
     this.items.forEach((item) => {
+
         item.total =
             item.quantity * item.purchasePrice - item.discount + item.tax;
 
@@ -472,6 +516,7 @@ purchaseOrderSchema.methods.calculateTotal = function () {
 
 // Approve Purchase Order
 purchaseOrderSchema.methods.approve = function (userId) {
+
     this.status = "Approved";
     this.approvedBy = userId;
     this.approvedAt = new Date();
@@ -480,6 +525,7 @@ purchaseOrderSchema.methods.approve = function (userId) {
 
 // Reject Purchase Order
 purchaseOrderSchema.methods.reject = function (userId, reason) {
+
     this.status = "Cancelled";
     this.rejectedBy = userId;
     this.rejectionReason = reason;
@@ -489,19 +535,24 @@ purchaseOrderSchema.methods.reject = function (userId, reason) {
 
 // Receive Update
 purchaseOrderSchema.methods.updateReceivingStatus = function () {
+
     let totalQuantity = 0;
     let receivedQuantity = 0;
 
     this.items.forEach((item) => {
+
         totalQuantity += item.quantity;
         receivedQuantity += item.receivedQuantity;
     });
 
     if (receivedQuantity === 0) {
+
         this.status = "Ordered";
     } else if (receivedQuantity < totalQuantity) {
+
         this.status = "Partially Received";
     } else {
+
         this.status = "Received";
         this.isFullyReceived = true;
     }
@@ -511,6 +562,7 @@ purchaseOrderSchema.methods.updateReceivingStatus = function () {
 
 // Cancel Purchase Order
 purchaseOrderSchema.methods.cancel = function (userId) {
+
     this.status = "Cancelled";
     this.cancelledBy = userId;
     this.cancelledAt = new Date();
@@ -521,20 +573,21 @@ purchaseOrderSchema.methods.cancel = function (userId) {
 // STATIC METHODS
 // ==========================================================
 
-// Company Purchase Orders
-purchaseOrderSchema.statics.getCompanyOrders = function (companyId) {
+// All Purchase Orders
+purchaseOrderSchema.statics.getAllOrders = function() {
+
     return this.find({
-        companyId,
         isDeleted: false
     }).sort({
+
         createdAt: -1
     });
 };
 
 // Pending Approval
-purchaseOrderSchema.statics.getPendingApproval = function (companyId) {
+purchaseOrderSchema.statics.getPendingApproval = function() {
+
     return this.find({
-        companyId,
         status: "Pending Approval",
         isDeleted: false
     });
@@ -542,10 +595,13 @@ purchaseOrderSchema.statics.getPendingApproval = function (companyId) {
 
 // Supplier Purchase History
 purchaseOrderSchema.statics.getSupplierHistory = function (supplierId) {
+
     return this.find({
+
         supplierId,
         isDeleted: false
     }).sort({
+
         orderDate: -1
     });
 };
@@ -555,13 +611,17 @@ purchaseOrderSchema.statics.getSupplierHistory = function (supplierId) {
 // ==========================================================
 
 purchaseOrderSchema.query.active = function () {
+
     return this.where({
+
         isDeleted: false
     });
 };
 
 purchaseOrderSchema.query.pending = function () {
+
     return this.where({
+
         status: "Pending Approval"
     });
 };
@@ -571,9 +631,11 @@ purchaseOrderSchema.query.pending = function () {
 // ==========================================================
 
 purchaseOrderSchema.set("toJSON", {
+
     virtuals: true,
     versionKey: false,
     transform: function (doc, ret) {
+
         delete ret._id;
         return ret;
     }

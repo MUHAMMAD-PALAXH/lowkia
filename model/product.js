@@ -37,19 +37,9 @@ const imageSchema = new mongoose.Schema(
 // ==========================================================
 
 const productSchema = new mongoose.Schema(
-    {
-        // ======================================================
-        // Company Information
-        // ======================================================
+{
 
-        companyId: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Company",
-            required: true,
-            index: true
-        },
-
-        // ======================================================
+                // ======================================================
         // Category Information
         // ======================================================
 
@@ -598,94 +588,58 @@ const productSchema = new mongoose.Schema(
 // Database Indexes
 // ==========================================================
 
-// Product Code (Unique Per Company)
-productSchema.index(
-    {
-        companyId: 1,
-        productCode: 1
-    },
-    {
+// Product Code (Unique)
+productSchema.index({ productCode: 1 }, {
         unique: true
-    }
-);
+    });
 
 // Product Name Search
-productSchema.index({
-    companyId: 1,
-    name: 1
-});
+productSchema.index({ name: 1 });
 
 // Category Wise Products
-productSchema.index({
-    companyId: 1,
-    proCategoryId: 1
-});
+productSchema.index({ proCategoryId: 1 });
 
 // Sub Category Wise Products
-productSchema.index({
-    companyId: 1,
-    proSubCategoryId: 1
-});
+productSchema.index({ proSubCategoryId: 1 });
 
 // Brand Wise Products
-productSchema.index({
-    companyId: 1,
-    proBrandId: 1
-});
+productSchema.index({ proBrandId: 1 });
 
 // Product Status
-productSchema.index({
-    companyId: 1,
-    status: 1,
+productSchema.index({ status: 1,
     isDeleted: 1
-});
+ });
 
 // Published Products
-productSchema.index({
-    companyId: 1,
-    isPublished: 1,
+productSchema.index({ isPublished: 1,
     isDeleted: 1
-});
+ });
 
 // Featured Products
-productSchema.index({
-    companyId: 1,
-    isFeatured: 1,
+productSchema.index({ isFeatured: 1,
     isDeleted: 1
-});
+ });
 
 // Best Seller
-productSchema.index({
-    companyId: 1,
-    isBestSeller: 1,
+productSchema.index({ isBestSeller: 1,
     isDeleted: 1
-});
+ });
 
 // New Arrival
-productSchema.index({
-    companyId: 1,
-    isNewArrival: 1,
+productSchema.index({ isNewArrival: 1,
     isDeleted: 1
-});
+ });
 
 // Trending
-productSchema.index({
-    companyId: 1,
-    isTrending: 1,
+productSchema.index({ isTrending: 1,
     isDeleted: 1
-});
+ });
 
 // Search Slug
-productSchema.index({
-    companyId: 1,
-    slug: 1
-});
+productSchema.index({ slug: 1 });
 
 // SKU
-productSchema.index({
-    companyId: 1,
-    sku: 1
-});
+productSchema.index({ sku: 1 });
 
 // Text Search
 productSchema.index({
@@ -741,18 +695,16 @@ productSchema.methods.unpublish = function () {
 // ==========================================================
 
 // Active Products
-productSchema.statics.getActiveProducts = function (companyId) {
+productSchema.statics.getActiveProducts = function() {
     return this.find({
-        companyId,
         status: "Active",
         isDeleted: false
     });
 };
 
 // Published Products
-productSchema.statics.getPublishedProducts = function (companyId) {
+productSchema.statics.getPublishedProducts = function() {
     return this.find({
-        companyId,
         isPublished: true,
         status: "Active",
         isDeleted: false

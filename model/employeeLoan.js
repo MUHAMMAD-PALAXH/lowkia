@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // EMI Schedule Schema
 // ==========================================================
@@ -9,36 +8,43 @@ const mongoose = require("mongoose");
 const emiSchema = new mongoose.Schema(
 {
 
+
     installmentNumber:{
+
         type:Number,
         required:true
     },
 
 
     dueDate:{
+
         type:Date,
         required:true
     },
 
 
     amount:{
+
         type:Number,
         default:0
     },
 
 
     paidAmount:{
+
         type:Number,
         default:0
     },
 
 
     paidDate:{
+
         type:Date
     },
 
 
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -51,19 +57,16 @@ const emiSchema = new mongoose.Schema(
 
 
     transactionId:{
+
         type:String,
         default:""
     }
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
 
 
 // ==========================================================
@@ -74,20 +77,9 @@ const emiSchema = new mongoose.Schema(
 const employeeLoanSchema = new mongoose.Schema(
 {
 
-// ==========================================================
-// Company Information
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
 
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true
@@ -95,11 +87,10 @@ branchId:{
 
 
 departmentId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Department"
 },
-
-
 
 
 // ==========================================================
@@ -108,6 +99,7 @@ departmentId:{
 
 
 employeeId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Employee",
     required:true,
@@ -116,17 +108,17 @@ employeeId:{
 
 
 employeeCode:{
+
     type:String,
     required:true
 },
 
 
 employeeName:{
+
     type:String,
     required:true
 },
-
-
 
 
 // ==========================================================
@@ -135,6 +127,7 @@ employeeName:{
 
 
 loanNumber:{
+
     type:String,
     required:true,
     unique:true
@@ -142,6 +135,7 @@ loanNumber:{
 
 
 loanType:{
+
     type:String,
     enum:[
         "Personal Loan",
@@ -155,34 +149,32 @@ loanType:{
 },
 
 
-
 loanDate:{
+
     type:Date,
     default:Date.now
 },
 
 
-
 loanAmount:{
+
     type:Number,
     required:true
 },
 
 
-
 approvedAmount:{
+
     type:Number,
     default:0
 },
 
 
-
-
 reason:{
+
     type:String,
     required:true
 },
-
 
 
 // ==========================================================
@@ -191,6 +183,7 @@ reason:{
 
 
 repaymentType:{
+
     type:String,
     enum:[
         "Monthly EMI",
@@ -201,24 +194,28 @@ repaymentType:{
 
 
 totalInstallments:{
+
     type:Number,
     default:12
 },
 
 
 emiAmount:{
+
     type:Number,
     default:0
 },
 
 
 paidInstallments:{
+
     type:Number,
     default:0
 },
 
 
 remainingAmount:{
+
     type:Number,
     default:0
 },
@@ -235,13 +232,14 @@ emiSchedule:[
 
 
 interestApplicable:{
+
     type:Boolean,
     default:false
 },
 
 
-
 interestType:{
+
     type:String,
     enum:[
         "Fixed",
@@ -250,21 +248,18 @@ interestType:{
 },
 
 
-
 interestRate:{
+
     type:Number,
     default:0
 },
-
 
 
 interestAmount:{
+
     type:Number,
     default:0
 },
-
-
-
 
 
 // ==========================================================
@@ -273,6 +268,7 @@ interestAmount:{
 
 
 approvalStatus:{
+
     type:String,
     enum:[
         "Draft",
@@ -285,14 +281,13 @@ approvalStatus:{
 },
 
 
-
-
-
 // Manager Approval
 
 managerApproval:{
 
+
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -304,32 +299,34 @@ managerApproval:{
 
 
     approvedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser"
     },
 
 
     approvedAt:{
+
         type:Date
     },
 
 
     comment:{
+
         type:String,
         default:""
     }
 
 },
-
-
-
 
 
 // HR Approval
 
 hrApproval:{
 
+
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -341,24 +338,25 @@ hrApproval:{
 
 
     approvedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser"
     },
 
 
     approvedAt:{
+
         type:Date
     },
 
 
     comment:{
+
         type:String,
         default:""
     }
 
 },
-
-
 
 
 // ==========================================================
@@ -367,6 +365,7 @@ hrApproval:{
 
 
 disbursementStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -378,14 +377,14 @@ disbursementStatus:{
 },
 
 
-
 disbursementDate:{
+
     type:Date
 },
 
 
-
 paymentMethod:{
+
     type:String,
     enum:[
         "Cash",
@@ -397,21 +396,18 @@ paymentMethod:{
 },
 
 
-
 transactionId:{
+
     type:String,
     default:""
 },
 
 
-
 disbursedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
-
-
-
 
 
 // ==========================================================
@@ -420,29 +416,30 @@ disbursedBy:{
 
 
 payrollDeductionEnabled:{
+
     type:Boolean,
     default:true
 },
 
 
-
 lastDeductedMonth:{
+
     type:String,
     default:""
 },
 
 
-
 deductedAmount:{
+
     type:Number,
     default:0
 },
 
 
-
 payrollIds:[
 
     {
+
 
         type:mongoose.Schema.Types.ObjectId,
 
@@ -453,32 +450,29 @@ payrollIds:[
 ],
 
 
-
-
-
 // ==========================================================
 // Accounting Integration
 // ==========================================================
 
 
 ledgerEntryId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Ledger"
 },
 
 
-
 isLedgerPosted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 ledgerPostedAt:{
+
     type:Date
 },
-
 
 
 // ==========================================================
@@ -487,54 +481,58 @@ ledgerPostedAt:{
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 cancelledBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 cancelledAt:{
+
     type:Date
 },
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
 deletedAt:{
+
     type:Date
 },
 
 
 notes:{
+
     type:String,
     default:""
 }
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
 
 
 // ==========================================================
@@ -542,19 +540,14 @@ notes:{
 // ==========================================================
 
 
+employeeLoanSchema.index({ loanNumber:1 }, {
 
-employeeLoanSchema.index(
-{
-    companyId:1,
-    loanNumber:1
-},
-{
     unique:true
 });
 
 
-
 employeeLoanSchema.index({
+
 
     employeeId:1,
 
@@ -563,40 +556,18 @@ employeeLoanSchema.index({
 });
 
 
-
-employeeLoanSchema.index({
-
-    companyId:1,
-
-    approvalStatus:1
-
-});
+employeeLoanSchema.index({ approvalStatus:1 });
 
 
-
-employeeLoanSchema.index({
-
-    disbursementStatus:1
-
-});
+employeeLoanSchema.index({ disbursementStatus:1 });
 
 
-
-employeeLoanSchema.index({
-
-    payrollDeductionEnabled:1
-
-});
-
-
-
-
+employeeLoanSchema.index({ payrollDeductionEnabled:1 });
 
 
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Calculate EMI
@@ -611,16 +582,17 @@ function(){
     this.approvedAmount;
 
 
-
     if(
         this.interestApplicable
     )
     {
 
+
         if(
             this.interestType === "Percentage"
         )
         {
+
 
             this.interestAmount =
 
@@ -637,6 +609,7 @@ function(){
         else
         {
 
+
             this.interestAmount =
             this.interestRate;
 
@@ -648,10 +621,8 @@ function(){
     }
 
 
-
     this.remainingAmount =
     total;
-
 
 
     this.emiAmount =
@@ -668,16 +639,10 @@ function(){
     );
 
 
-
     return this.emiAmount;
 
 
 };
-
-
-
-
-
 
 
 // Pay EMI
@@ -688,7 +653,6 @@ function(
     installmentNumber,
     amount
 ){
-
 
 
     const installment =
@@ -703,10 +667,8 @@ function(
     );
 
 
-
     if(!installment)
         return null;
-
 
 
     installment.paidAmount =
@@ -721,7 +683,6 @@ function(
     "Paid";
 
 
-
     this.paidInstallments += 1;
 
 
@@ -731,14 +692,13 @@ function(
     this.remainingAmount -= amount;
 
 
-
     if(this.remainingAmount <= 0)
     {
+
 
         this.remainingAmount=0;
 
     }
-
 
 
     return this.save();
@@ -747,16 +707,11 @@ function(
 };
 
 
-
-
-
-
 // Approve Loan
 
 
 employeeLoanSchema.methods.approve =
 function(userId){
-
 
 
     this.approvalStatus =
@@ -775,16 +730,10 @@ function(userId){
     new Date();
 
 
-
     return this.save();
 
 
 };
-
-
-
-
-
 
 
 // Reject Loan
@@ -813,22 +762,15 @@ function(
     reason;
 
 
-
     return this.save();
 
 
 };
 
 
-
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
-
 
 
 // Employee Loan History
@@ -842,6 +784,7 @@ function(
 
     return this.find({
 
+
         employeeId,
 
         isDeleted:false
@@ -849,6 +792,7 @@ function(
     })
     .sort({
 
+
         loanDate:-1
 
     });
@@ -857,24 +801,14 @@ function(
 };
 
 
-
-
-
-
-
 // Pending Loans
 
 
 employeeLoanSchema.statics.getPendingLoans =
-function(
-    companyId
-){
+function(){
 
 
     return this.find({
-
-        companyId,
-
         approvalStatus:"Pending",
 
         isDeleted:false
@@ -882,6 +816,7 @@ function(
     })
     .sort({
 
+
         loanDate:-1
 
     });
@@ -890,18 +825,11 @@ function(
 };
 
 
-
-
-
-
-
-// Company Loan Summary
+// Loan Summary
 
 
 employeeLoanSchema.statics.getSummary =
-async function(
-    companyId
-){
+async function(){
 
 
     return this.aggregate([
@@ -909,11 +837,9 @@ async function(
 
         {
 
+
             $match:
             {
-
-                companyId,
-
                 isDeleted:false
 
             }
@@ -923,26 +849,31 @@ async function(
 
         {
 
+
             $group:
             {
+
 
                 _id:null,
 
 
                 totalLoan:
                 {
+
                     $sum:"$approvedAmount"
                 },
 
 
                 totalPaid:
                 {
+
                     $sum:"$deductedAmount"
                 },
 
 
                 remainingLoan:
                 {
+
                     $sum:"$remainingAmount"
                 }
 
@@ -957,10 +888,6 @@ async function(
 };
 
 
-
-
-
-
 // ==========================================================
 // QUERY HELPER
 // ==========================================================
@@ -972,17 +899,13 @@ function(){
 
     return this.where({
 
+
         isDeleted:false
 
     });
 
 
 };
-
-
-
-
-
 
 
 // ==========================================================
@@ -996,6 +919,7 @@ employeeLoanSchema.set(
 
 {
 
+
     virtuals:true,
 
 
@@ -1004,6 +928,7 @@ employeeLoanSchema.set(
         ret
     ){
 
+
         delete ret.__v;
 
         return ret;
@@ -1011,10 +936,6 @@ employeeLoanSchema.set(
     }
 
 });
-
-
-
-
 
 
 // ==========================================================

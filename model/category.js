@@ -6,18 +6,7 @@ const mongoose = require("mongoose");
 
 const categorySchema = new mongoose.Schema(
 {
-    // ======================================================
-    // Company
-    // ======================================================
 
-    companyId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Company",
-        required: true,
-        index: true
-    },
-
-    // ======================================================
     // Category Information
     // ======================================================
 
@@ -154,38 +143,19 @@ const categorySchema = new mongoose.Schema(
 // Indexes
 // ==========================================================
 
-categorySchema.index({
-    companyId: 1,
-    name: 1
-}, {
+categorySchema.index({ name: 1 }, {
     unique: true
 });
 
-categorySchema.index({
-    companyId: 1,
-    slug: 1
-});
+categorySchema.index({ slug: 1 });
 
-categorySchema.index({
-    companyId: 1,
-    status: 1
-});
+categorySchema.index({ status: 1 });
 
-categorySchema.index({
-    companyId: 1,
-    isFeatured: 1
-});
+categorySchema.index({ isFeatured: 1 });
 
-categorySchema.index({
-    companyId: 1,
-    sortOrder: 1
-});
+categorySchema.index({ sortOrder: 1 });
 
-categorySchema.index({
-    companyId: 1,
-    isDeleted: 1
-});
-
+categorySchema.index({ isDeleted: 1 });
 
 
 // ==========================================================
@@ -195,7 +165,6 @@ categorySchema.index({
 categorySchema.virtual("id").get(function () {
     return this._id.toHexString();
 });
-
 
 
 // ==========================================================
@@ -220,7 +189,6 @@ categorySchema.pre("save", function (next) {
 });
 
 
-
 // ==========================================================
 // Instance Methods
 // ==========================================================
@@ -236,17 +204,13 @@ categorySchema.methods.softDelete = function (userId) {
 };
 
 
-
 // ==========================================================
 // Static Methods
 // ==========================================================
 
-categorySchema.statics.getActiveCategories = function (companyId) {
+categorySchema.statics.getActiveCategories = function() {
 
     return this.find({
-
-        companyId,
-
         status: "Active",
 
         isDeleted: false
@@ -260,7 +224,6 @@ categorySchema.statics.getActiveCategories = function (companyId) {
     });
 
 };
-
 
 
 // ==========================================================
@@ -278,7 +241,6 @@ categorySchema.query.active = function () {
     });
 
 };
-
 
 
 // ==========================================================
@@ -300,7 +262,6 @@ categorySchema.set("toJSON", {
     }
 
 });
-
 
 
 // ==========================================================

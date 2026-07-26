@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Stock Transfer Item Schema
 // ==========================================================
@@ -10,7 +9,9 @@ const mongoose = require("mongoose");
 const stockTransferItemSchema = new mongoose.Schema(
 {
 
+
     productId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Product",
         required:true
@@ -18,6 +19,7 @@ const stockTransferItemSchema = new mongoose.Schema(
 
 
     productVariantId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"ProductVariant",
         default:null
@@ -25,6 +27,7 @@ const stockTransferItemSchema = new mongoose.Schema(
 
 
     sku:{
+
         type:String,
         default:"",
         trim:true
@@ -32,6 +35,7 @@ const stockTransferItemSchema = new mongoose.Schema(
 
 
     productName:{
+
         type:String,
         required:true,
         trim:true
@@ -39,6 +43,7 @@ const stockTransferItemSchema = new mongoose.Schema(
 
 
     quantity:{
+
         type:Number,
         required:true,
         min:1
@@ -46,6 +51,7 @@ const stockTransferItemSchema = new mongoose.Schema(
 
 
     unitId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Unit",
         default:null
@@ -53,18 +59,21 @@ const stockTransferItemSchema = new mongoose.Schema(
 
 
     unitCost:{
+
         type:Number,
         default:0
     },
 
 
     totalCost:{
+
         type:Number,
         default:0
     },
 
 
     batchNumber:{
+
         type:String,
         default:""
     },
@@ -73,6 +82,7 @@ const stockTransferItemSchema = new mongoose.Schema(
     serialNumbers:[
 
         {
+
             type:String,
             trim:true
         }
@@ -81,6 +91,7 @@ const stockTransferItemSchema = new mongoose.Schema(
 
 
     remarks:{
+
         type:String,
         default:""
     }
@@ -88,13 +99,9 @@ const stockTransferItemSchema = new mongoose.Schema(
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
 
 
 // ==========================================================
@@ -106,30 +113,13 @@ const stockTransferSchema = new mongoose.Schema(
 {
 
 
-// ==========================================================
-// Company & Branch
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
-
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true,
     index:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -138,6 +128,7 @@ branchId:{
 
 
 transferNumber:{
+
     type:String,
     required:true,
     unique:true,
@@ -146,22 +137,18 @@ transferNumber:{
 },
 
 
-
 transferDate:{
+
     type:Date,
     default:Date.now
 },
 
 
-
 referenceNumber:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -170,15 +157,16 @@ referenceNumber:{
 
 
 fromWarehouseId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Warehouse",
     required:true,
     index:true
 },
-
 
 
 toWarehouseId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Warehouse",
     required:true,
@@ -186,24 +174,20 @@ toWarehouseId:{
 },
 
 
-
 fromBranchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     default:null
 },
-
 
 
 toBranchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -223,6 +207,7 @@ items:[
 
 
 transferType:{
+
     type:String,
     enum:[
         "Warehouse To Warehouse",
@@ -234,8 +219,8 @@ transferType:{
 },
 
 
-
 transferReason:{
+
     type:String,
     enum:[
         "Stock Rebalancing",
@@ -250,15 +235,11 @@ transferReason:{
 },
 
 
-
 description:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -267,6 +248,7 @@ description:{
 
 
 status:{
+
     type:String,
     enum:[
         "Draft",
@@ -281,52 +263,48 @@ status:{
 },
 
 
-
 requiresApproval:{
+
     type:Boolean,
     default:true
 },
 
 
-
 approvedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
 
 
 approvedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 rejectedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 rejectedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 rejectionReason:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -335,37 +313,38 @@ rejectionReason:{
 
 
 outMovementId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"StockMovement",
     default:null
 },
-
 
 
 inMovementId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"StockMovement",
     default:null
 },
 
 
-
 isStockTransferred:{
+
     type:Boolean,
     default:false
 },
 
 
-
 transferredBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 transferredAt:{
+
     type:Date,
     default:null
 },
@@ -376,64 +355,61 @@ transferredAt:{
 
 
 dispatchDate:{
+
     type:Date,
     default:null
 },
-
 
 
 receivedDate:{
+
     type:Date,
     default:null
 },
 
 
-
 dispatchedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
 
 
 receivedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 deliveryNote:{
+
     type:String,
     default:""
 },
-
 
 
 vehicleNumber:{
+
     type:String,
     default:""
 },
-
 
 
 driverName:{
+
     type:String,
     default:""
 },
-
 
 
 driverPhone:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -443,47 +419,50 @@ driverPhone:{
 
 fromLocation:{
 
+
     rack:{
+
         type:String,
         default:""
     },
 
     shelf:{
+
         type:String,
         default:""
     },
 
     bin:{
+
         type:String,
         default:""
     }
 
 },
-
 
 
 toLocation:{
 
+
     rack:{
+
         type:String,
         default:""
     },
 
     shelf:{
+
         type:String,
         default:""
     },
 
     bin:{
+
         type:String,
         default:""
     }
 
 },
-
-
-
-
 
 
 // ==========================================================
@@ -495,25 +474,30 @@ attachments:[
 
 {
 
+
     fileName:{
+
         type:String,
         default:""
     },
 
 
     fileUrl:{
+
         type:String,
         default:""
     },
 
 
     fileType:{
+
         type:String,
         default:""
     },
 
 
     uploadedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser",
         default:null
@@ -521,6 +505,7 @@ attachments:[
 
 
     uploadedAt:{
+
         type:Date,
         default:Date.now
     }
@@ -530,23 +515,20 @@ attachments:[
 ],
 
 
-
-
-
-
 // ==========================================================
 // Notes
 // ==========================================================
 
 
 note:{
+
     type:String,
     default:""
 },
 
 
-
 internalNote:{
+
     type:String,
     default:""
 },
@@ -557,37 +539,34 @@ internalNote:{
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     required:true
 },
 
 
-
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
 
 
 cancelledBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 cancelledAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -596,36 +575,33 @@ cancelledAt:{
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 deletedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
-
 
 
 // ==========================================================
@@ -633,18 +609,14 @@ deletedBy:{
 // ==========================================================
 
 
-stockTransferSchema.index(
-{
-    companyId:1,
-    transferNumber:1
-},
-{
+stockTransferSchema.index({ transferNumber:1 }, {
+
     unique:true
 });
 
 
-
 stockTransferSchema.index({
+
 
     fromWarehouseId:1,
 
@@ -653,8 +625,8 @@ stockTransferSchema.index({
 });
 
 
-
 stockTransferSchema.index({
+
 
     toWarehouseId:1,
 
@@ -663,40 +635,20 @@ stockTransferSchema.index({
 });
 
 
-
-stockTransferSchema.index({
-
-    status:1
-
-});
+stockTransferSchema.index({ status:1 });
 
 
+stockTransferSchema.index({ transferType:1 });
 
-stockTransferSchema.index({
 
-    transferType:1
+stockTransferSchema.index({ outMovementId:1 });
 
-});
 
+stockTransferSchema.index({ inMovementId:1 });
 
 
 stockTransferSchema.index({
 
-    outMovementId:1
-
-});
-
-
-
-stockTransferSchema.index({
-
-    inMovementId:1
-
-});
-
-
-
-stockTransferSchema.index({
 
     createdBy:1,
 
@@ -705,14 +657,7 @@ stockTransferSchema.index({
 });
 
 
-
-stockTransferSchema.index({
-
-    companyId:1,
-
-    isDeleted:1
-
-});
+stockTransferSchema.index({ isDeleted:1 });
 
 // ==========================================================
 // VIRTUAL FIELDS
@@ -722,13 +667,10 @@ stockTransferSchema.index({
 stockTransferSchema.virtual("id")
 .get(function(){
 
+
     return this._id.toHexString();
 
 });
-
-
-
-
 
 
 // ==========================================================
@@ -736,12 +678,12 @@ stockTransferSchema.virtual("id")
 // ==========================================================
 
 
-
 // Calculate Total Cost
 
 
 stockTransferSchema.methods.calculateCost =
 function(){
+
 
     this.items.forEach(item=>{
 
@@ -761,15 +703,12 @@ function(){
 };
 
 
-
-
-
-
 // Approve Transfer
 
 
 stockTransferSchema.methods.approve =
 function(userId){
+
 
     this.status="Approved";
 
@@ -785,11 +724,6 @@ function(userId){
 };
 
 
-
-
-
-
-
 // Reject Transfer
 
 
@@ -798,6 +732,7 @@ function(
     userId,
     reason
 ){
+
 
     this.status="Rejected";
 
@@ -816,11 +751,6 @@ function(
 };
 
 
-
-
-
-
-
 // Complete Transfer
 
 
@@ -830,6 +760,7 @@ function(
     inMovementId,
     userId
 ){
+
 
     this.status="Completed";
 
@@ -854,16 +785,12 @@ function(
 };
 
 
-
-
-
-
-
 // Cancel Transfer
 
 
 stockTransferSchema.methods.cancel =
 function(userId){
+
 
     this.status="Cancelled";
 
@@ -879,41 +806,31 @@ function(userId){
 };
 
 
-
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
 
 
-// Company Transfer List
+// All Transfers
 
 
-stockTransferSchema.statics.getCompanyTransfers =
-function(companyId)
+stockTransferSchema.statics.getAllTransfers =
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         isDeleted:false
 
     })
     .sort({
+
 
         transferDate:-1
 
     });
 
 };
-
-
-
-
 
 
 // Warehouse Transfer History
@@ -923,15 +840,19 @@ stockTransferSchema.statics.getWarehouseTransfers =
 function(warehouseId)
 {
 
+
     return this.find({
+
 
         $or:[
 
             {
+
                 fromWarehouseId:warehouseId
             },
 
             {
+
                 toWarehouseId:warehouseId
             }
 
@@ -943,6 +864,7 @@ function(warehouseId)
 
     })
     .sort({
+
 
         transferDate:-1
 
@@ -960,19 +882,18 @@ function(warehouseId)
 
 
 stockTransferSchema.statics.getPendingApproval =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         status:"Pending Approval",
 
         isDeleted:false
 
     })
     .sort({
+
 
         createdAt:-1
 
@@ -981,28 +902,22 @@ function(companyId)
 };
 
 
-
-
-
-
-
 // In Transit Transfers
 
 
 stockTransferSchema.statics.getInTransit =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         status:"In Transit",
 
         isDeleted:false
 
     })
     .sort({
+
 
         transferDate:-1
 
@@ -1011,21 +926,15 @@ function(companyId)
 };
 
 
-
-
-
-
-
 // Monthly Transfer Report
 
 
 stockTransferSchema.statics.getMonthlyReport =
-function(
-    companyId,
-    month,
+function(month,
     year
 )
 {
+
 
     const startDate =
     new Date(
@@ -1043,13 +952,9 @@ function(
     );
 
 
-
     return this.find({
-
-        companyId,
-
-
         transferDate:{
+
             $gte:startDate,
             $lte:endDate
         },
@@ -1063,11 +968,6 @@ function(
 };
 
 
-
-
-
-
-
 // ==========================================================
 // QUERY HELPERS
 // ==========================================================
@@ -1076,7 +976,9 @@ function(
 stockTransferSchema.query.active =
 function(){
 
+
     return this.where({
+
 
         isDeleted:false
 
@@ -1085,15 +987,12 @@ function(){
 };
 
 
-
-
-
-
-
 stockTransferSchema.query.pending =
 function(){
 
+
     return this.where({
+
 
         status:"Pending Approval",
 
@@ -1104,15 +1003,12 @@ function(){
 };
 
 
-
-
-
-
-
 stockTransferSchema.query.completed =
 function(){
 
+
     return this.where({
+
 
         status:"Completed",
 
@@ -1123,15 +1019,12 @@ function(){
 };
 
 
-
-
-
-
-
 stockTransferSchema.query.inTransit =
 function(){
 
+
     return this.where({
+
 
         status:"In Transit",
 
@@ -1140,11 +1033,6 @@ function(){
     });
 
 };
-
-
-
-
-
 
 
 // ==========================================================
@@ -1156,6 +1044,7 @@ stockTransferSchema.set(
 "toJSON",
 {
 
+
     virtuals:true,
 
     versionKey:false,
@@ -1166,6 +1055,7 @@ stockTransferSchema.set(
         ret
     ){
 
+
         delete ret._id;
 
         return ret;
@@ -1173,11 +1063,6 @@ stockTransferSchema.set(
     }
 
 });
-
-
-
-
-
 
 
 // ==========================================================

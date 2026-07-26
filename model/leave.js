@@ -7,21 +7,24 @@ const mongoose = require("mongoose");
 
 const attachmentSchema = new mongoose.Schema(
 {
+
     fileName:{
+
         type:String,
         default:""
     },
 
     fileUrl:{
+
         type:String,
         default:""
     }
 
 },
 {
+
     _id:false
 });
-
 
 
 // ==========================================================
@@ -31,19 +34,9 @@ const attachmentSchema = new mongoose.Schema(
 const leaveSchema = new mongoose.Schema(
 {
 
-// ==========================================================
-// Company Information
-// ==========================================================
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
 
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true
@@ -51,10 +44,10 @@ branchId:{
 
 
 departmentId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Department"
 },
-
 
 
 // ==========================================================
@@ -62,6 +55,7 @@ departmentId:{
 // ==========================================================
 
 employeeId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Employee",
     required:true,
@@ -70,12 +64,14 @@ employeeId:{
 
 
 employeeCode:{
+
     type:String,
     required:true
 },
 
 
 employeeName:{
+
     type:String,
     required:true
 },
@@ -86,6 +82,7 @@ employeeName:{
 // ==========================================================
 
 leaveType:{
+
     type:String,
     enum:[
         "Casual Leave",
@@ -102,6 +99,7 @@ leaveType:{
 
 
 leaveCategory:{
+
     type:String,
     enum:[
         "Paid",
@@ -111,32 +109,34 @@ leaveCategory:{
 },
 
 
-
 // ==========================================================
 // Duration
 // ==========================================================
 
 
 startDate:{
+
     type:Date,
     required:true
 },
 
 
 endDate:{
+
     type:Date,
     required:true
 },
 
 
 totalDays:{
+
     type:Number,
     default:1
 },
 
 
-
 leaveDuration:{
+
     type:String,
     enum:[
         "Full Day",
@@ -147,6 +147,7 @@ leaveDuration:{
 
 
 halfDayType:{
+
     type:String,
     enum:[
         "First Half",
@@ -155,13 +156,13 @@ halfDayType:{
 },
 
 
-
 // ==========================================================
 // Reason
 // ==========================================================
 
 
 reason:{
+
     type:String,
     required:true,
     trim:true
@@ -169,10 +170,10 @@ reason:{
 
 
 employeeNote:{
+
     type:String,
     default:""
 },
-
 
 
 // ==========================================================
@@ -191,6 +192,7 @@ attachments:[
 
 
 approvalStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -202,14 +204,13 @@ approvalStatus:{
 },
 
 
-
 // Employee request time
 
 requestedAt:{
+
     type:Date,
     default:Date.now
 },
-
 
 
 // ==========================================================
@@ -218,7 +219,9 @@ requestedAt:{
 
 
 managerApproval:{
+
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -230,24 +233,25 @@ managerApproval:{
 
 
     approvedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser"
     },
 
 
     approvedAt:{
+
         type:Date
     },
 
 
     comment:{
+
         type:String,
         default:""
     }
 
 },
-
-
 
 
 // ==========================================================
@@ -257,7 +261,9 @@ managerApproval:{
 
 hrApproval:{
 
+
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -269,23 +275,25 @@ hrApproval:{
 
 
     approvedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser"
     },
 
 
     approvedAt:{
+
         type:Date
     },
 
 
     comment:{
+
         type:String,
         default:""
     }
 
 },
-
 
 
 // ==========================================================
@@ -294,16 +302,16 @@ hrApproval:{
 
 
 finalApprovedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 finalApprovedAt:{
+
     type:Date
 },
-
-
 
 
 // ==========================================================
@@ -312,23 +320,24 @@ finalApprovedAt:{
 
 
 previousBalance:{
+
     type:Number,
     default:0
 },
 
 
 usedBalance:{
+
     type:Number,
     default:0
 },
 
 
 remainingBalance:{
+
     type:Number,
     default:0
 },
-
-
 
 
 // ==========================================================
@@ -337,6 +346,7 @@ remainingBalance:{
 
 
 attendanceUpdated:{
+
     type:Boolean,
     default:false
 },
@@ -345,13 +355,12 @@ attendanceUpdated:{
 attendanceRecordIds:[
 
     {
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Attendance"
     }
 
 ],
-
-
 
 
 // ==========================================================
@@ -360,23 +369,24 @@ attendanceRecordIds:[
 
 
 isPayrollAdjusted:{
+
     type:Boolean,
     default:false
 },
 
 
 payrollId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Payroll"
 },
 
 
 deductionAmount:{
+
     type:Number,
     default:0
 },
-
-
 
 
 // ==========================================================
@@ -385,28 +395,30 @@ deductionAmount:{
 
 
 isCancelled:{
+
     type:Boolean,
     default:false
 },
 
 
 cancelledBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 cancelledAt:{
+
     type:Date
 },
 
 
 cancellationReason:{
+
     type:String,
     default:""
 },
-
-
 
 
 // ==========================================================
@@ -415,35 +427,41 @@ cancellationReason:{
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
 deletedAt:{
+
     type:Date
 },
 
 
 notes:{
+
     type:String,
     default:""
 }
@@ -451,6 +469,7 @@ notes:{
 
 },
 {
+
     timestamps:true,
     versionKey:false
 });
@@ -464,30 +483,23 @@ notes:{
 // Same employee cannot create duplicate active leave
 // for same date range
 
-leaveSchema.index(
-{
-    companyId:1,
-    employeeId:1,
+leaveSchema.index({ employeeId:1,
     startDate:1,
     endDate:1
-},
-{
+ }, {
+
     unique:true
 });
 
 
-
-leaveSchema.index({
-
-    companyId:1,
-    branchId:1,
+leaveSchema.index({ branchId:1,
     approvalStatus:1
 
-});
-
+ });
 
 
 leaveSchema.index({
+
 
     employeeId:1,
     leaveType:1
@@ -495,8 +507,8 @@ leaveSchema.index({
 });
 
 
-
 leaveSchema.index({
+
 
     startDate:1,
     endDate:1
@@ -504,22 +516,10 @@ leaveSchema.index({
 });
 
 
-
-leaveSchema.index({
-
-    approvalStatus:1
-
-});
+leaveSchema.index({ approvalStatus:1 });
 
 
-
-leaveSchema.index({
-
-    isPayrollAdjusted:1
-
-});
-
-
+leaveSchema.index({ isPayrollAdjusted:1 });
 
 
 // ==========================================================
@@ -535,6 +535,7 @@ leaveSchema.virtual("duration").get(function(){
         !this.endDate
     )
     {
+
         return 0;
     }
 
@@ -553,9 +554,6 @@ leaveSchema.virtual("duration").get(function(){
 
 
 });
-
-
-
 
 
 // ==========================================================
@@ -581,7 +579,6 @@ function(next){
         this.startDate;
 
 
-
         this.totalDays =
 
         Math.floor(
@@ -595,11 +592,11 @@ function(next){
     }
 
 
-
     if(
         this.leaveCategory === "Unpaid"
     )
     {
+
 
         this.deductionAmount =
         this.totalDays;
@@ -607,19 +604,14 @@ function(next){
     }
 
 
-
     next();
 
 });
 
 
-
-
-
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Approve Leave
@@ -645,8 +637,6 @@ function(userId){
 };
 
 
-
-
 // Reject Leave
 
 leaveSchema.methods.reject =
@@ -668,8 +658,6 @@ function(userId, reason=""){
     return this.save();
 
 };
-
-
 
 
 // Cancel Leave
@@ -703,12 +691,9 @@ function(userId, reason=""){
 };
 
 
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
-
 
 
 // Employee Leave History
@@ -722,12 +707,14 @@ function(
 
     return this.find({
 
+
         employeeId,
 
         isDeleted:false
 
     })
     .sort({
+
 
         createdAt:-1
 
@@ -737,19 +724,11 @@ function(
 };
 
 
-
-
-
-
 // Monthly Leave Report
 
 
 leaveSchema.statics.getMonthlyReport =
-function(
-
-    companyId,
-
-    month,
+function(month,
 
     year
 
@@ -761,11 +740,9 @@ function(
 
         {
 
+
             $match:
             {
-
-                companyId,
-
                 isDeleted:false
 
             }
@@ -775,13 +752,16 @@ function(
 
         {
 
+
             $group:
             {
+
 
                 _id:"$leaveType",
 
                 totalDays:
                 {
+
                     $sum:"$totalDays"
                 }
 
@@ -796,21 +776,14 @@ function(
 };
 
 
-
-
-
-
 // Pending Approval List
 
 
 leaveSchema.statics.getPendingLeaves =
-function(companyId){
+function(){
 
 
     return this.find({
-
-        companyId,
-
         approvalStatus:"Pending",
 
         isDeleted:false
@@ -818,15 +791,13 @@ function(companyId){
     })
     .sort({
 
+
         createdAt:-1
 
     });
 
 
 };
-
-
-
 
 
 // ==========================================================
@@ -840,15 +811,13 @@ function(){
 
     return this.where({
 
+
         isDeleted:false
 
     });
 
 
 };
-
-
-
 
 
 // ==========================================================
@@ -862,6 +831,7 @@ leaveSchema.set(
 
 {
 
+
     virtuals:true,
 
 
@@ -873,6 +843,7 @@ leaveSchema.set(
 
     ){
 
+
         delete ret.__v;
 
         return ret;
@@ -880,8 +851,6 @@ leaveSchema.set(
     }
 
 });
-
-
 
 
 // ==========================================================

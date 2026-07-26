@@ -3,25 +3,13 @@ const mongoose = require("mongoose");
 const warehouseSchema = new mongoose.Schema(
 {
 
-// ==========================================================
-// Company
-// ==========================================================
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
 
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true
 },
-
-
 
 
 // ==========================================================
@@ -29,6 +17,7 @@ branchId:{
 // ==========================================================
 
 warehouseCode:{
+
     type:String,
     required:true,
     unique:true,
@@ -37,6 +26,7 @@ warehouseCode:{
 
 
 warehouseName:{
+
     type:String,
     required:true,
     trim:true
@@ -44,6 +34,7 @@ warehouseName:{
 
 
 warehouseType:{
+
     type:String,
     enum:[
         "Main Warehouse",
@@ -58,18 +49,18 @@ warehouseType:{
 
 
 isDefault:{
+
     type:Boolean,
     default:false
 },
 
 
 parentWarehouseId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Warehouse",
     default:null
 },
-
-
 
 
 // ==========================================================
@@ -77,11 +68,10 @@ parentWarehouseId:{
 // ==========================================================
 
 warehouseManagerId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Employee"
 },
-
-
 
 
 // ==========================================================
@@ -89,18 +79,18 @@ warehouseManagerId:{
 // ==========================================================
 
 contactPhone:{
+
     type:String,
     default:""
 },
 
 
 contactEmail:{
+
     type:String,
     lowercase:true,
     default:""
 },
-
-
 
 
 // ==========================================================
@@ -108,35 +98,41 @@ contactEmail:{
 // ==========================================================
 
 country:{
+
     type:String,
     default:"Bangladesh"
 },
 
 
 city:{
+
     type:String,
     default:""
 },
 
 
 postalCode:{
+
     type:String,
     default:""
 },
 
 
 fullAddress:{
+
     type:String,
     required:true
 },
 
 
 latitude:{
+
     type:Number
 },
 
 
 longitude:{
+
     type:Number
 },
 
@@ -145,12 +141,14 @@ longitude:{
 // ==========================================================
 
 capacity:{
+
     type:Number,
     default:0
 },
 
 
 capacityUnit:{
+
     type:String,
     enum:[
         "Piece",
@@ -166,17 +164,17 @@ capacityUnit:{
 
 
 currentUtilization:{
+
     type:Number,
     default:0
 },
 
 
 availableCapacity:{
+
     type:Number,
     default:0
 },
-
-
 
 
 // ==========================================================
@@ -184,6 +182,7 @@ availableCapacity:{
 // ==========================================================
 
 status:{
+
     type:String,
     enum:[
         "Active",
@@ -196,17 +195,17 @@ status:{
 
 
 openingDate:{
+
     type:Date,
     default:Date.now
 },
 
 
 description:{
+
     type:String,
     default:""
 },
-
-
 
 
 // ==========================================================
@@ -214,23 +213,24 @@ description:{
 // ==========================================================
 
 totalProducts:{
+
     type:Number,
     default:0
 },
 
 
 totalStockQuantity:{
+
     type:Number,
     default:0
 },
 
 
 totalStockValue:{
+
     type:Number,
     default:0
 },
-
-
 
 
 // ==========================================================
@@ -238,72 +238,63 @@ totalStockValue:{
 // ==========================================================
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
 deletedAt:{
+
     type:Date
 }
 
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
 
 
 // ==========================================================
 // INDEXES
 // ==========================================================
 
-warehouseSchema.index(
-{
-    companyId:1,
-    warehouseCode:1
-},
-{
+warehouseSchema.index({ warehouseCode:1 }, {
+
     unique:true
 });
 
 
-warehouseSchema.index({
-    companyId:1,
-    branchId:1
-});
+warehouseSchema.index({ branchId:1 });
 
 
-warehouseSchema.index({
-    warehouseName:1
-});
+warehouseSchema.index({ warehouseName:1 });
 
 
-warehouseSchema.index({
-    status:1
-});
-
-
+warehouseSchema.index({ status:1 });
 
 
 // ==========================================================
@@ -315,6 +306,7 @@ warehouseSchema.index({
 
 warehouseSchema.methods.updateCapacity =
 function(stockQuantity){
+
 
     this.currentUtilization = stockQuantity;
 
@@ -330,12 +322,11 @@ function(stockQuantity){
 };
 
 
-
-
 // Activate Warehouse
 
 warehouseSchema.methods.activate =
 function(){
+
 
     this.status = "Active";
 
@@ -344,12 +335,11 @@ function(){
 };
 
 
-
-
 // Deactivate Warehouse
 
 warehouseSchema.methods.deactivate =
 function(){
+
 
     this.status = "Inactive";
 
@@ -358,25 +348,22 @@ function(){
 };
 
 
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
 
 
-// Company Warehouses
+// All Warehouses
 
-warehouseSchema.statics.getCompanyWarehouses =
-function(companyId){
+warehouseSchema.statics.getAllWarehouses =
+function(){
+
 
     return this.find({
-
-        companyId,
-
         isDeleted:false
 
     }).sort({
+
 
         warehouseName:1
 
@@ -385,17 +372,13 @@ function(companyId){
 };
 
 
-
-
 // Active Warehouses
 
 warehouseSchema.statics.getActiveWarehouses =
-function(companyId){
+function(){
+
 
     return this.find({
-
-        companyId,
-
         status:"Active",
 
         isDeleted:false
@@ -403,8 +386,6 @@ function(companyId){
     });
 
 };
-
-
 
 
 // ==========================================================
@@ -414,7 +395,9 @@ function(companyId){
 warehouseSchema.query.active =
 function(){
 
+
     return this.where({
+
 
         status:"Active",
 
@@ -423,8 +406,6 @@ function(){
     });
 
 };
-
-
 
 
 // ==========================================================
@@ -435,9 +416,11 @@ warehouseSchema.set(
 "toJSON",
 {
 
+
     virtuals:true,
 
     transform:function(doc,ret){
+
 
         delete ret.__v;
 
@@ -446,8 +429,6 @@ warehouseSchema.set(
     }
 
 });
-
-
 
 
 // ==========================================================

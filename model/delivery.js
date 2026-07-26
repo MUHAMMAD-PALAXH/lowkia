@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Delivery Item Schema
 // ==========================================================
@@ -10,7 +9,9 @@ const mongoose = require("mongoose");
 const deliveryItemSchema = new mongoose.Schema(
 {
 
+
     productId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Product",
         required:true
@@ -18,6 +19,7 @@ const deliveryItemSchema = new mongoose.Schema(
 
 
     productVariantId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"ProductVariant",
         default:null
@@ -25,24 +27,28 @@ const deliveryItemSchema = new mongoose.Schema(
 
 
     sku:{
+
         type:String,
         default:""
     },
 
 
     productName:{
+
         type:String,
         required:true
     },
 
 
     orderedQuantity:{
+
         type:Number,
         default:0
     },
 
 
     deliveredQuantity:{
+
         type:Number,
         required:true,
         min:0
@@ -50,12 +56,14 @@ const deliveryItemSchema = new mongoose.Schema(
 
 
     pendingQuantity:{
+
         type:Number,
         default:0
     },
 
 
     unitId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Unit",
         default:null
@@ -63,20 +71,16 @@ const deliveryItemSchema = new mongoose.Schema(
 
 
     remarks:{
+
         type:String,
         default:""
     }
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -88,30 +92,13 @@ const deliverySchema = new mongoose.Schema(
 {
 
 
-// ==========================================================
-// Company & Branch
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
-
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true,
     index:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -120,6 +107,7 @@ branchId:{
 
 
 deliveryNumber:{
+
     type:String,
     required:true,
     unique:true,
@@ -128,22 +116,18 @@ deliveryNumber:{
 },
 
 
-
 referenceNumber:{
+
     type:String,
     default:""
 },
 
 
-
 deliveryDate:{
+
     type:Date,
     default:Date.now
 },
-
-
-
-
 
 
 // ==========================================================
@@ -152,29 +136,26 @@ deliveryDate:{
 
 
 salesOrderId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"SalesOrder",
     required:true
 },
 
 
-
 customerId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Customer",
     required:true
 },
 
 
-
 customerName:{
+
     type:String,
     required:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -183,11 +164,11 @@ customerName:{
 
 
 warehouseId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Warehouse",
     required:true
 },
-
 
 
 // ==========================================================
@@ -206,13 +187,14 @@ items:[
 
 
 deliveryAddress:{
+
     type:String,
     default:""
 },
 
 
-
 shippingMethod:{
+
     type:String,
     enum:[
         "Own Delivery",
@@ -224,22 +206,18 @@ shippingMethod:{
 },
 
 
-
 courierName:{
+
     type:String,
     default:""
 },
-
 
 
 trackingNumber:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -248,27 +226,24 @@ trackingNumber:{
 
 
 vehicleNumber:{
+
     type:String,
     default:""
 },
-
 
 
 driverName:{
+
     type:String,
     default:""
 },
-
 
 
 driverPhone:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -277,6 +252,7 @@ driverPhone:{
 
 
 status:{
+
     type:String,
     enum:[
         "Draft",
@@ -292,29 +268,25 @@ status:{
 },
 
 
-
 dispatchedAt:{
+
     type:Date,
     default:null
 },
-
 
 
 deliveredAt:{
+
     type:Date,
     default:null
 },
 
 
-
 failedReason:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -323,27 +295,24 @@ failedReason:{
 
 
 receivedByName:{
+
     type:String,
     default:""
 },
-
 
 
 receiverPhone:{
+
     type:String,
     default:""
 },
-
 
 
 receiverSignature:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -355,6 +324,7 @@ stockMovementIds:[
 
 {
 
+
     type:mongoose.Schema.Types.ObjectId,
 
     ref:"StockMovement"
@@ -364,15 +334,15 @@ stockMovementIds:[
 ],
 
 
-
 stockUpdated:{
+
     type:Boolean,
     default:false
 },
 
 
-
 stockUpdatedAt:{
+
     type:Date,
     default:null
 },
@@ -384,28 +354,25 @@ stockUpdatedAt:{
 
 
 salesInvoiceId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"SalesInvoice",
     default:null
 },
 
 
-
 isInvoiced:{
+
     type:Boolean,
     default:false
 },
 
 
-
 invoicedAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -414,20 +381,17 @@ invoicedAt:{
 
 
 customerNote:{
+
     type:String,
     default:""
 },
-
 
 
 internalNote:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -439,25 +403,30 @@ attachments:[
 
 {
 
+
     fileName:{
+
         type:String,
         default:""
     },
 
 
     fileUrl:{
+
         type:String,
         default:""
     },
 
 
     fileType:{
+
         type:String,
         default:""
     },
 
 
     uploadedAt:{
+
         type:Date,
         default:Date.now
     }
@@ -467,47 +436,40 @@ attachments:[
 ],
 
 
-
-
-
-
 // ==========================================================
 // Audit Information
 // ==========================================================
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     required:true
 },
 
 
-
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
 
 
 cancelledBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 cancelledAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -516,38 +478,33 @@ cancelledAt:{
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 deletedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -555,84 +512,36 @@ deletedBy:{
 // ==========================================================
 
 
-deliverySchema.index(
-{
-    companyId:1,
-    deliveryNumber:1
-},
-{
+deliverySchema.index({ deliveryNumber:1 }, {
+
     unique:true
 });
 
 
-
-deliverySchema.index({
-
-    salesOrderId:1
-
-});
+deliverySchema.index({ salesOrderId:1 });
 
 
-
-deliverySchema.index({
-
-    customerId:1
-
-});
+deliverySchema.index({ customerId:1 });
 
 
-
-deliverySchema.index({
-
-    warehouseId:1
-
-});
+deliverySchema.index({ warehouseId:1 });
 
 
-
-deliverySchema.index({
-
-    status:1
-
-});
+deliverySchema.index({ status:1 });
 
 
-
-deliverySchema.index({
-
-    deliveryDate:-1
-
-});
+deliverySchema.index({ deliveryDate:-1 });
 
 
-
-deliverySchema.index({
-
-    salesInvoiceId:1
-
-});
+deliverySchema.index({ salesInvoiceId:1 });
 
 
-
-deliverySchema.index({
-
-    companyId:1,
-
-    isDeleted:1
-
-});
-
-
-
-
-
-
+deliverySchema.index({ isDeleted:1 });
 
 
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Calculate Pending Quantity
@@ -641,6 +550,7 @@ deliverySchema.index({
 deliverySchema.methods.calculatePending =
 function()
 {
+
 
     this.items.forEach(item=>{
 
@@ -660,17 +570,13 @@ function()
 };
 
 
-
-
-
-
-
 // Dispatch Delivery
 
 
 deliverySchema.methods.dispatch =
 function()
 {
+
 
     this.status="Dispatched";
 
@@ -683,17 +589,13 @@ function()
 };
 
 
-
-
-
-
-
 // Complete Delivery
 
 
 deliverySchema.methods.complete =
 function(receiverName)
 {
+
 
     this.status="Delivered";
 
@@ -709,17 +611,13 @@ function(receiverName)
 };
 
 
-
-
-
-
-
 // Update Stock
 
 
 deliverySchema.methods.updateStock =
 function(movementIds)
 {
+
 
     this.stockMovementIds = movementIds;
 
@@ -735,17 +633,13 @@ function(movementIds)
 };
 
 
-
-
-
-
-
 // Cancel Delivery
 
 
 deliverySchema.methods.cancel =
 function(userId)
 {
+
 
     this.status="Cancelled";
 
@@ -761,44 +655,31 @@ function(userId)
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
 
 
+// All Deliveries
 
-// Company Deliveries
 
-
-deliverySchema.statics.getCompanyDeliveries =
-function(companyId)
+deliverySchema.statics.getAllDeliveries =
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         isDeleted:false
 
     })
     .sort({
+
 
         deliveryDate:-1
 
     });
 
 };
-
-
-
-
-
 
 
 // Customer Delivery History
@@ -808,7 +689,9 @@ deliverySchema.statics.getCustomerDeliveries =
 function(customerId)
 {
 
+
     return this.find({
+
 
         customerId,
 
@@ -817,6 +700,7 @@ function(customerId)
     })
     .sort({
 
+
         deliveryDate:-1
 
     });
@@ -824,24 +708,17 @@ function(customerId)
 };
 
 
-
-
-
-
-
 // Pending Delivery
 
 
 deliverySchema.statics.getPendingDelivery =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
-
         status:{
+
             $in:[
                 "Ready",
                 "Dispatched",
@@ -858,11 +735,6 @@ function(companyId)
 };
 
 
-
-
-
-
-
 // ==========================================================
 // QUERY HELPERS
 // ==========================================================
@@ -872,7 +744,9 @@ deliverySchema.query.active =
 function()
 {
 
+
     return this.where({
+
 
         isDeleted:false
 
@@ -881,15 +755,13 @@ function()
 };
 
 
-
-
-
-
 deliverySchema.query.completed =
 function()
 {
 
+
     return this.where({
+
 
         status:"Delivered",
 
@@ -900,18 +772,16 @@ function()
 };
 
 
-
-
-
-
-
 deliverySchema.query.pending =
 function()
 {
 
+
     return this.where({
 
+
         status:{
+
             $ne:"Delivered"
         },
 
@@ -923,12 +793,6 @@ function()
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // JSON CONFIG
 // ==========================================================
@@ -937,6 +801,7 @@ function()
 deliverySchema.set(
 "toJSON",
 {
+
 
     virtuals:true,
 
@@ -948,6 +813,7 @@ deliverySchema.set(
         ret
     ){
 
+
         delete ret._id;
 
         return ret;
@@ -955,12 +821,6 @@ deliverySchema.set(
     }
 
 });
-
-
-
-
-
-
 
 
 // ==========================================================

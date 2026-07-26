@@ -6,20 +6,7 @@ const mongoose = require("mongoose");
 
 const variantTypeSchema = new mongoose.Schema(
 {
-    // ======================================================
-    // Company
-    // ======================================================
 
-    companyId:{
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"Company",
-        required:true,
-        index:true
-    },
-
-
-
-    // ======================================================
     // Basic Information
     // ======================================================
 
@@ -43,7 +30,6 @@ const variantTypeSchema = new mongoose.Schema(
         default:"",
         trim:true
     },
-
 
 
     // ======================================================
@@ -80,7 +66,6 @@ const variantTypeSchema = new mongoose.Schema(
     },
 
 
-
     // ======================================================
     // Statistics
     // ======================================================
@@ -89,7 +74,6 @@ const variantTypeSchema = new mongoose.Schema(
         type:Number,
         default:0
     },
-
 
 
     // ======================================================
@@ -107,7 +91,6 @@ const variantTypeSchema = new mongoose.Schema(
         ref:"AdminUser",
         default:null
     },
-
 
 
     // ======================================================
@@ -141,41 +124,19 @@ const variantTypeSchema = new mongoose.Schema(
 // Indexes
 // ==========================================================
 
-variantTypeSchema.index(
-    {
-        companyId: 1,
-        name: 1
-    },
-    {
+variantTypeSchema.index({ name: 1 }, {
         unique: true
-    }
-);
+    });
 
-variantTypeSchema.index({
-    companyId: 1,
-    type: 1
-});
+variantTypeSchema.index({ type: 1 });
 
-variantTypeSchema.index({
-    companyId: 1,
-    status: 1
-});
+variantTypeSchema.index({ status: 1 });
 
-variantTypeSchema.index({
-    companyId: 1,
-    isVariation: 1
-});
+variantTypeSchema.index({ isVariation: 1 });
 
-variantTypeSchema.index({
-    companyId: 1,
-    isFilterable: 1
-});
+variantTypeSchema.index({ isFilterable: 1 });
 
-variantTypeSchema.index({
-    companyId: 1,
-    isDeleted: 1
-});
-
+variantTypeSchema.index({ isDeleted: 1 });
 
 
 // ==========================================================
@@ -187,7 +148,6 @@ variantTypeSchema.virtual("id").get(function () {
     return this._id.toHexString();
 
 });
-
 
 
 // ==========================================================
@@ -229,21 +189,15 @@ variantTypeSchema.methods.deactivate = function () {
 };
 
 
-
 // ==========================================================
 // Static Methods
 // ==========================================================
 
 // Active Variant Types
 
-variantTypeSchema.statics.getActiveVariantTypes = function (
-    companyId
-) {
+variantTypeSchema.statics.getActiveVariantTypes = function() {
 
     return this.find({
-
-        companyId,
-
         status: "Active",
 
         isDeleted: false
@@ -257,7 +211,6 @@ variantTypeSchema.statics.getActiveVariantTypes = function (
     });
 
 };
-
 
 
 // ==========================================================
@@ -275,7 +228,6 @@ variantTypeSchema.query.active = function () {
     });
 
 };
-
 
 
 // ==========================================================
@@ -297,7 +249,6 @@ variantTypeSchema.set("toJSON", {
     }
 
 });
-
 
 
 // ==========================================================

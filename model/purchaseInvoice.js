@@ -5,7 +5,9 @@ const mongoose = require("mongoose");
 // ==========================================================
 const purchaseInvoiceItemSchema = new mongoose.Schema(
   {
+
     productId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Product",
       required: true,
@@ -13,60 +15,70 @@ const purchaseInvoiceItemSchema = new mongoose.Schema(
     },
 
     productVariantId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "ProductVariant",
       default: null,
     },
 
     sku: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     productName: {
+
       type: String,
       required: true,
       trim: true,
     },
 
     quantity: {
+
       type: Number,
       required: true,
       min: 1,
     },
 
     unitId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Unit",
       default: null,
     },
 
     purchasePrice: {
+
       type: Number,
       required: true,
       min: 0,
     },
 
     discount: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     tax: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     total: {
+
       type: Number,
       default: 0,
       min: 0,
     },
   },
   {
+
     _id: false,
   }
 );
@@ -75,18 +87,13 @@ const purchaseInvoiceItemSchema = new mongoose.Schema(
 // Purchase Invoice Main Schema
 // ==========================================================
 const purchaseInvoiceSchema = new mongoose.Schema(
-  {
-    // ==========================================================
-    // Company & Branch
-    // ==========================================================
-    companyId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Company",
-      required: true,
-      index: true,
-    },
+{
 
+// ==========================================================
+    // Branch
+    // ==========================================================
     branchId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
       required: true,
@@ -97,6 +104,7 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Invoice Identity
     // ==========================================================
     invoiceNumber: {
+
       type: String,
       required: true,
       unique: true,
@@ -105,12 +113,14 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     },
 
     supplierInvoiceNumber: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     invoiceDate: {
+
       type: Date,
       default: Date.now,
     },
@@ -119,6 +129,7 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Supplier Relation
     // ==========================================================
     supplierId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Supplier",
       required: true,
@@ -129,12 +140,14 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Purchase Reference
     // ==========================================================
     purchaseOrderId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "PurchaseOrder",
       default: null,
     },
 
     grnId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "GRN",
       default: null,
@@ -149,36 +162,42 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Financial Summary
     // ==========================================================
     subtotal: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     discount: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     tax: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     shippingCost: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     otherCharges: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     grandTotal: {
+
       type: Number,
       required: true,
       min: 0,
@@ -188,18 +207,21 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Payment Information
     // ==========================================================
     paymentStatus: {
+
       type: String,
       enum: ["Pending", "Partial", "Paid"],
       default: "Pending",
     },
 
     paidAmount: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     dueAmount: {
+
       type: Number,
       default: 0,
       min: 0,
@@ -209,12 +231,14 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Payment Terms
     // ==========================================================
     paymentTerms: {
+
       type: String,
       enum: ["Cash", "7 Days", "15 Days", "30 Days", "60 Days", "90 Days", "Custom"],
       default: "Cash",
     },
 
     creditDays: {
+
       type: Number,
       default: 0,
     },
@@ -223,6 +247,7 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Invoice Workflow Status
     // ==========================================================
     status: {
+
       type: String,
       enum: ["Draft", "Pending Verification", "Verified", "Posted", "Paid", "Cancelled"],
       default: "Draft",
@@ -232,22 +257,26 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // GRN Verification
     // ==========================================================
     isGRNVerified: {
+
       type: Boolean,
       default: false,
     },
 
     verifiedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     verifiedAt: {
+
       type: Date,
       default: null,
     },
 
     verificationNote: {
+
       type: String,
       default: "",
     },
@@ -256,16 +285,19 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Inventory Integration
     // ==========================================================
     inventoryUpdated: {
+
       type: Boolean,
       default: false,
     },
 
     inventoryUpdatedAt: {
+
       type: Date,
       default: null,
     },
 
     inventoryUpdatedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
@@ -273,6 +305,7 @@ const purchaseInvoiceSchema = new mongoose.Schema(
 
     stockMovementIds: [
       {
+
         type: mongoose.Schema.Types.ObjectId,
         ref: "StockMovement",
       },
@@ -282,17 +315,20 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Accounting Integration
     // ==========================================================
     ledgerEntryId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ledger",
       default: null,
     },
 
     isLedgerPosted: {
+
       type: Boolean,
       default: false,
     },
 
     ledgerPostedAt: {
+
       type: Date,
       default: null,
     },
@@ -301,33 +337,39 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Approval System
     // ==========================================================
     requiresApproval: {
+
       type: Boolean,
       default: false,
     },
 
     approvedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     approvedAt: {
+
       type: Date,
       default: null,
     },
 
     rejectionReason: {
+
       type: String,
       default: "",
     },
 
     rejectedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     rejectedAt: {
+
       type: Date,
       default: null,
     },
@@ -337,12 +379,14 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // ==========================================================
     paymentIds: [
       {
+
         type: mongoose.Schema.Types.ObjectId,
         ref: "Payment",
       },
     ],
 
     lastPaymentDate: {
+
       type: Date,
       default: null,
     },
@@ -352,23 +396,29 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // ==========================================================
     attachments: [
       {
+
         fileName: {
+
           type: String,
           default: "",
         },
         fileUrl: {
+
           type: String,
           default: "",
         },
         fileType: {
+
           type: String,
           default: "",
         },
         uploadedAt: {
+
           type: Date,
           default: Date.now,
         },
         uploadedBy: {
+
           type: mongoose.Schema.Types.ObjectId,
           ref: "AdminUser",
           default: null,
@@ -380,18 +430,21 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Notes
     // ==========================================================
     supplierNote: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     internalNote: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     remarks: {
+
       type: String,
       default: "",
       trim: true,
@@ -401,17 +454,20 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Cancellation Tracking
     // ==========================================================
     cancelledBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     cancelledAt: {
+
       type: Date,
       default: null,
     },
 
     cancellationReason: {
+
       type: String,
       default: "",
     },
@@ -420,12 +476,14 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Audit Information
     // ==========================================================
     createdBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       required: true,
     },
 
     updatedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
@@ -435,22 +493,26 @@ const purchaseInvoiceSchema = new mongoose.Schema(
     // Soft Delete
     // ==========================================================
     isDeleted: {
+
       type: Boolean,
       default: false,
     },
 
     deletedAt: {
+
       type: Date,
       default: null,
     },
 
     deletedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
   },
   {
+
     timestamps: true, // Automatically adds createdAt & updatedAt
   }
 );
@@ -462,8 +524,8 @@ const purchaseInvoiceSchema = new mongoose.Schema(
 // Invoice Number Unique
 purchaseInvoiceSchema.index({ invoiceNumber: 1 }, { unique: true });
 
-// Company Invoice Listing
-purchaseInvoiceSchema.index({ companyId: 1, invoiceDate: -1 });
+// Invoice Listing
+purchaseInvoiceSchema.index({ invoiceDate: -1  });
 
 // Branch Wise Invoice
 purchaseInvoiceSchema.index({ branchId: 1, invoiceDate: -1 });
@@ -487,7 +549,7 @@ purchaseInvoiceSchema.index({ paymentStatus: 1 });
 purchaseInvoiceSchema.index({ supplierId: 1, dueAmount: -1 });
 
 // Date Range + Status Report
-purchaseInvoiceSchema.index({ companyId: 1, invoiceDate: -1, status: 1 });
+purchaseInvoiceSchema.index({ invoiceDate: -1, status: 1  });
 
 // Ledger Posting Search
 purchaseInvoiceSchema.index({ isLedgerPosted: 1 });
@@ -496,19 +558,20 @@ purchaseInvoiceSchema.index({ isLedgerPosted: 1 });
 purchaseInvoiceSchema.index({ inventoryUpdated: 1 });
 
 // Soft Delete Filtering
-purchaseInvoiceSchema.index({ companyId: 1, isDeleted: 1 });
+purchaseInvoiceSchema.index({ isDeleted: 1  });
 
 // Creator Audit
 purchaseInvoiceSchema.index({ createdBy: 1, createdAt: -1 });
 
 // Additional useful indexes
-purchaseInvoiceSchema.index({ companyId: 1, supplierId: 1, invoiceDate: -1 });
-purchaseInvoiceSchema.index({ companyId: 1, paymentStatus: 1, dueAmount: 1 });
+purchaseInvoiceSchema.index({ supplierId: 1, invoiceDate: -1  });
+purchaseInvoiceSchema.index({ paymentStatus: 1, dueAmount: 1  });
 
 // ==========================================================
 // VIRTUAL FIELD
 // ==========================================================
 purchaseInvoiceSchema.virtual("id").get(function () {
+
   return this._id.toHexString();
 });
 
@@ -517,9 +580,11 @@ purchaseInvoiceSchema.virtual("id").get(function () {
 // ==========================================================
 
 purchaseInvoiceSchema.methods.calculateTotal = function () {
+
   this.subtotal = 0;
 
   this.items.forEach((item) => {
+
     item.total =
       item.quantity * item.purchasePrice - item.discount + item.tax;
 
@@ -537,16 +602,20 @@ purchaseInvoiceSchema.methods.calculateTotal = function () {
 };
 
 purchaseInvoiceSchema.methods.updatePayment = function (amount) {
+
   this.paidAmount += amount;
 
   this.dueAmount = this.grandTotal - this.paidAmount;
 
   if (this.dueAmount <= 0) {
+
     this.paymentStatus = "Paid";
     this.status = "Paid";
   } else if (this.paidAmount > 0) {
+
     this.paymentStatus = "Partial";
   } else {
+
     this.paymentStatus = "Pending";
   }
 
@@ -554,6 +623,7 @@ purchaseInvoiceSchema.methods.updatePayment = function (amount) {
 };
 
 purchaseInvoiceSchema.methods.verify = function (userId) {
+
   this.status = "Verified";
   this.isGRNVerified = true;
   this.verifiedBy = userId;
@@ -563,6 +633,7 @@ purchaseInvoiceSchema.methods.verify = function (userId) {
 };
 
 purchaseInvoiceSchema.methods.postLedger = function (ledgerId) {
+
   this.ledgerEntryId = ledgerId;
   this.isLedgerPosted = true;
   this.ledgerPostedAt = new Date();
@@ -572,6 +643,7 @@ purchaseInvoiceSchema.methods.postLedger = function (ledgerId) {
 };
 
 purchaseInvoiceSchema.methods.cancel = function (userId, reason) {
+
   this.status = "Cancelled";
   this.cancelledBy = userId;
   this.cancelledAt = new Date();
@@ -585,35 +657,38 @@ purchaseInvoiceSchema.methods.cancel = function (userId, reason) {
 // ==========================================================
 
 purchaseInvoiceSchema.statics.getSupplierInvoices = function (supplierId) {
+
   return this.find({
+
     supplierId,
     isDeleted: false,
   }).sort({ invoiceDate: -1 });
 };
 
-purchaseInvoiceSchema.statics.getPendingPayments = function (companyId) {
+purchaseInvoiceSchema.statics.getPendingPayments = function() {
+
   return this.find({
-    companyId,
     paymentStatus: { $ne: "Paid" },
     isDeleted: false,
   }).sort({ dueAmount: -1 });
 };
 
-purchaseInvoiceSchema.statics.getUnpostedInvoices = function (companyId) {
+purchaseInvoiceSchema.statics.getUnpostedInvoices = function() {
+
   return this.find({
-    companyId,
     isLedgerPosted: false,
     isDeleted: false,
   });
 };
 
-purchaseInvoiceSchema.statics.getMonthlyReport = function (companyId, month, year) {
+purchaseInvoiceSchema.statics.getMonthlyReport = function(month, year) {
+
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0);
 
   return this.find({
-    companyId,
     invoiceDate: {
+
       $gte: startDate,
       $lte: endDate,
     },
@@ -626,14 +701,17 @@ purchaseInvoiceSchema.statics.getMonthlyReport = function (companyId, month, yea
 // ==========================================================
 
 purchaseInvoiceSchema.query.active = function () {
+
   return this.where({ isDeleted: false });
 };
 
 purchaseInvoiceSchema.query.paid = function () {
+
   return this.where({ paymentStatus: "Paid" });
 };
 
 purchaseInvoiceSchema.query.due = function () {
+
   return this.where({ dueAmount: { $gt: 0 } });
 };
 
@@ -641,9 +719,11 @@ purchaseInvoiceSchema.query.due = function () {
 // JSON CONFIG
 // ==========================================================
 purchaseInvoiceSchema.set("toJSON", {
+
   virtuals: true,
   versionKey: false,
   transform: function (doc, ret) {
+
     delete ret._id;
     return ret;
   },

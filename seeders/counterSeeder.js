@@ -2,14 +2,32 @@ const Counter = require("../model/counter");
 
 const counters = [
     {
-        module: "supplier",
-        prefix: "SUP",
+        module: "branch",
+        prefix: "BRN",
         padding: 6,
         lastNumber: 0
     },
     {
         module: "warehouse",
         prefix: "WH",
+        padding: 6,
+        lastNumber: 0
+    },
+    {
+        module: "supplier",
+        prefix: "SUP",
+        padding: 6,
+        lastNumber: 0
+    },
+    {
+        module: "product",
+        prefix: "PRD",
+        padding: 6,
+        lastNumber: 0
+    },
+    {
+        module: "employee",
+        prefix: "EMP",
         padding: 6,
         lastNumber: 0
     },
@@ -22,6 +40,18 @@ const counters = [
     {
         module: "grn",
         prefix: "GRN",
+        padding: 6,
+        lastNumber: 0
+    },
+    {
+        module: "stock_transfer",
+        prefix: "ST",
+        padding: 6,
+        lastNumber: 0
+    },
+    {
+        module: "stock_adjustment",
+        prefix: "SA",
         padding: 6,
         lastNumber: 0
     },
@@ -40,12 +70,6 @@ const counters = [
     {
         module: "customer",
         prefix: "CUS",
-        padding: 6,
-        lastNumber: 0
-    },
-    {
-        module: "branch",
-        prefix: "BR",
         padding: 6,
         lastNumber: 0
     },

@@ -6,18 +6,7 @@ const mongoose = require("mongoose");
 
 const brandSchema = new mongoose.Schema(
 {
-    // ======================================================
-    // Company
-    // ======================================================
 
-    companyId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Company",
-        required: true,
-        index: true
-    },
-
-    // ======================================================
     // Parent Sub Category
     // ======================================================
 
@@ -187,47 +176,23 @@ const brandSchema = new mongoose.Schema(
 // Indexes
 // ==========================================================
 
-brandSchema.index(
-    {
-        companyId: 1,
-        subcategoryId: 1,
+brandSchema.index({ subcategoryId: 1,
         name: 1
-    },
-    {
+     }, {
         unique: true
-    }
-);
+    });
 
-brandSchema.index({
-    companyId: 1,
-    slug: 1
-});
+brandSchema.index({ slug: 1 });
 
-brandSchema.index({
-    companyId: 1,
-    status: 1
-});
+brandSchema.index({ status: 1 });
 
-brandSchema.index({
-    companyId: 1,
-    subcategoryId: 1
-});
+brandSchema.index({ subcategoryId: 1 });
 
-brandSchema.index({
-    companyId: 1,
-    isFeatured: 1
-});
+brandSchema.index({ isFeatured: 1 });
 
-brandSchema.index({
-    companyId: 1,
-    sortOrder: 1
-});
+brandSchema.index({ sortOrder: 1 });
 
-brandSchema.index({
-    companyId: 1,
-    isDeleted: 1
-});
-
+brandSchema.index({ isDeleted: 1 });
 
 
 // ==========================================================
@@ -239,7 +204,6 @@ brandSchema.virtual("id").get(function () {
     return this._id.toHexString();
 
 });
-
 
 
 // ==========================================================
@@ -264,7 +228,6 @@ brandSchema.pre("save", function (next) {
     next();
 
 });
-
 
 
 // ==========================================================
@@ -308,22 +271,16 @@ brandSchema.methods.deactivate = function () {
 };
 
 
-
 // ==========================================================
 // Static Methods
 // ==========================================================
 
 // Get Active Brands
 
-brandSchema.statics.getActiveBrands = function (
-    companyId,
-    subcategoryId = null
+brandSchema.statics.getActiveBrands = function(subcategoryId = null
 ) {
 
     const filter = {
-
-        companyId,
-
         status: "Active",
 
         isDeleted: false
@@ -350,14 +307,9 @@ brandSchema.statics.getActiveBrands = function (
 
 // Get Featured Brands
 
-brandSchema.statics.getFeaturedBrands = function (
-    companyId
-) {
+brandSchema.statics.getFeaturedBrands = function() {
 
     return this.find({
-
-        companyId,
-
         isFeatured: true,
 
         status: "Active",
@@ -375,7 +327,6 @@ brandSchema.statics.getFeaturedBrands = function (
 };
 
 
-
 // ==========================================================
 // Query Helpers
 // ==========================================================
@@ -391,7 +342,6 @@ brandSchema.query.active = function () {
     });
 
 };
-
 
 
 // ==========================================================
@@ -413,7 +363,6 @@ brandSchema.set("toJSON", {
     }
 
 });
-
 
 
 // ==========================================================

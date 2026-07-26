@@ -12,7 +12,7 @@ const roles = [
     {
         name: "admin",
         displayName: "Administrator",
-        description: "Company Administrator",
+        description: "System Administrator",
         isSystem: true
     },
 

@@ -2,18 +2,11 @@ const mongoose = require("mongoose");
 
 const branchSchema = new mongoose.Schema(
 {
-    // Company
 
-    companyId:{
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"Company",
-        required:true,
-        index:true
-    },
-
-    // Branch Code
+        // Branch Code
 
     branchCode:{
+
         type:String,
         required:true,
         unique:true,
@@ -24,12 +17,14 @@ const branchSchema = new mongoose.Schema(
     // Basic
 
     name:{
+
         type:String,
         required:true,
         trim:true
     },
 
     email:{
+
         type:String,
         default:"",
         lowercase:true,
@@ -37,6 +32,7 @@ const branchSchema = new mongoose.Schema(
     },
 
     phone:{
+
         type:String,
         default:"",
         trim:true
@@ -45,6 +41,7 @@ const branchSchema = new mongoose.Schema(
     // Manager
 
     managerId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser",
         default:null
@@ -53,21 +50,25 @@ const branchSchema = new mongoose.Schema(
     // Address
 
     country:{
+
         type:String,
         default:"Bangladesh"
     },
 
     city:{
+
         type:String,
         required:true
     },
 
     address:{
+
         type:String,
         default:""
     },
 
     postalCode:{
+
         type:String,
         default:""
     },
@@ -75,6 +76,7 @@ const branchSchema = new mongoose.Schema(
     // Status
 
     status:{
+
         type:String,
         enum:[
             "Active",
@@ -86,6 +88,7 @@ const branchSchema = new mongoose.Schema(
     // Head Office
 
     isHeadOffice:{
+
         type:Boolean,
         default:false
     },
@@ -93,6 +96,7 @@ const branchSchema = new mongoose.Schema(
     // Description
 
     description:{
+
         type:String,
         default:""
     },
@@ -100,36 +104,35 @@ const branchSchema = new mongoose.Schema(
     // Audit
 
     createdBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser",
         default:null
     },
 
     updatedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser",
         default:null
     },
 
     isDeleted:{
+
         type:Boolean,
         default:false
     }
 
 },
 {
+
     timestamps:true,
     versionKey:false
 });
 
-branchSchema.index({
-    companyId:1,
-    name:1
-});
+branchSchema.index({ name:1 });
 
-branchSchema.index({
-    managerId:1
-});
+branchSchema.index({ managerId:1 });
 
 module.exports=mongoose.model(
     "Branch",

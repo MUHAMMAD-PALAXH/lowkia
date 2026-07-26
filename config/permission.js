@@ -1,15 +1,6 @@
 const PERMISSIONS = {
 
     // ======================================================
-    // Company
-    // ======================================================
-
-    COMPANY_VIEW: "company.view",
-    COMPANY_CREATE: "company.create",
-    COMPANY_UPDATE: "company.update",
-    COMPANY_DELETE: "company.delete",
-
-    // ======================================================
     // Branch
     // ======================================================
 

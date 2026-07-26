@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Sales Order Item Schema
 // ==========================================================
@@ -10,7 +9,9 @@ const mongoose = require("mongoose");
 const salesOrderItemSchema = new mongoose.Schema(
 {
 
+
     productId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Product",
         required:true
@@ -18,6 +19,7 @@ const salesOrderItemSchema = new mongoose.Schema(
 
 
     productVariantId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"ProductVariant",
         default:null
@@ -25,6 +27,7 @@ const salesOrderItemSchema = new mongoose.Schema(
 
 
     sku:{
+
         type:String,
         default:"",
         trim:true
@@ -32,6 +35,7 @@ const salesOrderItemSchema = new mongoose.Schema(
 
 
     productName:{
+
         type:String,
         required:true,
         trim:true
@@ -39,6 +43,7 @@ const salesOrderItemSchema = new mongoose.Schema(
 
 
     quantity:{
+
         type:Number,
         required:true,
         min:1
@@ -46,18 +51,21 @@ const salesOrderItemSchema = new mongoose.Schema(
 
 
     deliveredQuantity:{
+
         type:Number,
         default:0
     },
 
 
     pendingQuantity:{
+
         type:Number,
         default:0
     },
 
 
     unitId:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"Unit",
         default:null
@@ -65,6 +73,7 @@ const salesOrderItemSchema = new mongoose.Schema(
 
 
     unitPrice:{
+
         type:Number,
         required:true,
         min:0
@@ -72,37 +81,37 @@ const salesOrderItemSchema = new mongoose.Schema(
 
 
     discount:{
+
         type:Number,
         default:0
     },
 
 
     tax:{
+
         type:Number,
         default:0
     },
 
 
     total:{
+
         type:Number,
         default:0
     },
 
 
     remarks:{
+
         type:String,
         default:""
     }
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
 
 
 // ==========================================================
@@ -114,30 +123,13 @@ const salesOrderSchema = new mongoose.Schema(
 {
 
 
-// ==========================================================
-// Company & Branch
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
-
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true,
     index:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -146,6 +138,7 @@ branchId:{
 
 
 orderNumber:{
+
     type:String,
     required:true,
     unique:true,
@@ -154,28 +147,24 @@ orderNumber:{
 },
 
 
-
 referenceNumber:{
+
     type:String,
     default:""
 },
 
 
-
 orderDate:{
+
     type:Date,
     default:Date.now
 },
 
 
-
 expectedDeliveryDate:{
+
     type:Date
 },
-
-
-
-
 
 
 // ==========================================================
@@ -184,35 +173,32 @@ expectedDeliveryDate:{
 
 
 customerId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Customer",
     required:true
 },
 
 
-
 customerName:{
+
     type:String,
     required:true
 },
 
 
-
 customerPhone:{
+
     type:String,
     default:""
 },
-
 
 
 customerEmail:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -221,14 +207,11 @@ customerEmail:{
 
 
 quotationId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"SalesQuotation",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -247,48 +230,45 @@ items:[
 
 
 subtotal:{
+
     type:Number,
     default:0
 },
-
 
 
 discount:{
+
     type:Number,
     default:0
 },
-
 
 
 tax:{
+
     type:Number,
     default:0
 },
-
 
 
 shippingCost:{
+
     type:Number,
     default:0
 },
-
 
 
 otherCharges:{
+
     type:Number,
     default:0
 },
-
 
 
 grandTotal:{
+
     type:Number,
     default:0
 },
-
-
-
-
 
 
 // ==========================================================
@@ -297,6 +277,7 @@ grandTotal:{
 
 
 paymentStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -308,22 +289,22 @@ paymentStatus:{
 },
 
 
-
 paidAmount:{
+
     type:Number,
     default:0
 },
-
 
 
 dueAmount:{
+
     type:Number,
     default:0
 },
 
 
-
 paymentMethod:{
+
     type:String,
     enum:[
         "Cash",
@@ -336,16 +317,13 @@ paymentMethod:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Delivery Information
 // ==========================================================
 
 
 deliveryStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -359,58 +337,54 @@ deliveryStatus:{
 },
 
 
-
 deliveryAddress:{
+
     type:String,
     default:""
 },
 
 
-
 deliveryDate:{
+
     type:Date,
     default:null
 },
 
 
-
 deliveredBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 deliveryNote:{
+
     type:String,
     default:""
 },
-
 
 
 vehicleNumber:{
+
     type:String,
     default:""
 },
-
 
 
 driverName:{
+
     type:String,
     default:""
 },
-
 
 
 driverPhone:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -419,6 +393,7 @@ driverPhone:{
 
 
 status:{
+
     type:String,
     enum:[
         "Draft",
@@ -433,23 +408,19 @@ status:{
 },
 
 
-
 approvedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 approvedAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -458,22 +429,23 @@ approvedAt:{
 
 
 stockUpdated:{
+
     type:Boolean,
     default:false
 },
 
 
-
 stockUpdatedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 stockMovementIds:[
 
     {
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"StockMovement"
     }
@@ -486,28 +458,25 @@ stockMovementIds:[
 
 
 invoiceId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"SalesInvoice",
     default:null
 },
 
 
-
 isInvoiced:{
+
     type:Boolean,
     default:false
 },
 
 
-
 invoicedAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -516,21 +485,18 @@ invoicedAt:{
 
 
 hasReturn:{
+
     type:Boolean,
     default:false
 },
 
 
-
 returnId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"SalesReturn",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -539,14 +505,11 @@ returnId:{
 
 
 salesPersonId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -555,20 +518,17 @@ salesPersonId:{
 
 
 customerNote:{
+
     type:String,
     default:""
 },
-
 
 
 internalNote:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -580,19 +540,23 @@ attachments:[
 
 {
 
+
     fileName:{
+
         type:String,
         default:""
     },
 
 
     fileUrl:{
+
         type:String,
         default:""
     },
 
 
     uploadedAt:{
+
         type:Date,
         default:Date.now
     }
@@ -602,47 +566,40 @@ attachments:[
 ],
 
 
-
-
-
-
 // ==========================================================
 // Audit Information
 // ==========================================================
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     required:true
 },
 
 
-
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
 
 
 cancelledBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 cancelledAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -651,37 +608,33 @@ cancelledAt:{
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 deletedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
-
-
 
 
 // ==========================================================
@@ -689,77 +642,35 @@ deletedBy:{
 // ==========================================================
 
 
-salesOrderSchema.index(
-{
-    companyId:1,
-    orderNumber:1
-},
-{
+salesOrderSchema.index({ orderNumber:1 }, {
+
     unique:true
 });
 
 
-
-salesOrderSchema.index({
-
-    customerId:1
-
-});
+salesOrderSchema.index({ customerId:1 });
 
 
-
-salesOrderSchema.index({
-
-    quotationId:1
-
-});
+salesOrderSchema.index({ quotationId:1 });
 
 
-
-salesOrderSchema.index({
-
-    status:1
-
-});
+salesOrderSchema.index({ status:1 });
 
 
-
-salesOrderSchema.index({
-
-    deliveryStatus:1
-
-});
+salesOrderSchema.index({ deliveryStatus:1 });
 
 
-
-salesOrderSchema.index({
-
-    orderDate:-1
-
-});
+salesOrderSchema.index({ orderDate:-1 });
 
 
-
-salesOrderSchema.index({
-
-    invoiceId:1
-
-});
+salesOrderSchema.index({ invoiceId:1 });
 
 
-
-salesOrderSchema.index({
-
-    companyId:1,
-
-    isDeleted:1
-
-});
+salesOrderSchema.index({ isDeleted:1 });
 
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Calculate Order Total
@@ -768,6 +679,7 @@ salesOrderSchema.index({
 salesOrderSchema.methods.calculateTotal =
 function()
 {
+
 
     this.subtotal = 0;
 
@@ -794,7 +706,6 @@ function()
         item.tax;
 
 
-
         this.subtotal += item.total;
 
 
@@ -806,7 +717,6 @@ function()
 
 
     });
-
 
 
     this.grandTotal =
@@ -830,7 +740,6 @@ function()
         this.otherCharges;
 
 
-
     this.dueAmount =
 
         this.grandTotal -
@@ -838,16 +747,9 @@ function()
         this.paidAmount;
 
 
-
     return this.grandTotal;
 
 };
-
-
-
-
-
-
 
 
 // Approve Order
@@ -856,6 +758,7 @@ function()
 salesOrderSchema.methods.approve =
 function(userId)
 {
+
 
     this.status="Approved";
 
@@ -871,18 +774,13 @@ function(userId)
 };
 
 
-
-
-
-
-
-
 // Complete Delivery
 
 
 salesOrderSchema.methods.completeDelivery =
 function(userId)
 {
+
 
     this.deliveryStatus="Delivered";
 
@@ -901,18 +799,13 @@ function(userId)
 };
 
 
-
-
-
-
-
-
 // Update Stock Status
 
 
 salesOrderSchema.methods.updateStock =
 function(movementIds)
 {
+
 
     this.stockUpdated=true;
 
@@ -928,18 +821,13 @@ function(movementIds)
 };
 
 
-
-
-
-
-
-
 // Cancel Order
 
 
 salesOrderSchema.methods.cancel =
 function(userId)
 {
+
 
     this.status="Cancelled";
 
@@ -955,46 +843,31 @@ function(userId)
 };
 
 
-
-
-
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
 
 
+// All Orders
 
-// Company Orders
 
-
-salesOrderSchema.statics.getCompanyOrders =
-function(companyId)
+salesOrderSchema.statics.getAllOrders =
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         isDeleted:false
 
     })
     .sort({
+
 
         orderDate:-1
 
     });
 
 };
-
-
-
-
-
-
 
 
 // Customer Orders
@@ -1004,7 +877,9 @@ salesOrderSchema.statics.getCustomerOrders =
 function(customerId)
 {
 
+
     return this.find({
+
 
         customerId,
 
@@ -1013,6 +888,7 @@ function(customerId)
     })
     .sort({
 
+
         orderDate:-1
 
     });
@@ -1020,25 +896,17 @@ function(customerId)
 };
 
 
-
-
-
-
-
-
 // Pending Orders
 
 
 salesOrderSchema.statics.getPendingOrders =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
-
         status:{
+
             $in:[
                 "Draft",
                 "Pending Approval",
@@ -1055,22 +923,15 @@ function(companyId)
 };
 
 
-
-
-
-
-
-
 // Monthly Sales Report
 
 
 salesOrderSchema.statics.getMonthlyReport =
-function(
-    companyId,
-    month,
+function(month,
     year
 )
 {
+
 
     const startDate =
     new Date(
@@ -1089,11 +950,8 @@ function(
 
 
     return this.find({
-
-        companyId,
-
-
         orderDate:{
+
             $gte:startDate,
             $lte:endDate
         },
@@ -1107,12 +965,6 @@ function(
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // QUERY HELPERS
 // ==========================================================
@@ -1122,7 +974,9 @@ salesOrderSchema.query.active =
 function()
 {
 
+
     return this.where({
+
 
         isDeleted:false
 
@@ -1131,15 +985,13 @@ function()
 };
 
 
-
-
-
-
 salesOrderSchema.query.completed =
 function()
 {
 
+
     return this.where({
+
 
         status:"Completed",
 
@@ -1150,17 +1002,16 @@ function()
 };
 
 
-
-
-
-
 salesOrderSchema.query.pendingDelivery =
 function()
 {
 
+
     return this.where({
 
+
         deliveryStatus:{
+
             $ne:"Delivered"
         },
 
@@ -1172,12 +1023,6 @@ function()
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // JSON CONFIG
 // ==========================================================
@@ -1186,6 +1031,7 @@ function()
 salesOrderSchema.set(
 "toJSON",
 {
+
 
     virtuals:true,
 
@@ -1197,6 +1043,7 @@ salesOrderSchema.set(
         ret
     ){
 
+
         delete ret._id;
 
         return ret;
@@ -1204,12 +1051,6 @@ salesOrderSchema.set(
     }
 
 });
-
-
-
-
-
-
 
 
 // ==========================================================

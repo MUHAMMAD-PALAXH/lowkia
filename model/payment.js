@@ -4,18 +4,13 @@ const mongoose = require("mongoose");
 // Payment Schema
 // ==========================================================
 const paymentSchema = new mongoose.Schema(
-  {
-    // ==========================================================
-    // Company & Branch
-    // ==========================================================
-    companyId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Company",
-      required: true,
-      index: true,
-    },
+{
 
+// ==========================================================
+    // Branch
+    // ==========================================================
     branchId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
       default: null,
@@ -26,6 +21,7 @@ const paymentSchema = new mongoose.Schema(
     // Payment Identity
     // ==========================================================
     paymentNumber: {
+
       type: String,
       required: true,
       trim: true,
@@ -33,6 +29,7 @@ const paymentSchema = new mongoose.Schema(
     },
 
     paymentDate: {
+
       type: Date,
       default: Date.now,
     },
@@ -41,6 +38,7 @@ const paymentSchema = new mongoose.Schema(
     // Payment Type
     // ==========================================================
     paymentType: {
+
       type: String,
       enum: [
         "Supplier Payment",
@@ -57,12 +55,14 @@ const paymentSchema = new mongoose.Schema(
     // Party Relation
     // ==========================================================
     partyType: {
+
       type: String,
       enum: ["Supplier", "Customer", "Employee", "Other"],
       required: true,
     },
 
     partyId: {
+
       type: mongoose.Schema.Types.ObjectId,
       required: true,
     },
@@ -71,12 +71,14 @@ const paymentSchema = new mongoose.Schema(
     // Reference Document
     // ==========================================================
     referenceType: {
+
       type: String,
       enum: ["PurchaseInvoice", "SalesReturn", "Expense", "Salary", "Manual"],
       default: "Manual",
     },
 
     referenceId: {
+
       type: mongoose.Schema.Types.ObjectId,
       default: null,
     },
@@ -85,24 +87,28 @@ const paymentSchema = new mongoose.Schema(
     // Amount Information
     // ==========================================================
     amount: {
+
       type: Number,
       required: true,
       min: 0,
     },
 
     paidAmount: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     dueAmount: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     discountAmount: {
+
       type: Number,
       default: 0,
       min: 0,
@@ -112,6 +118,7 @@ const paymentSchema = new mongoose.Schema(
     // Payment Method
     // ==========================================================
     paymentMethod: {
+
       type: String,
       enum: ["Cash", "Bank Transfer", "Cheque", "Card", "Mobile Banking", "Online Payment"],
       required: true,
@@ -121,12 +128,14 @@ const paymentSchema = new mongoose.Schema(
     // Account Mapping
     // ==========================================================
     paymentAccountId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Account",
       required: true,
     },
 
     cashBankAccountId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Account",
       default: null,
@@ -136,22 +145,26 @@ const paymentSchema = new mongoose.Schema(
     // Transaction Information
     // ==========================================================
     transactionReference: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     chequeNumber: {
+
       type: String,
       default: "",
     },
 
     bankName: {
+
       type: String,
       default: "",
     },
 
     transactionDate: {
+
       type: Date,
       default: null,
     },
@@ -160,12 +173,14 @@ const paymentSchema = new mongoose.Schema(
     // Currency
     // ==========================================================
     currency: {
+
       type: String,
       default: "BDT",
       uppercase: true,
     },
 
     exchangeRate: {
+
       type: Number,
       default: 1,
     },
@@ -174,17 +189,20 @@ const paymentSchema = new mongoose.Schema(
     // Journal Integration
     // ==========================================================
     journalId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Journal",
       default: null,
     },
 
     isJournalCreated: {
+
       type: Boolean,
       default: false,
     },
 
     journalCreatedAt: {
+
       type: Date,
       default: null,
     },
@@ -193,17 +211,20 @@ const paymentSchema = new mongoose.Schema(
     // Ledger Integration
     // ==========================================================
     ledgerId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ledger",
       default: null,
     },
 
     isLedgerPosted: {
+
       type: Boolean,
       default: false,
     },
 
     ledgerPostedAt: {
+
       type: Date,
       default: null,
     },
@@ -212,18 +233,21 @@ const paymentSchema = new mongoose.Schema(
     // Posting Workflow
     // ==========================================================
     status: {
+
       type: String,
       enum: ["Draft", "Pending Approval", "Approved", "Paid", "Cancelled"],
       default: "Draft",
     },
 
     postedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     postedAt: {
+
       type: Date,
       default: null,
     },
@@ -232,22 +256,26 @@ const paymentSchema = new mongoose.Schema(
     // Approval System
     // ==========================================================
     requiresApproval: {
+
       type: Boolean,
       default: false,
     },
 
     approvedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     approvedAt: {
+
       type: Date,
       default: null,
     },
 
     approvalNote: {
+
       type: String,
       default: "",
     },
@@ -256,17 +284,20 @@ const paymentSchema = new mongoose.Schema(
     // Reconciliation
     // ==========================================================
     isReconciled: {
+
       type: Boolean,
       default: false,
     },
 
     reconciledBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     reconciledAt: {
+
       type: Date,
       default: null,
     },
@@ -276,24 +307,30 @@ const paymentSchema = new mongoose.Schema(
     // ==========================================================
     attachments: [
       {
+
         fileName: {
+
           type: String,
           default: "",
         },
         fileUrl: {
+
           type: String,
           default: "",
         },
         fileType: {
+
           type: String,
           default: "",
         },
         uploadedBy: {
+
           type: mongoose.Schema.Types.ObjectId,
           ref: "AdminUser",
           default: null,
         },
         uploadedAt: {
+
           type: Date,
           default: Date.now,
         },
@@ -304,12 +341,14 @@ const paymentSchema = new mongoose.Schema(
     // Notes & Remarks
     // ==========================================================
     note: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     internalNote: {
+
       type: String,
       default: "",
       trim: true,
@@ -319,24 +358,28 @@ const paymentSchema = new mongoose.Schema(
     // Audit Information
     // ==========================================================
     createdBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       required: true,
     },
 
     updatedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     cancelledBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     cancelledAt: {
+
       type: Date,
       default: null,
     },
@@ -345,17 +388,20 @@ const paymentSchema = new mongoose.Schema(
     // Security Control
     // ==========================================================
     sourceModule: {
+
       type: String,
       enum: ["Purchase", "Sales", "Expense", "HR", "Finance", "Manual"],
       default: "Finance",
     },
 
     isSystemGenerated: {
+
       type: Boolean,
       default: false,
     },
 
     isManualEntry: {
+
       type: Boolean,
       default: true,
     },
@@ -364,22 +410,26 @@ const paymentSchema = new mongoose.Schema(
     // Soft Delete
     // ==========================================================
     isDeleted: {
+
       type: Boolean,
       default: false,
     },
 
     deletedAt: {
+
       type: Date,
       default: null,
     },
 
     deletedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
   },
   {
+
     timestamps: true, // Adds createdAt & updatedAt
   }
 );
@@ -388,11 +438,11 @@ const paymentSchema = new mongoose.Schema(
 // DATABASE INDEXES
 // ==========================================================
 
-// Payment Number Unique Per Company
-paymentSchema.index({ companyId: 1, paymentNumber: 1 }, { unique: true });
+// Payment Number Unique
+paymentSchema.index({ paymentNumber: 1  }, { unique: true });
 
-// Company Payment History
-paymentSchema.index({ companyId: 1, paymentDate: -1 });
+// Payment History
+paymentSchema.index({ paymentDate: -1  });
 
 // Branch Wise Payment
 paymentSchema.index({ branchId: 1, paymentDate: -1 });
@@ -431,19 +481,20 @@ paymentSchema.index({ isReconciled: 1 });
 paymentSchema.index({ currency: 1 });
 
 // Soft Delete Filter
-paymentSchema.index({ companyId: 1, isDeleted: 1 });
+paymentSchema.index({ isDeleted: 1  });
 
 // Audit Search
 paymentSchema.index({ createdBy: 1, createdAt: -1 });
 
 // Additional useful indexes
-paymentSchema.index({ companyId: 1, paymentType: 1, status: 1 });
-paymentSchema.index({ companyId: 1, partyType: 1, partyId: 1 });
+paymentSchema.index({ paymentType: 1, status: 1  });
+paymentSchema.index({ partyType: 1, partyId: 1  });
 
 // ==========================================================
 // VIRTUAL FIELD
 // ==========================================================
 paymentSchema.virtual("id").get(function () {
+
   return this._id.toHexString();
 });
 
@@ -452,24 +503,30 @@ paymentSchema.virtual("id").get(function () {
 // ==========================================================
 
 paymentSchema.methods.calculateDue = function () {
+
   this.dueAmount = (this.amount - this.discountAmount) - this.paidAmount;
   if (this.dueAmount < 0) {
+
     this.dueAmount = 0;
   }
   return this.dueAmount;
 };
 
 paymentSchema.methods.validatePayment = function () {
+
   if (this.amount <= 0) {
+
     throw new Error("Payment amount must be greater than zero.");
   }
   if (this.paidAmount > this.amount) {
+
     throw new Error("Paid amount cannot exceed total amount.");
   }
   return true;
 };
 
 paymentSchema.methods.approve = function (userId, note = "") {
+
   this.status = "Approved";
   this.approvedBy = userId;
   this.approvedAt = new Date();
@@ -478,6 +535,7 @@ paymentSchema.methods.approve = function (userId, note = "") {
 };
 
 paymentSchema.methods.markAsPaid = function (userId) {
+
   this.validatePayment();
   this.calculateDue();
   this.status = "Paid";
@@ -487,6 +545,7 @@ paymentSchema.methods.markAsPaid = function (userId) {
 };
 
 paymentSchema.methods.reconcile = function (userId) {
+
   this.isReconciled = true;
   this.reconciledBy = userId;
   this.reconciledAt = new Date();
@@ -494,6 +553,7 @@ paymentSchema.methods.reconcile = function (userId) {
 };
 
 paymentSchema.methods.cancel = function (userId) {
+
   this.status = "Cancelled";
   this.cancelledBy = userId;
   this.cancelledAt = new Date();
@@ -501,6 +561,7 @@ paymentSchema.methods.cancel = function (userId) {
 };
 
 paymentSchema.methods.softDelete = function (userId) {
+
   this.isDeleted = true;
   this.deletedAt = new Date();
   this.deletedBy = userId;
@@ -511,36 +572,39 @@ paymentSchema.methods.softDelete = function (userId) {
 // STATIC METHODS
 // ==========================================================
 
-paymentSchema.statics.getCompanyPayments = function (companyId) {
+paymentSchema.statics.getAllPayments = function() {
+
   return this.find({
-    companyId,
     isDeleted: false,
   }).sort({ paymentDate: -1 });
 };
 
 paymentSchema.statics.getSupplierPayments = function (supplierId) {
+
   return this.find({
+
     partyType: "Supplier",
     partyId: supplierId,
     isDeleted: false,
   }).sort({ paymentDate: -1 });
 };
 
-paymentSchema.statics.getPendingPayments = function (companyId) {
+paymentSchema.statics.getPendingPayments = function() {
+
   return this.find({
-    companyId,
     status: "Pending Approval",
     isDeleted: false,
   });
 };
 
-paymentSchema.statics.getMonthlyReport = function (companyId, month, year) {
+paymentSchema.statics.getMonthlyReport = function(month, year) {
+
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0);
 
   return this.find({
-    companyId,
     paymentDate: {
+
       $gte: startDate,
       $lte: endDate,
     },
@@ -553,18 +617,23 @@ paymentSchema.statics.getMonthlyReport = function (companyId, month, year) {
 // ==========================================================
 
 paymentSchema.query.active = function () {
+
   return this.where({ isDeleted: false });
 };
 
 paymentSchema.query.approved = function () {
+
   return this.where({
+
     status: "Approved",
     isDeleted: false,
   });
 };
 
 paymentSchema.query.paid = function () {
+
   return this.where({
+
     status: "Paid",
     isDeleted: false,
   });
@@ -574,9 +643,11 @@ paymentSchema.query.paid = function () {
 // JSON CONFIG
 // ==========================================================
 paymentSchema.set("toJSON", {
+
   virtuals: true,
   versionKey: false,
   transform: function (doc, ret) {
+
     delete ret._id;
     return ret;
   },

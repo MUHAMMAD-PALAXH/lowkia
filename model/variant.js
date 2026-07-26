@@ -6,20 +6,7 @@ const mongoose = require("mongoose");
 
 const variantSchema = new mongoose.Schema(
 {
-    // ======================================================
-    // Company
-    // ======================================================
 
-    companyId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Company",
-        required: true,
-        index: true
-    },
-
-
-
-    // ======================================================
     // Variant Type
     // ======================================================
 
@@ -29,7 +16,6 @@ const variantSchema = new mongoose.Schema(
         required: true,
         index: true
     },
-
 
 
     // ======================================================
@@ -55,7 +41,6 @@ const variantSchema = new mongoose.Schema(
         default: "",
         trim: true
     },
-
 
 
     // ======================================================
@@ -87,7 +72,6 @@ const variantSchema = new mongoose.Schema(
     },
 
 
-
     // ======================================================
     // Statistics
     // ======================================================
@@ -96,7 +80,6 @@ const variantSchema = new mongoose.Schema(
         type: Number,
         default: 0
     },
-
 
 
     // ======================================================
@@ -114,7 +97,6 @@ const variantSchema = new mongoose.Schema(
         ref: "AdminUser",
         default: null
     },
-
 
 
     // ======================================================
@@ -149,42 +131,21 @@ const variantSchema = new mongoose.Schema(
 // Indexes
 // ==========================================================
 
-variantSchema.index(
-    {
-        companyId: 1,
-        variantTypeId: 1,
+variantSchema.index({ variantTypeId: 1,
         name: 1
-    },
-    {
+     }, {
         unique: true
-    }
-);
+    });
 
-variantSchema.index({
-    companyId: 1,
-    code: 1
-});
+variantSchema.index({ code: 1 });
 
-variantSchema.index({
-    companyId: 1,
-    status: 1
-});
+variantSchema.index({ status: 1 });
 
-variantSchema.index({
-    companyId: 1,
-    variantTypeId: 1
-});
+variantSchema.index({ variantTypeId: 1 });
 
-variantSchema.index({
-    companyId: 1,
-    displayOrder: 1
-});
+variantSchema.index({ displayOrder: 1 });
 
-variantSchema.index({
-    companyId: 1,
-    isDeleted: 1
-});
-
+variantSchema.index({ isDeleted: 1 });
 
 
 // ==========================================================
@@ -196,7 +157,6 @@ variantSchema.virtual("id").get(function () {
     return this._id.toHexString();
 
 });
-
 
 
 // ==========================================================
@@ -238,20 +198,16 @@ variantSchema.methods.deactivate = function () {
 };
 
 
-
 // ==========================================================
 // Static Methods
 // ==========================================================
 
 // Get Active Variants
 
-variantSchema.statics.getActiveVariants = function (
-    companyId,
-    variantTypeId = null
+variantSchema.statics.getActiveVariants = function(variantTypeId = null
 ) {
 
     const filter = {
-        companyId,
         status: "Active",
         isDeleted: false
     };
@@ -268,7 +224,6 @@ variantSchema.statics.getActiveVariants = function (
 };
 
 
-
 // ==========================================================
 // Query Helpers
 // ==========================================================
@@ -281,7 +236,6 @@ variantSchema.query.active = function () {
     });
 
 };
-
 
 
 // ==========================================================
@@ -303,7 +257,6 @@ variantSchema.set("toJSON", {
     }
 
 });
-
 
 
 // ==========================================================

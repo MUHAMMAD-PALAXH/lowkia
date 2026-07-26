@@ -151,7 +151,6 @@ router.post('/', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
     });
 
     const productData = {
-      companyId: safeObjectId(body.companyId) || req.user.companyId,
       vendorId: req.user._id,
 
       name: body.name,
@@ -248,7 +247,6 @@ router.post('/', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
           variantId: savedVariant._id,
           imei: imei.toString().trim(),
           status: 'available',
-          companyId: newProduct.companyId,
           supplierId: safeObjectId(body.supplierId),
           branchId: safeObjectId(body.branchId)
         }));

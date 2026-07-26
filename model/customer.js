@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Contact Person Schema
 // ==========================================================
@@ -10,7 +9,9 @@ const mongoose = require("mongoose");
 const contactPersonSchema = new mongoose.Schema(
 {
 
+
     name:{
+
         type:String,
         required:true,
         trim:true
@@ -18,31 +19,30 @@ const contactPersonSchema = new mongoose.Schema(
 
 
     designation:{
+
         type:String,
         default:""
     },
 
 
     phone:{
+
         type:String,
         default:""
     },
 
 
     email:{
+
         type:String,
         default:""
     }
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
 
 
 // ==========================================================
@@ -54,29 +54,12 @@ const customerSchema = new mongoose.Schema(
 {
 
 
-// ==========================================================
-// Company Relation
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
-
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -85,15 +68,16 @@ branchId:{
 
 
 customerId:{
+
     type:String,
     required:true,
     unique:true,
     trim:true
 },
-
 
 
 customerCode:{
+
     type:String,
     required:true,
     unique:true,
@@ -101,8 +85,8 @@ customerCode:{
 },
 
 
-
 customerType:{
+
     type:String,
     enum:[
         "Retail",
@@ -116,24 +100,20 @@ customerType:{
 },
 
 
-
 name:{
+
     type:String,
     required:true,
     trim:true
 },
 
 
-
 companyName:{
+
     type:String,
     default:"",
     trim:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -142,27 +122,24 @@ companyName:{
 
 
 taxNumber:{
+
     type:String,
     default:""
 },
-
 
 
 vatNumber:{
+
     type:String,
     default:""
 },
-
 
 
 tradeLicense:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -171,13 +148,14 @@ tradeLicense:{
 
 
 phone:{
+
     type:String,
     default:""
 },
 
 
-
 email:{
+
     type:String,
     lowercase:true,
     trim:true,
@@ -185,33 +163,32 @@ email:{
 },
 
 
-
 website:{
+
     type:String,
     default:""
 },
-
 
 
 address:{
+
     type:String,
     default:""
 },
-
 
 
 city:{
+
     type:String,
     default:""
 },
 
 
-
 country:{
+
     type:String,
     default:"Bangladesh"
 },
-
 
 
 contactPersons:[
@@ -224,6 +201,7 @@ contactPersons:[
 
 
 paymentTerms:{
+
     type:String,
     enum:[
         "Cash",
@@ -238,22 +216,18 @@ paymentTerms:{
 },
 
 
-
 creditLimit:{
+
     type:Number,
     default:0
 },
-
 
 
 creditDays:{
+
     type:Number,
     default:0
 },
-
-
-
-
 
 
 // ==========================================================
@@ -262,20 +236,21 @@ creditDays:{
 
 
 openingBalance:{
+
     type:Number,
     default:0
 },
-
 
 
 currentBalance:{
+
     type:Number,
     default:0
 },
 
 
-
 balanceType:{
+
     type:String,
     enum:[
         "Receivable",
@@ -286,49 +261,42 @@ balanceType:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Sales Summary
 // ==========================================================
 
 
 totalSalesAmount:{
+
     type:Number,
     default:0
 },
-
 
 
 totalPaidAmount:{
+
     type:Number,
     default:0
 },
-
 
 
 totalDueAmount:{
+
     type:Number,
     default:0
 },
 
 
-
 lastSaleDate:{
+
     type:Date
 },
-
 
 
 lastPaymentDate:{
+
     type:Date
 },
-
-
-
-
 
 
 // ==========================================================
@@ -337,22 +305,19 @@ lastPaymentDate:{
 
 
 ledgerAccountId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Account",
     default:null
 },
 
 
-
 customerLedgerId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Ledger",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -361,6 +326,7 @@ customerLedgerId:{
 
 
 rating:{
+
     type:Number,
     min:0,
     max:5,
@@ -368,8 +334,8 @@ rating:{
 },
 
 
-
 ratingCount:{
+
     type:Number,
     default:0
 },
@@ -380,48 +346,45 @@ ratingCount:{
 
 
 shippingAddress:{
+
     type:String,
     default:""
 },
-
 
 
 shippingCity:{
+
     type:String,
     default:""
 },
-
 
 
 shippingCountry:{
+
     type:String,
     default:"Bangladesh"
 },
-
 
 
 billingAddress:{
+
     type:String,
     default:""
 },
-
 
 
 billingCity:{
+
     type:String,
     default:""
 },
 
 
-
 billingCountry:{
+
     type:String,
     default:"Bangladesh"
 },
-
-
-
-
 
 
 // ==========================================================
@@ -430,21 +393,18 @@ billingCountry:{
 
 
 customerGroup:{
+
     type:String,
     default:"General"
 },
 
 
-
 salesPersonId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -453,6 +413,7 @@ salesPersonId:{
 
 
 status:{
+
     type:String,
     enum:[
         "Active",
@@ -463,30 +424,26 @@ status:{
 },
 
 
-
 isApproved:{
+
     type:Boolean,
     default:false
 },
 
 
-
 approvedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 approvedAt:{
+
     type:Date,
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -495,23 +452,20 @@ approvedAt:{
 
 
 note:{
+
     type:String,
     default:""
 },
 
 
-
 tags:[
 
     {
+
         type:String
     }
 
 ],
-
-
-
-
 
 
 // ==========================================================
@@ -520,48 +474,45 @@ tags:[
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
-
 
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
-
 
 
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
-
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 deletedAt:{
+
     type:Date,
     default:null
 },
 
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
-
-
 
 
 // ==========================================================
@@ -569,83 +520,36 @@ deletedAt:{
 // ==========================================================
 
 
-customerSchema.index(
-{
-    companyId:1,
-    customerCode:1
-},
-{
+customerSchema.index({ customerCode:1 }, {
+
     unique:true
 });
 
 
-
-customerSchema.index({
-
-    companyId:1,
-
-    name:1
-
-});
+customerSchema.index({ name:1 });
 
 
-
-customerSchema.index({
-
-    phone:1
-
-});
+customerSchema.index({ phone:1 });
 
 
-
-customerSchema.index({
-
-    email:1
-
-});
+customerSchema.index({ email:1 });
 
 
-
-customerSchema.index({
-
-    status:1
-
-});
+customerSchema.index({ status:1 });
 
 
-
-customerSchema.index({
-
-    customerType:1
-
-});
+customerSchema.index({ customerType:1 });
 
 
-
-customerSchema.index({
-
-    totalDueAmount:-1
-
-});
+customerSchema.index({ totalDueAmount:-1 });
 
 
-
-customerSchema.index({
-
-    createdAt:-1
-
-});
-
-
-
-
-
+customerSchema.index({ createdAt:-1 });
 
 
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Update Customer Balance
@@ -656,6 +560,7 @@ function(
     saleAmount,
     paymentAmount
 ){
+
 
     this.totalSalesAmount += saleAmount;
 
@@ -670,21 +575,14 @@ function(
         this.totalPaidAmount;
 
 
-
     this.currentBalance =
 
         this.totalDueAmount;
 
 
-
     return this.save();
 
 };
-
-
-
-
-
 
 
 // Add Rating
@@ -702,9 +600,7 @@ function(score)
     + score;
 
 
-
     this.ratingCount += 1;
-
 
 
     this.rating =
@@ -714,15 +610,9 @@ function(score)
     this.ratingCount;
 
 
-
     return this.save();
 
 };
-
-
-
-
-
 
 
 // Block Customer
@@ -732,6 +622,7 @@ customerSchema.methods.block =
 function()
 {
 
+
     this.status="Blocked";
 
 
@@ -740,17 +631,13 @@ function()
 };
 
 
-
-
-
-
-
 // Activate Customer
 
 
 customerSchema.methods.activate =
 function()
 {
+
 
     this.status="Active";
 
@@ -764,18 +651,15 @@ function()
 // ==========================================================
 
 
-
 // Active Customers
 
 
 customerSchema.statics.getActiveCustomers =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
         status:"Active",
 
         isDeleted:false
@@ -785,24 +669,17 @@ function(companyId)
 };
 
 
-
-
-
-
-
 // Customer Due Report
 
 
 customerSchema.statics.getDueReport =
-function(companyId)
+function()
 {
 
+
     return this.find({
-
-        companyId,
-
-
         totalDueAmount:{
+
             $gt:0
         },
 
@@ -812,6 +689,7 @@ function(companyId)
     })
     .sort({
 
+
         totalDueAmount:-1
 
     });
@@ -819,27 +697,21 @@ function(companyId)
 };
 
 
-
-
-
-
-
 // Customer Sales Report
 
 
 customerSchema.statics.getSalesReport =
-function(companyId)
+function()
 {
+
 
     return this.aggregate([
 
 
         {
 
+
             $match:{
-
-                companyId,
-
                 isDeleted:false
 
             }
@@ -849,7 +721,9 @@ function(companyId)
 
         {
 
+
             $project:{
+
 
                 name:1,
 
@@ -869,30 +743,22 @@ function(companyId)
 };
 
 
-
-
-
-
-
 // Search Customer
 
 
 customerSchema.statics.searchCustomer =
-function(
-    companyId,
-    keyword
+function(keyword
 )
 {
 
+
     return this.find({
-
-        companyId,
-
-
         $or:[
 
             {
+
                 name:{
+
                     $regex:keyword,
                     $options:"i"
                 }
@@ -900,7 +766,9 @@ function(
 
 
             {
+
                 phone:{
+
                     $regex:keyword,
                     $options:"i"
                 }
@@ -908,7 +776,9 @@ function(
 
 
             {
+
                 email:{
+
                     $regex:keyword,
                     $options:"i"
                 }
@@ -926,11 +796,6 @@ function(
 };
 
 
-
-
-
-
-
 // ==========================================================
 // QUERY HELPERS
 // ==========================================================
@@ -940,7 +805,9 @@ customerSchema.query.active =
 function()
 {
 
+
     return this.where({
+
 
         status:"Active",
 
@@ -951,18 +818,16 @@ function()
 };
 
 
-
-
-
-
-
 customerSchema.query.withDue =
 function()
 {
 
+
     return this.where({
 
+
         totalDueAmount:{
+
             $gt:0
         },
 
@@ -982,6 +847,7 @@ customerSchema.set(
 "toJSON",
 {
 
+
     virtuals:true,
 
     versionKey:false,
@@ -992,6 +858,7 @@ customerSchema.set(
         ret
     ){
 
+
         delete ret._id;
 
         return ret;
@@ -999,11 +866,6 @@ customerSchema.set(
     }
 
 });
-
-
-
-
-
 
 
 // ==========================================================

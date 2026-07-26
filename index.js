@@ -69,9 +69,8 @@ require('./model/user');
 require('./model/adminUser');
 require('./model/order');
 require('./model/review');
-require('./model/supplier'); 
+require('./model/supplier');
 require('./model/warehouse');
-require('./model/company');
 require('./model/counter');
 
 // ============================================================
@@ -131,10 +130,18 @@ app.get('/', (req, res) => {
 // GLOBAL ERROR HANDLER
 app.use((err, req, res, next) => {
   console.error('Global error:', { message: err.message });
+
   const statusCode = err.statusCode || 500;
+  const isOperational = err.isOperational === true;
+
   res.status(statusCode).json({
     success: false,
-    message: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
+    message:
+      process.env.NODE_ENV === 'production' && !isOperational
+        ? 'Internal server error'
+        : err.message,
+    data: null,
+    errors: err.errors || null,
   });
 });
 

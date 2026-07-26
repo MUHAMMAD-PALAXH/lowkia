@@ -4,18 +4,13 @@ const mongoose = require("mongoose");
 // Ledger Schema
 // ==========================================================
 const ledgerSchema = new mongoose.Schema(
-  {
-    // ==========================================================
-    // Company & Branch
-    // ==========================================================
-    companyId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Company",
-      required: true,
-      index: true,
-    },
+{
 
+// ==========================================================
+    // Branch
+    // ==========================================================
     branchId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
       default: null,
@@ -26,6 +21,7 @@ const ledgerSchema = new mongoose.Schema(
     // Account Relation
     // ==========================================================
     accountId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Account",
       required: true,
@@ -36,6 +32,7 @@ const ledgerSchema = new mongoose.Schema(
     // Transaction Identity
     // ==========================================================
     transactionId: {
+
       type: String,
       required: true,
       trim: true,
@@ -43,6 +40,7 @@ const ledgerSchema = new mongoose.Schema(
     },
 
     transactionDate: {
+
       type: Date,
       default: Date.now,
     },
@@ -51,6 +49,7 @@ const ledgerSchema = new mongoose.Schema(
     // Transaction Type
     // ==========================================================
     transactionType: {
+
       type: String,
       enum: [
         "Purchase",
@@ -70,6 +69,7 @@ const ledgerSchema = new mongoose.Schema(
     // Reference Document
     // ==========================================================
     referenceType: {
+
       type: String,
       enum: [
         "PurchaseInvoice",
@@ -85,6 +85,7 @@ const ledgerSchema = new mongoose.Schema(
     },
 
     referenceId: {
+
       type: mongoose.Schema.Types.ObjectId,
       default: null,
     },
@@ -93,12 +94,14 @@ const ledgerSchema = new mongoose.Schema(
     // Accounting Amount
     // ==========================================================
     debitAmount: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     creditAmount: {
+
       type: Number,
       default: 0,
       min: 0,
@@ -108,11 +111,13 @@ const ledgerSchema = new mongoose.Schema(
     // Running Balance
     // ==========================================================
     balance: {
+
       type: Number,
       default: 0,
     },
 
     balanceType: {
+
       type: String,
       enum: ["Debit", "Credit"],
       default: "Debit",
@@ -122,12 +127,14 @@ const ledgerSchema = new mongoose.Schema(
     // Description
     // ==========================================================
     description: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     remarks: {
+
       type: String,
       default: "",
       trim: true,
@@ -137,6 +144,7 @@ const ledgerSchema = new mongoose.Schema(
     // Currency
     // ==========================================================
     currency: {
+
       type: String,
       default: "BDT",
       uppercase: true,
@@ -147,12 +155,14 @@ const ledgerSchema = new mongoose.Schema(
     // Party Relation
     // ==========================================================
     partyType: {
+
       type: String,
       enum: ["Supplier", "Customer", "Employee", "Other"],
       default: null,
     },
 
     partyId: {
+
       type: mongoose.Schema.Types.ObjectId,
       default: null,
     },
@@ -161,17 +171,20 @@ const ledgerSchema = new mongoose.Schema(
     // Journal Integration
     // ==========================================================
     journalEntryId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Journal",
       default: null,
     },
 
     isJournalPosted: {
+
       type: Boolean,
       default: false,
     },
 
     journalPostedAt: {
+
       type: Date,
       default: null,
     },
@@ -180,12 +193,14 @@ const ledgerSchema = new mongoose.Schema(
     // Payment / Receipt Integration
     // ==========================================================
     paymentId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Payment",
       default: null,
     },
 
     receiptId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Receipt",
       default: null,
@@ -195,18 +210,21 @@ const ledgerSchema = new mongoose.Schema(
     // Posting Status
     // ==========================================================
     postingStatus: {
+
       type: String,
       enum: ["Draft", "Posted", "Reversed", "Cancelled"],
       default: "Draft",
     },
 
     postedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     postedAt: {
+
       type: Date,
       default: null,
     },
@@ -215,17 +233,20 @@ const ledgerSchema = new mongoose.Schema(
     // Reversal Transaction
     // ==========================================================
     isReversal: {
+
       type: Boolean,
       default: false,
     },
 
     reversalOf: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ledger",
       default: null,
     },
 
     reversalReason: {
+
       type: String,
       default: "",
     },
@@ -235,23 +256,29 @@ const ledgerSchema = new mongoose.Schema(
     // ==========================================================
     attachments: [
       {
+
         fileName: {
+
           type: String,
           default: "",
         },
         fileUrl: {
+
           type: String,
           default: "",
         },
         fileType: {
+
           type: String,
           default: "",
         },
         uploadedAt: {
+
           type: Date,
           default: Date.now,
         },
         uploadedBy: {
+
           type: mongoose.Schema.Types.ObjectId,
           ref: "AdminUser",
           default: null,
@@ -263,12 +290,14 @@ const ledgerSchema = new mongoose.Schema(
     // Notes & Remarks
     // ==========================================================
     internalNote: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     description2: {
+
       type: String,
       default: "",
       trim: true,
@@ -278,24 +307,28 @@ const ledgerSchema = new mongoose.Schema(
     // Audit Information
     // ==========================================================
     createdBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       required: true,
     },
 
     updatedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     approvedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     approvedAt: {
+
       type: Date,
       default: null,
     },
@@ -304,22 +337,26 @@ const ledgerSchema = new mongoose.Schema(
     // Soft Delete
     // ==========================================================
     isDeleted: {
+
       type: Boolean,
       default: false,
     },
 
     deletedAt: {
+
       type: Date,
       default: null,
     },
 
     deletedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
   },
   {
+
     timestamps: true, // Adds createdAt & updatedAt
   }
 );
@@ -328,20 +365,20 @@ const ledgerSchema = new mongoose.Schema(
 // DATABASE INDEXES
 // ==========================================================
 
-// Transaction ID Unique Per Company
-ledgerSchema.index({ companyId: 1, transactionId: 1 }, { unique: true });
+// Transaction ID Unique
+ledgerSchema.index({ transactionId: 1  }, { unique: true });
 
 // Account Ledger Report
 ledgerSchema.index({ accountId: 1, transactionDate: -1 });
 
-// Company Ledger Report
-ledgerSchema.index({ companyId: 1, transactionDate: -1 });
+// Ledger Report
+ledgerSchema.index({ transactionDate: -1  });
 
 // Branch Wise Ledger
 ledgerSchema.index({ branchId: 1, transactionDate: -1 });
 
 // Transaction Type Report
-ledgerSchema.index({ companyId: 1, transactionType: 1 });
+ledgerSchema.index({ transactionType: 1  });
 
 // Reference Document Search
 ledgerSchema.index({ referenceType: 1, referenceId: 1 });
@@ -368,19 +405,20 @@ ledgerSchema.index({ receiptId: 1 });
 ledgerSchema.index({ transactionDate: -1 });
 
 // Soft Delete Filter
-ledgerSchema.index({ companyId: 1, isDeleted: 1 });
+ledgerSchema.index({ isDeleted: 1  });
 
 // Created User Audit
 ledgerSchema.index({ createdBy: 1, createdAt: -1 });
 
 // Additional useful indexes
-ledgerSchema.index({ companyId: 1, accountId: 1, transactionDate: -1 });
-ledgerSchema.index({ companyId: 1, postingStatus: 1, transactionDate: -1 });
+ledgerSchema.index({ accountId: 1, transactionDate: -1  });
+ledgerSchema.index({ postingStatus: 1, transactionDate: -1  });
 
 // ==========================================================
 // VIRTUAL FIELD
 // ==========================================================
 ledgerSchema.virtual("id").get(function () {
+
   return this._id.toHexString();
 });
 
@@ -389,11 +427,14 @@ ledgerSchema.virtual("id").get(function () {
 // ==========================================================
 
 ledgerSchema.methods.validateEntry = function () {
+
   if (this.debitAmount !== 0 && this.creditAmount !== 0) {
+
     throw new Error("Ledger entry cannot have both debit and credit amount");
   }
 
   if (this.debitAmount === 0 && this.creditAmount === 0) {
+
     throw new Error("Ledger entry must have debit or credit amount");
   }
 
@@ -401,10 +442,13 @@ ledgerSchema.methods.validateEntry = function () {
 };
 
 ledgerSchema.methods.calculateBalance = function (previousBalance) {
+
   if (this.debitAmount > 0) {
+
     this.balance = previousBalance + this.debitAmount;
     this.balanceType = "Debit";
   } else if (this.creditAmount > 0) {
+
     this.balance = previousBalance - this.creditAmount;
     this.balanceType = "Credit";
   }
@@ -413,6 +457,7 @@ ledgerSchema.methods.calculateBalance = function (previousBalance) {
 };
 
 ledgerSchema.methods.post = function (userId) {
+
   this.validateEntry();
 
   this.postingStatus = "Posted";
@@ -423,6 +468,7 @@ ledgerSchema.methods.post = function (userId) {
 };
 
 ledgerSchema.methods.reverse = function (userId, reason) {
+
   this.postingStatus = "Reversed";
   this.isReversal = true;
   this.reversalReason = reason;
@@ -433,6 +479,7 @@ ledgerSchema.methods.reverse = function (userId, reason) {
 };
 
 ledgerSchema.methods.cancel = function () {
+
   this.postingStatus = "Cancelled";
   return this.save();
 };
@@ -442,34 +489,39 @@ ledgerSchema.methods.cancel = function () {
 // ==========================================================
 
 ledgerSchema.statics.getAccountLedger = function (accountId) {
+
   return this.find({
+
     accountId,
     isDeleted: false,
   }).sort({ transactionDate: 1 });
 };
 
 ledgerSchema.statics.getPartyLedger = function (partyType, partyId) {
+
   return this.find({
+
     partyType,
     partyId,
     isDeleted: false,
   }).sort({ transactionDate: 1 });
 };
 
-ledgerSchema.statics.getCompanyLedger = function (companyId) {
+ledgerSchema.statics.getAllLedger = function() {
+
   return this.find({
-    companyId,
     isDeleted: false,
   }).sort({ transactionDate: -1 });
 };
 
-ledgerSchema.statics.getMonthlyReport = function (companyId, month, year) {
+ledgerSchema.statics.getMonthlyReport = function(month, year) {
+
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0);
 
   return this.find({
-    companyId,
     transactionDate: {
+
       $gte: startDate,
       $lte: endDate,
     },
@@ -482,21 +534,27 @@ ledgerSchema.statics.getMonthlyReport = function (companyId, month, year) {
 // ==========================================================
 
 ledgerSchema.query.posted = function () {
+
   return this.where({
+
     postingStatus: "Posted",
     isDeleted: false,
   });
 };
 
 ledgerSchema.query.pending = function () {
+
   return this.where({
+
     postingStatus: "Draft",
     isDeleted: false,
   });
 };
 
 ledgerSchema.query.active = function () {
+
   return this.where({
+
     isDeleted: false,
   });
 };
@@ -505,9 +563,11 @@ ledgerSchema.query.active = function () {
 // JSON CONFIG
 // ==========================================================
 ledgerSchema.set("toJSON", {
+
   virtuals: true,
   versionKey: false,
   transform: function (doc, ret) {
+
     delete ret._id;
     return ret;
   },

@@ -1,8 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
-
 // ==========================================================
 // Payslip Component Schema
 // ==========================================================
@@ -12,13 +10,16 @@ const payslipComponentSchema =
 new mongoose.Schema(
 {
 
+
     componentName:{
+
         type:String,
         required:true
     },
 
 
     componentType:{
+
         type:String,
         enum:[
             "Earning",
@@ -29,12 +30,14 @@ new mongoose.Schema(
 
 
     amount:{
+
         type:Number,
         default:0
     },
 
 
     description:{
+
         type:String,
         default:""
     }
@@ -42,14 +45,9 @@ new mongoose.Schema(
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -62,27 +60,11 @@ new mongoose.Schema(
 {
 
 
-// ==========================================================
-// Company Information
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
-
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch"
 },
-
-
-
 
 
 // ==========================================================
@@ -91,6 +73,7 @@ branchId:{
 
 
 employeeId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Employee",
     required:true,
@@ -98,35 +81,32 @@ employeeId:{
 },
 
 
-
 employeeCode:{
+
     type:String,
     required:true
 },
-
 
 
 employeeName:{
+
     type:String,
     required:true
 },
 
 
-
 designation:{
+
     type:String,
     default:""
 },
 
 
-
 departmentId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Department"
 },
-
-
-
 
 
 // ==========================================================
@@ -135,6 +115,7 @@ departmentId:{
 
 
 payrollId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Payroll",
     required:true,
@@ -142,22 +123,22 @@ payrollId:{
 },
 
 
-
 payrollMonth:{
+
     type:Number,
     required:true
 },
-
 
 
 payrollYear:{
+
     type:Number,
     required:true
 },
 
 
-
 payslipNumber:{
+
     type:String,
     required:true,
     unique:true
@@ -170,12 +151,14 @@ payslipNumber:{
 
 
 basicSalary:{
+
     type:Number,
     default:0
 },
 
 
 grossSalary:{
+
     type:Number,
     default:0
 },
@@ -186,25 +169,25 @@ components:[
 ],
 
 
-
 totalEarnings:{
+
     type:Number,
     default:0
 },
 
 
 totalDeductions:{
+
     type:Number,
     default:0
 },
 
 
 netSalary:{
+
     type:Number,
     default:0
 },
-
-
 
 
 // ==========================================================
@@ -213,41 +196,45 @@ netSalary:{
 
 
 totalWorkingDays:{
+
     type:Number,
     default:0
 },
 
 
 presentDays:{
+
     type:Number,
     default:0
 },
 
 
 absentDays:{
+
     type:Number,
     default:0
 },
 
 
 leaveDays:{
+
     type:Number,
     default:0
 },
 
 
 overtimeHours:{
+
     type:Number,
     default:0
 },
 
 
 overtimeAmount:{
+
     type:Number,
     default:0
 },
-
-
 
 
 // ==========================================================
@@ -256,23 +243,24 @@ overtimeAmount:{
 
 
 paidLeaveDays:{
+
     type:Number,
     default:0
 },
 
 
 unpaidLeaveDays:{
+
     type:Number,
     default:0
 },
 
 
 leaveDeduction:{
+
     type:Number,
     default:0
 },
-
-
 
 
 // ==========================================================
@@ -281,29 +269,31 @@ leaveDeduction:{
 
 
 taxAmount:{
+
     type:Number,
     default:0
 },
 
 
 loanDeduction:{
+
     type:Number,
     default:0
 },
 
 
 advanceSalaryDeduction:{
+
     type:Number,
     default:0
 },
 
 
 otherDeduction:{
+
     type:Number,
     default:0
 },
-
-
 
 
 // ==========================================================
@@ -312,6 +302,7 @@ otherDeduction:{
 
 
 paymentStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -322,8 +313,8 @@ paymentStatus:{
 },
 
 
-
 paymentMethod:{
+
     type:String,
     enum:[
         "Cash",
@@ -335,20 +326,17 @@ paymentMethod:{
 },
 
 
-
 paymentDate:{
+
     type:Date
 },
 
 
-
 transactionId:{
+
     type:String,
     default:""
 },
-
-
-
 
 
 // ==========================================================
@@ -357,24 +345,23 @@ transactionId:{
 
 
 pdfGenerated:{
+
     type:Boolean,
     default:false
 },
 
 
-
 pdfUrl:{
+
     type:String,
     default:""
 },
 
 
-
 pdfGeneratedAt:{
+
     type:Date
 },
-
-
 
 
 // ==========================================================
@@ -383,19 +370,20 @@ pdfGeneratedAt:{
 
 
 employeeViewed:{
+
     type:Boolean,
     default:false
 },
 
 
-
 viewedAt:{
+
     type:Date
 },
 
 
-
 downloadCount:{
+
     type:Number,
     default:0
 },
@@ -407,6 +395,7 @@ downloadCount:{
 
 
 approvalStatus:{
+
     type:String,
     enum:[
         "Draft",
@@ -418,26 +407,24 @@ approvalStatus:{
 },
 
 
-
 approvedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
-
 approvedAt:{
+
     type:Date
 },
 
 
-
 approvalNote:{
+
     type:String,
     default:""
 },
-
-
 
 
 // ==========================================================
@@ -446,24 +433,23 @@ approvalNote:{
 
 
 ledgerEntryId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Ledger"
 },
 
 
-
 isLedgerPosted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 ledgerPostedAt:{
+
     type:Date
 },
-
-
 
 
 // ==========================================================
@@ -472,24 +458,23 @@ ledgerPostedAt:{
 
 
 emailSent:{
+
     type:Boolean,
     default:false
 },
 
 
-
 emailSentAt:{
+
     type:Date
 },
 
 
-
 emailAddress:{
+
     type:String,
     default:""
 },
-
-
 
 
 // ==========================================================
@@ -498,54 +483,52 @@ emailAddress:{
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
-
 
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
-
 
 
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
-
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 deletedAt:{
+
     type:Date
 },
 
 
-
 notes:{
+
     type:String,
     default:""
 }
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
 
 
 // ==========================================================
@@ -553,19 +536,14 @@ notes:{
 // ==========================================================
 
 
+payslipSchema.index({ payslipNumber:1 }, {
 
-payslipSchema.index(
-{
-    companyId:1,
-    payslipNumber:1
-},
-{
     unique:true
 });
 
 
-
 payslipSchema.index({
+
 
     employeeId:1,
 
@@ -576,37 +554,18 @@ payslipSchema.index({
 });
 
 
-
-payslipSchema.index({
-
-    payrollId:1
-
-});
+payslipSchema.index({ payrollId:1 });
 
 
-
-payslipSchema.index({
-
-    approvalStatus:1
-
-});
+payslipSchema.index({ approvalStatus:1 });
 
 
-
-payslipSchema.index({
-
-    paymentStatus:1
-
-});
-
-
-
+payslipSchema.index({ paymentStatus:1 });
 
 
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Calculate Net Salary
@@ -616,11 +575,9 @@ payslipSchema.methods.calculateNetSalary =
 function(){
 
 
-
     this.totalEarnings = 0;
 
     this.totalDeductions = 0;
-
 
 
     this.components.forEach(
@@ -633,6 +590,7 @@ function(){
             )
             {
 
+
                 this.totalEarnings +=
                 component.amount;
 
@@ -643,6 +601,7 @@ function(){
                 component.componentType === "Deduction"
             )
             {
+
 
                 this.totalDeductions +=
                 component.amount;
@@ -655,7 +614,6 @@ function(){
     );
 
 
-
     this.netSalary =
 
     this.totalEarnings -
@@ -663,15 +621,10 @@ function(){
     this.totalDeductions;
 
 
-
     return this.netSalary;
 
 
 };
-
-
-
-
 
 
 // Generate PDF Status
@@ -690,16 +643,10 @@ function(url){
     this.pdfGeneratedAt=new Date();
 
 
-
     return this.save();
 
 
 };
-
-
-
-
-
 
 
 // Mark Employee Viewed
@@ -718,15 +665,10 @@ function(){
     this.downloadCount += 1;
 
 
-
     return this.save();
 
 
 };
-
-
-
-
 
 
 // Approve Payslip
@@ -745,21 +687,15 @@ function(userId){
     this.approvedAt=new Date();
 
 
-
     return this.save();
 
 
 };
 
 
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
-
 
 
 // Employee Payslip History
@@ -771,12 +707,14 @@ function(employeeId){
 
     return this.find({
 
+
         employeeId,
 
         isDeleted:false
 
     })
     .sort({
+
 
         payrollYear:-1,
 
@@ -788,26 +726,16 @@ function(employeeId){
 };
 
 
-
-
-
-
-
 // Monthly Payslip Report
 
 
 payslipSchema.statics.getMonthlyReport =
-function(
-    companyId,
-    month,
+function(month,
     year
 ){
 
 
     return this.find({
-
-        companyId,
-
         payrollMonth:month,
 
         payrollYear:year,
@@ -820,17 +748,11 @@ function(
 };
 
 
-
-
-
-
-// Company Salary Summary
+// Salary Summary
 
 
 payslipSchema.statics.getSummary =
-async function(
-    companyId,
-    month,
+async function(month,
     year
 ){
 
@@ -840,11 +762,9 @@ async function(
 
         {
 
+
             $match:
             {
-
-                companyId,
-
                 payrollMonth:month,
 
                 payrollYear:year,
@@ -858,20 +778,24 @@ async function(
 
         {
 
+
             $group:
             {
+
 
                 _id:null,
 
 
                 totalPaidSalary:
                 {
+
                     $sum:"$netSalary"
                 },
 
 
                 employeeCount:
                 {
+
                     $sum:1
                 }
 
@@ -887,10 +811,6 @@ async function(
 };
 
 
-
-
-
-
 // ==========================================================
 // QUERY HELPER
 // ==========================================================
@@ -902,17 +822,13 @@ function(){
 
     return this.where({
 
+
         isDeleted:false
 
     });
 
 
 };
-
-
-
-
-
 
 
 // ==========================================================
@@ -926,6 +842,7 @@ payslipSchema.set(
 
 {
 
+
     virtuals:true,
 
 
@@ -934,6 +851,7 @@ payslipSchema.set(
         ret
     ){
 
+
         delete ret.__v;
 
         return ret;
@@ -941,10 +859,6 @@ payslipSchema.set(
     }
 
 });
-
-
-
-
 
 
 // ==========================================================

@@ -5,23 +5,13 @@ const mongoose = require("mongoose");
 // ==========================================================
 
 const inventorySchema = new mongoose.Schema(
-    {
-        // ======================================================
-        // Company
-        // ======================================================
+{
 
-        companyId: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Company",
-            required: true,
-            index: true
-        },
-
-        // ======================================================
         // Branch
         // ======================================================
 
         branchId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Branch",
             required: true,
@@ -33,6 +23,7 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         warehouseId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Warehouse",
             required: true,
@@ -44,6 +35,7 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         productId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "Product",
             required: true,
@@ -55,6 +47,7 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         productVariantId: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "ProductVariant",
             default: null,
@@ -66,18 +59,21 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         currentStock: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         reservedStock: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         availableStock: {
+
             type: Number,
             default: 0,
             min: 0
@@ -88,18 +84,21 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         averageCost: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         lastPurchasePrice: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         inventoryValue: {
+
             type: Number,
             default: 0,
             min: 0
@@ -110,24 +109,28 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         reorderLevel: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         minimumStock: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         maximumStock: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         reorderQuantity: {
+
             type: Number,
             default: 0,
             min: 0
@@ -138,6 +141,7 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         stockStatus: {
+
             type: String,
             enum: ["In Stock", "Low Stock", "Out Of Stock", "Over Stock"],
             default: "In Stock"
@@ -148,12 +152,14 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         batchNumber: {
+
             type: String,
             default: "",
             trim: true
         },
 
         lotNumber: {
+
             type: String,
             default: "",
             trim: true
@@ -164,11 +170,13 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         manufacturingDate: {
+
             type: Date,
             default: null
         },
 
         expiryDate: {
+
             type: Date,
             default: null
         },
@@ -178,24 +186,28 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         rack: {
+
             type: String,
             default: "",
             trim: true
         },
 
         shelf: {
+
             type: String,
             default: "",
             trim: true
         },
 
         bin: {
+
             type: String,
             default: "",
             trim: true
         },
 
         locationCode: {
+
             type: String,
             default: "",
             trim: true,
@@ -207,26 +219,31 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         lastPurchaseDate: {
+
             type: Date,
             default: null
         },
 
         lastSaleDate: {
+
             type: Date,
             default: null
         },
 
         lastStockInDate: {
+
             type: Date,
             default: null
         },
 
         lastStockOutDate: {
+
             type: Date,
             default: null
         },
 
         lastMovementDate: {
+
             type: Date,
             default: null
         },
@@ -236,18 +253,21 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         lastGRN: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "GRN",
             default: null
         },
 
         lastPurchaseOrder: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "PurchaseOrder",
             default: null
         },
 
         lastSalesInvoice: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "SalesInvoice",
             default: null
@@ -258,6 +278,7 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         notes: {
+
             type: String,
             default: "",
             trim: true
@@ -268,17 +289,20 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         status: {
+
             type: String,
             enum: ["Active", "Inactive", "Locked"],
             default: "Active"
         },
 
         isFrozen: {
+
             type: Boolean,
             default: false
         },
 
         freezeReason: {
+
             type: String,
             default: "",
             trim: true
@@ -289,22 +313,26 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         lastPhysicalCount: {
+
             type: Number,
             default: 0,
             min: 0
         },
 
         lastPhysicalCountDate: {
+
             type: Date,
             default: null
         },
 
         stockDifference: {
+
             type: Number,
             default: 0
         },
 
         cycleCountDueDate: {
+
             type: Date,
             default: null
         },
@@ -314,12 +342,14 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         createdBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
         },
 
         updatedBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
@@ -330,22 +360,26 @@ const inventorySchema = new mongoose.Schema(
         // ======================================================
 
         isDeleted: {
+
             type: Boolean,
             default: false
         },
 
         deletedAt: {
+
             type: Date,
             default: null
         },
 
         deletedBy: {
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
         }
     },
     {
+
         timestamps: true,
         versionKey: false
     }
@@ -356,80 +390,56 @@ const inventorySchema = new mongoose.Schema(
 // ==========================================================
 
 // One Inventory Record Per Product Variant Per Warehouse
-inventorySchema.index(
-    {
-        companyId: 1,
-        warehouseId: 1,
+inventorySchema.index({ warehouseId: 1,
         productId: 1,
         productVariantId: 1
-    },
-    {
+     }, {
+
         unique: true
-    }
-);
+    });
 
 // Product Lookup
-inventorySchema.index({
-    companyId: 1,
-    productId: 1,
+inventorySchema.index({ productId: 1,
     isDeleted: 1
-});
+ });
 
 // Variant Lookup
-inventorySchema.index({
-    companyId: 1,
-    productVariantId: 1,
+inventorySchema.index({ productVariantId: 1,
     isDeleted: 1
-});
+ });
 
 // Warehouse Lookup
-inventorySchema.index({
-    companyId: 1,
-    warehouseId: 1,
+inventorySchema.index({ warehouseId: 1,
     isDeleted: 1
-});
+ });
 
 // Branch Lookup
-inventorySchema.index({
-    companyId: 1,
-    branchId: 1,
+inventorySchema.index({ branchId: 1,
     isDeleted: 1
-});
+ });
 
 // Stock Status
-inventorySchema.index({
-    companyId: 1,
-    stockStatus: 1,
+inventorySchema.index({ stockStatus: 1,
     isDeleted: 1
-});
+ });
 
 // Active Inventory
-inventorySchema.index({
-    companyId: 1,
-    status: 1,
+inventorySchema.index({ status: 1,
     isDeleted: 1
-});
+ });
 
 // Expiry Tracking
-inventorySchema.index({
-    companyId: 1,
-    expiryDate: 1
-});
+inventorySchema.index({ expiryDate: 1 });
 
 // Batch Tracking
-inventorySchema.index({
-    companyId: 1,
-    batchNumber: 1
-});
+inventorySchema.index({ batchNumber: 1 });
 
 // Reorder Report
-inventorySchema.index({
-    companyId: 1,
-    reorderLevel: 1
-});
+inventorySchema.index({ reorderLevel: 1 });
 
 // Warehouse Location
 inventorySchema.index({
+
     warehouseId: 1,
     rack: 1,
     shelf: 1,
@@ -437,16 +447,14 @@ inventorySchema.index({
 });
 
 // Frozen Inventory
-inventorySchema.index({
-    companyId: 1,
-    isFrozen: 1
-});
+inventorySchema.index({ isFrozen: 1 });
 
 // ==========================================================
 // Virtual
 // ==========================================================
 
 inventorySchema.virtual("id").get(function () {
+
     return this._id.toHexString();
 });
 
@@ -456,6 +464,7 @@ inventorySchema.virtual("id").get(function () {
 
 // Soft Delete
 inventorySchema.methods.softDelete = function (adminId) {
+
     this.isDeleted = true;
     this.deletedAt = new Date();
     this.deletedBy = adminId;
@@ -464,6 +473,7 @@ inventorySchema.methods.softDelete = function (adminId) {
 
 // Restore
 inventorySchema.methods.restore = function () {
+
     this.isDeleted = false;
     this.deletedAt = null;
     this.deletedBy = null;
@@ -472,6 +482,7 @@ inventorySchema.methods.restore = function () {
 
 // Freeze Inventory
 inventorySchema.methods.freeze = function (reason = "") {
+
     this.isFrozen = true;
     this.freezeReason = reason;
     this.status = "Locked";
@@ -480,6 +491,7 @@ inventorySchema.methods.freeze = function (reason = "") {
 
 // Unfreeze Inventory
 inventorySchema.methods.unfreeze = function () {
+
     this.isFrozen = false;
     this.freezeReason = "";
     this.status = "Active";
@@ -491,27 +503,27 @@ inventorySchema.methods.unfreeze = function () {
 // ==========================================================
 
 // Get Active Inventory
-inventorySchema.statics.getActiveInventory = function (companyId) {
+inventorySchema.statics.getActiveInventory = function() {
+
     return this.find({
-        companyId,
         status: "Active",
         isDeleted: false
     });
 };
 
 // Get Low Stock
-inventorySchema.statics.getLowStock = function (companyId) {
+inventorySchema.statics.getLowStock = function() {
+
     return this.find({
-        companyId,
         stockStatus: "Low Stock",
         isDeleted: false
     });
 };
 
 // Get Out Of Stock
-inventorySchema.statics.getOutOfStock = function (companyId) {
+inventorySchema.statics.getOutOfStock = function() {
+
     return this.find({
-        companyId,
         stockStatus: "Out Of Stock",
         isDeleted: false
     });
@@ -522,7 +534,9 @@ inventorySchema.statics.getOutOfStock = function (companyId) {
 // ==========================================================
 
 inventorySchema.query.active = function () {
+
     return this.where({
+
         status: "Active",
         isDeleted: false
     });
@@ -533,9 +547,11 @@ inventorySchema.query.active = function () {
 // ==========================================================
 
 inventorySchema.set("toJSON", {
+
     virtuals: true,
     versionKey: false,
     transform: function (doc, ret) {
+
         delete ret._id;
         return ret;
     }

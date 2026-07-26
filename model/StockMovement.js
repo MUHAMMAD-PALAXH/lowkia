@@ -1,18 +1,13 @@
 const mongoose = require("mongoose");
 
 const stockMovementSchema = new mongoose.Schema(
-  {
-    // ==========================================================
-    // Company & Branch
-    // ==========================================================
-    companyId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Company",
-      required: true,
-      index: true,
-    },
+{
 
+// ==========================================================
+    // Branch
+    // ==========================================================
     branchId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
       required: true,
@@ -23,6 +18,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Movement Identity
     // ==========================================================
     movementNumber: {
+
       type: String,
       required: true,
       unique: true,
@@ -31,6 +27,7 @@ const stockMovementSchema = new mongoose.Schema(
     },
 
     movementDate: {
+
       type: Date,
       default: Date.now,
       index: true,
@@ -40,6 +37,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Warehouse
     // ==========================================================
     warehouseId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Warehouse",
       required: true,
@@ -50,6 +48,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Product Information
     // ==========================================================
     productId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Product",
       required: true,
@@ -57,6 +56,7 @@ const stockMovementSchema = new mongoose.Schema(
     },
 
     productVariantId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "ProductVariant",
       default: null,
@@ -64,12 +64,14 @@ const stockMovementSchema = new mongoose.Schema(
     },
 
     sku: {
+
       type: String,
       default: "",
       trim: true,
     },
 
     productName: {
+
       type: String,
       required: true,
       trim: true,
@@ -79,6 +81,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Movement Information
     // ==========================================================
     movementType: {
+
       type: String,
       enum: [
         "Purchase",
@@ -96,6 +99,7 @@ const stockMovementSchema = new mongoose.Schema(
     },
 
     movementDirection: {
+
       type: String,
       enum: ["IN", "OUT"],
       required: true,
@@ -106,18 +110,21 @@ const stockMovementSchema = new mongoose.Schema(
     // Quantity Information
     // ==========================================================
     quantity: {
+
       type: Number,
       required: true,
       min: 0,
     },
 
     previousStock: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     currentStock: {
+
       type: Number,
       default: 0,
       min: 0,
@@ -127,12 +134,14 @@ const stockMovementSchema = new mongoose.Schema(
     // Unit Information
     // ==========================================================
     unitId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Unit",
       default: null,
     },
 
     conversionFactor: {
+
       type: Number,
       default: 1,
       min: 1,
@@ -142,6 +151,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Remarks
     // ==========================================================
     remarks: {
+
       type: String,
       default: "",
       trim: true,
@@ -151,6 +161,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Transaction Reference
     // ==========================================================
     referenceType: {
+
       type: String,
       enum: [
         "Purchase Order",
@@ -170,6 +181,7 @@ const stockMovementSchema = new mongoose.Schema(
     },
 
     referenceId: {
+
       type: mongoose.Schema.Types.ObjectId,
       default: null,
       index: true,
@@ -179,18 +191,21 @@ const stockMovementSchema = new mongoose.Schema(
     // Purchase Reference
     // ==========================================================
     purchaseOrderId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "PurchaseOrder",
       default: null,
     },
 
     grnId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "GRN",
       default: null,
     },
 
     purchaseInvoiceId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "PurchaseInvoice",
       default: null,
@@ -200,18 +215,21 @@ const stockMovementSchema = new mongoose.Schema(
     // Sales Reference
     // ==========================================================
     salesOrderId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "SalesOrder",
       default: null,
     },
 
     salesInvoiceId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "SalesInvoice",
       default: null,
     },
 
     salesReturnId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "SalesReturn",
       default: null,
@@ -221,6 +239,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Transfer Reference
     // ==========================================================
     stockTransferId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "StockTransfer",
       default: null,
@@ -230,6 +249,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Adjustment
     // ==========================================================
     adjustmentReason: {
+
       type: String,
       default: "",
     },
@@ -238,12 +258,14 @@ const stockMovementSchema = new mongoose.Schema(
     // Cost Information
     // ==========================================================
     unitCost: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     totalCost: {
+
       type: Number,
       default: 0,
       min: 0,
@@ -253,12 +275,14 @@ const stockMovementSchema = new mongoose.Schema(
     // Selling Information
     // ==========================================================
     sellingPrice: {
+
       type: Number,
       default: 0,
       min: 0,
     },
 
     totalSellingAmount: {
+
       type: Number,
       default: 0,
       min: 0,
@@ -268,11 +292,13 @@ const stockMovementSchema = new mongoose.Schema(
     // Profit Information
     // ==========================================================
     profitAmount: {
+
       type: Number,
       default: 0,
     },
 
     profitMargin: {
+
       type: Number,
       default: 0,
     },
@@ -281,6 +307,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Batch & Serial Tracking
     // ==========================================================
     batchNumber: {
+
       type: String,
       default: "",
       trim: true,
@@ -288,6 +315,7 @@ const stockMovementSchema = new mongoose.Schema(
     },
 
     lotNumber: {
+
       type: String,
       default: "",
       trim: true,
@@ -296,6 +324,7 @@ const stockMovementSchema = new mongoose.Schema(
 
     serialNumbers: [
       {
+
         type: String,
         trim: true,
         uppercase: true,
@@ -306,11 +335,13 @@ const stockMovementSchema = new mongoose.Schema(
     // Manufacturing & Expiry
     // ==========================================================
     manufacturingDate: {
+
       type: Date,
       default: null,
     },
 
     expiryDate: {
+
       type: Date,
       default: null,
     },
@@ -319,24 +350,28 @@ const stockMovementSchema = new mongoose.Schema(
     // Transfer Information
     // ==========================================================
     fromWarehouseId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Warehouse",
       default: null,
     },
 
     toWarehouseId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Warehouse",
       default: null,
     },
 
     fromBranchId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
       default: null,
     },
 
     toBranchId: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
       default: null,
@@ -346,12 +381,14 @@ const stockMovementSchema = new mongoose.Schema(
     // Location Tracking
     // ==========================================================
     fromLocation: {
+
       rack: { type: String, default: "" },
       shelf: { type: String, default: "" },
       bin: { type: String, default: "" },
     },
 
     toLocation: {
+
       rack: { type: String, default: "" },
       shelf: { type: String, default: "" },
       bin: { type: String, default: "" },
@@ -361,6 +398,7 @@ const stockMovementSchema = new mongoose.Schema(
     // Transfer Status
     // ==========================================================
     transferStatus: {
+
       type: String,
       enum: ["Pending", "In Transit", "Completed", "Cancelled"],
       default: "Completed",
@@ -370,12 +408,14 @@ const stockMovementSchema = new mongoose.Schema(
     // Audit Information
     // ==========================================================
     createdBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       required: true,
     },
 
     updatedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
@@ -385,12 +425,14 @@ const stockMovementSchema = new mongoose.Schema(
     // Approval Information
     // ==========================================================
     approvedBy: {
+
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
       default: null,
     },
 
     approvedAt: {
+
       type: Date,
       default: null,
     },
@@ -399,11 +441,13 @@ const stockMovementSchema = new mongoose.Schema(
     // System Tracking
     // ==========================================================
     isSystemGenerated: {
+
       type: Boolean,
       default: true,
     },
 
     source: {
+
       type: String,
       enum: ["Admin Panel", "Mobile App", "API", "Import", "System"],
       default: "System",
@@ -413,17 +457,20 @@ const stockMovementSchema = new mongoose.Schema(
     // Import Tracking
     // ==========================================================
     importBatchId: {
+
       type: String,
       default: null,
     },
 
     externalReference: {
+
       type: String,
       default: "",
       trim: true,
     },
   },
   {
+
     timestamps: true, // Adds createdAt & updatedAt automatically
   }
 );
@@ -435,20 +482,20 @@ const stockMovementSchema = new mongoose.Schema(
 // Movement Number (already unique in field definition)
 stockMovementSchema.index({ movementNumber: 1 }, { unique: true });
 
-// Company + Date Report
-stockMovementSchema.index({ companyId: 1, movementDate: -1 });
+// Date Report
+stockMovementSchema.index({ movementDate: -1  });
 
 // Warehouse Stock History
-stockMovementSchema.index({ companyId: 1, warehouseId: 1, movementDate: -1 });
+stockMovementSchema.index({ warehouseId: 1, movementDate: -1  });
 
 // Product Stock Ledger
-stockMovementSchema.index({ companyId: 1, productId: 1, movementDate: -1 });
+stockMovementSchema.index({ productId: 1, movementDate: -1  });
 
 // Product Variant Ledger
-stockMovementSchema.index({ companyId: 1, productVariantId: 1, movementDate: -1 });
+stockMovementSchema.index({ productVariantId: 1, movementDate: -1  });
 
 // Movement Type Report
-stockMovementSchema.index({ companyId: 1, movementType: 1, movementDate: -1 });
+stockMovementSchema.index({ movementType: 1, movementDate: -1  });
 
 // IN / OUT Report
 stockMovementSchema.index({ movementDirection: 1, movementDate: -1 });
@@ -469,22 +516,23 @@ stockMovementSchema.index({ salesReturnId: 1 });
 stockMovementSchema.index({ stockTransferId: 1 });
 
 // Batch Tracking
-stockMovementSchema.index({ companyId: 1, batchNumber: 1 });
+stockMovementSchema.index({ batchNumber: 1  });
 
 // Expiry Report
-stockMovementSchema.index({ companyId: 1, expiryDate: 1 });
+stockMovementSchema.index({ expiryDate: 1  });
 
 // User Audit
 stockMovementSchema.index({ createdBy: 1, createdAt: -1 });
 
 // Additional useful compound indexes
-stockMovementSchema.index({ companyId: 1, movementType: 1, movementDirection: 1 });
-stockMovementSchema.index({ companyId: 1, fromWarehouseId: 1, toWarehouseId: 1 });
+stockMovementSchema.index({ movementType: 1, movementDirection: 1  });
+stockMovementSchema.index({ fromWarehouseId: 1, toWarehouseId: 1  });
 
 // ==========================================================
 // VIRTUAL FIELDS
 // ==========================================================
 stockMovementSchema.virtual("id").get(function () {
+
   return this._id.toHexString();
 });
 
@@ -493,16 +541,20 @@ stockMovementSchema.virtual("id").get(function () {
 // ==========================================================
 
 stockMovementSchema.methods.calculateCost = function () {
+
   this.totalCost = this.quantity * this.unitCost;
   return this.totalCost;
 };
 
 stockMovementSchema.methods.calculateProfit = function () {
+
   this.profitAmount = this.totalSellingAmount - this.totalCost;
 
   if (this.totalCost > 0) {
+
     this.profitMargin = (this.profitAmount / this.totalCost) * 100;
   } else {
+
     this.profitMargin = 0;
   }
 
@@ -510,12 +562,14 @@ stockMovementSchema.methods.calculateProfit = function () {
 };
 
 stockMovementSchema.methods.approve = function (userId) {
+
   this.approvedBy = userId;
   this.approvedAt = new Date();
   return this.save();
 };
 
 stockMovementSchema.methods.updateBalance = function (newBalance) {
+
   this.currentStock = newBalance;
   return this.save();
 };
@@ -525,21 +579,24 @@ stockMovementSchema.methods.updateBalance = function (newBalance) {
 // ==========================================================
 
 stockMovementSchema.statics.getProductHistory = function (productId) {
+
   return this.find({ productId }).sort({ movementDate: -1 });
 };
 
 stockMovementSchema.statics.getWarehouseHistory = function (warehouseId) {
+
   return this.find({ warehouseId }).sort({ movementDate: -1 });
 };
 
-stockMovementSchema.statics.getExpiryProducts = function (companyId, date) {
+stockMovementSchema.statics.getExpiryProducts = function(date) {
+
   return this.find({
-    companyId,
     expiryDate: { $lte: date },
   });
 };
 
 stockMovementSchema.statics.getBatchHistory = function (batchNumber) {
+
   return this.find({ batchNumber });
 };
 
@@ -548,14 +605,17 @@ stockMovementSchema.statics.getBatchHistory = function (batchNumber) {
 // ==========================================================
 
 stockMovementSchema.query.incoming = function () {
+
   return this.where({ movementDirection: "IN" });
 };
 
 stockMovementSchema.query.outgoing = function () {
+
   return this.where({ movementDirection: "OUT" });
 };
 
 stockMovementSchema.query.recent = function () {
+
   return this.sort({ movementDate: -1 });
 };
 
@@ -563,9 +623,11 @@ stockMovementSchema.query.recent = function () {
 // JSON CONFIG
 // ==========================================================
 stockMovementSchema.set("toJSON", {
+
   virtuals: true,
   versionKey: false,
   transform: function (doc, ret) {
+
     delete ret._id;
     return ret;
   },

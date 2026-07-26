@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Expense Item Schema
 // ==========================================================
@@ -11,7 +10,9 @@ const expenseItemSchema =
 new mongoose.Schema(
 {
 
+
     itemName:{
+
         type:String,
         required:true,
         trim:true
@@ -19,24 +20,28 @@ new mongoose.Schema(
 
 
     description:{
+
         type:String,
         default:""
     },
 
 
     quantity:{
+
         type:Number,
         default:1
     },
 
 
     unitPrice:{
+
         type:Number,
         default:0
     },
 
 
     amount:{
+
         type:Number,
         default:0
     }
@@ -44,13 +49,9 @@ new mongoose.Schema(
 
 },
 {
+
     _id:false
 });
-
-
-
-
-
 
 
 // ==========================================================
@@ -62,34 +63,19 @@ const expenseSchema =
 new mongoose.Schema(
 {
 
-// ==========================================================
-// Company Information
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
 
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch"
 },
 
 
-
 departmentId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Department"
 },
-
-
-
 
 
 // ==========================================================
@@ -98,21 +84,22 @@ departmentId:{
 
 
 expenseNumber:{
+
     type:String,
     required:true,
     unique:true
 },
 
 
-
 expenseDate:{
+
     type:Date,
     default:Date.now
 },
 
 
-
 expenseCategory:{
+
     type:String,
     enum:[
         "Office",
@@ -130,21 +117,19 @@ expenseCategory:{
 },
 
 
-
 expenseTitle:{
+
     type:String,
     required:true,
     trim:true
 },
 
 
-
 description:{
+
     type:String,
     default:""
 },
-
-
 
 
 // ==========================================================
@@ -157,32 +142,34 @@ items:[
 ],
 
 
-
-
 // ==========================================================
 // Amount Information
 // ==========================================================
 
 
 subtotal:{
+
     type:Number,
     default:0
 },
 
 
 taxAmount:{
+
     type:Number,
     default:0
 },
 
 
 discountAmount:{
+
     type:Number,
     default:0
 },
 
 
 totalAmount:{
+
     type:Number,
     default:0
 },
@@ -194,26 +181,24 @@ totalAmount:{
 
 
 supplierId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Supplier"
 },
 
 
-
 employeeId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Employee"
 },
 
 
-
 customerId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Customer"
 },
-
-
-
 
 
 // ==========================================================
@@ -222,6 +207,7 @@ customerId:{
 
 
 paymentStatus:{
+
     type:String,
     enum:[
         "Pending",
@@ -235,8 +221,8 @@ paymentStatus:{
 },
 
 
-
 paymentMethod:{
+
     type:String,
     enum:[
         "Cash",
@@ -249,26 +235,24 @@ paymentMethod:{
 },
 
 
-
 paymentDate:{
+
     type:Date
 },
 
 
-
 transactionId:{
+
     type:String,
     default:""
 },
 
 
-
 paidBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
-
-
 
 
 // ==========================================================
@@ -277,6 +261,7 @@ paidBy:{
 
 
 approvalStatus:{
+
     type:String,
     enum:[
         "Draft",
@@ -289,13 +274,13 @@ approvalStatus:{
 },
 
 
-
-
 // Manager Approval
 
 managerApproval:{
 
+
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -307,32 +292,34 @@ managerApproval:{
 
 
     approvedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser"
     },
 
 
     approvedAt:{
+
         type:Date
     },
 
 
     comment:{
+
         type:String,
         default:""
     }
 
 },
-
-
-
 
 
 // Finance Approval
 
 financeApproval:{
 
+
     status:{
+
         type:String,
         enum:[
             "Pending",
@@ -344,24 +331,25 @@ financeApproval:{
 
 
     approvedBy:{
+
         type:mongoose.Schema.Types.ObjectId,
         ref:"AdminUser"
     },
 
 
     approvedAt:{
+
         type:Date
     },
 
 
     comment:{
+
         type:String,
         default:""
     }
 
 },
-
-
 
 
 // ==========================================================
@@ -372,17 +360,21 @@ financeApproval:{
 attachments:[
 
     {
+
         fileName:{
+
             type:String
         },
 
 
         fileUrl:{
+
             type:String
         },
 
 
         uploadedAt:{
+
             type:Date,
             default:Date.now
         }
@@ -392,35 +384,34 @@ attachments:[
 ],
 
 
-
-
 // ==========================================================
 // Accounting Integration
 // ==========================================================
 
 
 ledgerEntryId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Ledger"
 },
 
 
-
 expenseAccountId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Account"
 },
 
 
-
 isLedgerPosted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 ledgerPostedAt:{
+
     type:Date
 },
 
@@ -431,54 +422,58 @@ ledgerPostedAt:{
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 cancelledBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 
 cancelledAt:{
+
     type:Date
 },
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
 deletedAt:{
+
     type:Date
 },
 
 
 notes:{
+
     type:String,
     default:""
 }
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
 
 
 // ==========================================================
@@ -486,35 +481,20 @@ notes:{
 // ==========================================================
 
 
+expenseSchema.index({ expenseNumber:1 }, {
 
-expenseSchema.index(
-{
-    companyId:1,
-    expenseNumber:1
-},
-{
     unique:true
 });
 
 
+expenseSchema.index({ expenseDate:-1 });
 
-expenseSchema.index({
 
-    expenseDate:-1
-
-});
-
+expenseSchema.index({ expenseCategory:1 });
 
 
 expenseSchema.index({
 
-    expenseCategory:1
-
-});
-
-
-
-expenseSchema.index({
 
     branchId:1,
 
@@ -523,30 +503,15 @@ expenseSchema.index({
 });
 
 
-
-expenseSchema.index({
-
-    approvalStatus:1
-
-});
+expenseSchema.index({ approvalStatus:1 });
 
 
-
-expenseSchema.index({
-
-    paymentStatus:1
-
-});
-
-
-
-
+expenseSchema.index({ paymentStatus:1 });
 
 
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Calculate Total Expense
@@ -556,9 +521,7 @@ expenseSchema.methods.calculateTotal =
 function(){
 
 
-
     this.subtotal = 0;
-
 
 
     this.items.forEach(
@@ -573,7 +536,6 @@ function(){
             item.unitPrice;
 
 
-
             this.subtotal +=
 
             item.amount;
@@ -582,7 +544,6 @@ function(){
         }
 
     );
-
 
 
     this.totalAmount =
@@ -594,16 +555,10 @@ function(){
         this.discountAmount;
 
 
-
     return this.totalAmount;
 
 
 };
-
-
-
-
-
 
 
 // Approve Expense
@@ -611,7 +566,6 @@ function(){
 
 expenseSchema.methods.approve =
 function(userId){
-
 
 
     this.approvalStatus =
@@ -630,16 +584,10 @@ function(userId){
     new Date();
 
 
-
     return this.save();
 
 
 };
-
-
-
-
-
 
 
 // Reject Expense
@@ -650,7 +598,6 @@ function(
     userId,
     reason
 ){
-
 
 
     this.approvalStatus =
@@ -669,16 +616,10 @@ function(
     reason;
 
 
-
     return this.save();
 
 
 };
-
-
-
-
-
 
 
 // Mark Paid
@@ -686,7 +627,6 @@ function(
 
 expenseSchema.methods.markPaid =
 function(transactionId){
-
 
 
     this.paymentStatus =
@@ -701,15 +641,10 @@ function(transactionId){
     transactionId;
 
 
-
     return this.save();
 
 
 };
-
-
-
-
 
 
 // ==========================================================
@@ -717,24 +652,19 @@ function(transactionId){
 // ==========================================================
 
 
+// Expense History
 
-// Company Expense History
 
-
-expenseSchema.statics.getCompanyExpenses =
-function(
-    companyId
-){
+expenseSchema.statics.getAllExpenses =
+function(){
 
 
     return this.find({
-
-        companyId,
-
         isDeleted:false
 
     })
     .sort({
+
 
         expenseDate:-1
 
@@ -744,18 +674,11 @@ function(
 };
 
 
-
-
-
-
-
 // Monthly Expense Report
 
 
 expenseSchema.statics.getMonthlyExpense =
-function(
-    companyId,
-    month,
+function(month,
     year
 ){
 
@@ -778,14 +701,10 @@ function(
     );
 
 
-
     return this.find({
-
-        companyId,
-
-
         expenseDate:
         {
+
             $gte:startDate,
 
             $lte:endDate
@@ -800,18 +719,11 @@ function(
 };
 
 
-
-
-
-
-
 // Expense Summary
 
 
 expenseSchema.statics.getSummary =
-async function(
-    companyId
-){
+async function(){
 
 
     return this.aggregate([
@@ -819,11 +731,9 @@ async function(
 
         {
 
+
             $match:
             {
-
-                companyId,
-
                 isDeleted:false
 
             }
@@ -833,14 +743,17 @@ async function(
 
         {
 
+
             $group:
             {
+
 
                 _id:"$expenseCategory",
 
 
                 total:
                 {
+
                     $sum:"$totalAmount"
                 }
 
@@ -853,13 +766,7 @@ async function(
     ]);
 
 
-
 };
-
-
-
-
-
 
 
 // ==========================================================
@@ -873,17 +780,13 @@ function(){
 
     return this.where({
 
+
         isDeleted:false
 
     });
 
 
 };
-
-
-
-
-
 
 
 // ==========================================================
@@ -897,6 +800,7 @@ expenseSchema.set(
 
 {
 
+
     virtuals:true,
 
 
@@ -905,6 +809,7 @@ expenseSchema.set(
         ret
     ){
 
+
         delete ret.__v;
 
         return ret;
@@ -912,10 +817,6 @@ expenseSchema.set(
     }
 
 });
-
-
-
-
 
 
 // ==========================================================

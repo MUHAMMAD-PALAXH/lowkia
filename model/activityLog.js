@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 
-
 // ==========================================================
 // Activity Log Schema
 // ==========================================================
@@ -11,30 +10,13 @@ const activityLogSchema = new mongoose.Schema(
 {
 
 
-// ==========================================================
-// Company & Branch
-// ==========================================================
-
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
-
-
-
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     default:null,
     index:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -43,6 +25,7 @@ branchId:{
 
 
 userId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     required:true,
@@ -50,29 +33,25 @@ userId:{
 },
 
 
-
 userRole:{
+
     type:String,
     default:""
 },
-
 
 
 userName:{
+
     type:String,
     default:""
 },
-
 
 
 userEmail:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -81,6 +60,7 @@ userEmail:{
 
 
 activityNumber:{
+
     type:String,
     required:true,
     unique:true,
@@ -89,8 +69,8 @@ activityNumber:{
 },
 
 
-
 activityType:{
+
     type:String,
     enum:[
 
@@ -132,16 +112,13 @@ activityType:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Module Information
 // ==========================================================
 
 
 module:{
+
     type:String,
     enum:[
 
@@ -191,15 +168,11 @@ module:{
 },
 
 
-
 subModule:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -208,20 +181,17 @@ subModule:{
 
 
 description:{
+
     type:String,
     required:true
 },
 
 
-
 shortDescription:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -230,6 +200,7 @@ shortDescription:{
 
 
 referenceType:{
+
     type:String,
     enum:[
 
@@ -266,16 +237,12 @@ referenceType:{
 },
 
 
-
 referenceId:{
+
     type:mongoose.Schema.Types.ObjectId,
     default:null,
     index:true
 },
-
-
-
-
 
 
 // ==========================================================
@@ -284,22 +251,23 @@ referenceId:{
 
 
 oldData:{
+
     type:Object,
     default:null
 },
-
 
 
 newData:{
+
     type:Object,
     default:null
 },
-
 
 
 changedFields:[
 
 {
+
 
     type:String
 
@@ -308,53 +276,48 @@ changedFields:[
 ],
 
 
-
-
-
-
 // ==========================================================
 // Request Information
 // ==========================================================
 
 
 ipAddress:{
+
     type:String,
     default:""
 },
-
 
 
 userAgent:{
+
     type:String,
     default:""
 },
-
 
 
 deviceInfo:{
+
     type:String,
     default:""
 },
 
 
-
 location:{
+
     latitude:{
+
         type:String,
         default:""
     },
 
 
     longitude:{
+
         type:String,
         default:""
     }
 
 },
-
-
-
-
 
 
 // ==========================================================
@@ -363,13 +326,14 @@ location:{
 
 
 loginSessionId:{
+
     type:String,
     default:""
 },
 
 
-
 securityLevel:{
+
     type:String,
     enum:[
 
@@ -386,16 +350,13 @@ securityLevel:{
 },
 
 
-
-
-
-
 // ==========================================================
 // Status
 // ==========================================================
 
 
 status:{
+
     type:String,
     enum:[
 
@@ -412,15 +373,11 @@ status:{
 },
 
 
-
 errorMessage:{
+
     type:String,
     default:""
 },
-
-
-
-
 
 
 // ==========================================================
@@ -429,14 +386,11 @@ errorMessage:{
 
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
-
-
-
-
 
 
 // ==========================================================
@@ -445,13 +399,10 @@ createdBy:{
 
 
 metadata:{
+
     type:Object,
     default:{}
 },
-
-
-
-
 
 
 // ==========================================================
@@ -460,38 +411,33 @@ metadata:{
 
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 
-
 deletedAt:{
+
     type:Date,
     default:null
 },
 
 
-
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
     default:null
 },
 
 
-
 },
 {
+
     timestamps:true,
     versionKey:false
 });
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -499,19 +445,14 @@ deletedBy:{
 // ==========================================================
 
 
+activityLogSchema.index({ activityNumber:1 }, {
 
-activityLogSchema.index(
-{
-    companyId:1,
-    activityNumber:1
-},
-{
     unique:true
 });
 
 
-
 activityLogSchema.index({
+
 
     userId:1,
 
@@ -520,8 +461,8 @@ activityLogSchema.index({
 });
 
 
-
 activityLogSchema.index({
+
 
     module:1,
 
@@ -530,8 +471,8 @@ activityLogSchema.index({
 });
 
 
-
 activityLogSchema.index({
+
 
     referenceType:1,
 
@@ -540,36 +481,19 @@ activityLogSchema.index({
 });
 
 
-
-activityLogSchema.index({
-
-    companyId:1,
-
-    module:1,
+activityLogSchema.index({ module:1,
 
     createdAt:-1
 
-});
+ });
 
 
-
-activityLogSchema.index({
-
-    status:1
-
-});
-
-
-
-
-
-
+activityLogSchema.index({ status:1 });
 
 
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
-
 
 
 // Mark Failed Activity
@@ -578,6 +502,7 @@ activityLogSchema.index({
 activityLogSchema.methods.markFailed =
 function(error)
 {
+
 
     this.status="Failed";
 
@@ -590,17 +515,13 @@ function(error)
 };
 
 
-
-
-
-
-
 // Add Changed Field
 
 
 activityLogSchema.methods.addChangedField =
 function(field)
 {
+
 
     this.changedFields.push(field);
 
@@ -610,16 +531,9 @@ function(field)
 };
 
 
-
-
-
-
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
-
 
 
 // User Activity History
@@ -629,7 +543,9 @@ activityLogSchema.statics.getUserActivity =
 function(userId)
 {
 
+
     return this.find({
+
 
         userId,
 
@@ -638,16 +554,12 @@ function(userId)
     })
     .sort({
 
+
         createdAt:-1
 
     });
 
 };
-
-
-
-
-
 
 
 // Module Activity History
@@ -657,7 +569,9 @@ activityLogSchema.statics.getModuleActivity =
 function(module)
 {
 
+
     return this.find({
+
 
         module,
 
@@ -666,16 +580,12 @@ function(module)
     })
     .sort({
 
+
         createdAt:-1
 
     });
 
 };
-
-
-
-
-
 
 
 // Reference History
@@ -688,7 +598,9 @@ function(
 )
 {
 
+
     return this.find({
+
 
         referenceType,
 
@@ -699,16 +611,12 @@ function(
     })
     .sort({
 
+
         createdAt:-1
 
     });
 
 };
-
-
-
-
-
 
 
 // Login History
@@ -718,11 +626,14 @@ activityLogSchema.statics.getLoginHistory =
 function(userId)
 {
 
+
     return this.find({
+
 
         userId,
 
         activityType:{
+
             $in:[
                 "Login",
                 "Logout"
@@ -732,17 +643,12 @@ function(userId)
     })
     .sort({
 
+
         createdAt:-1
 
     });
 
 };
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -754,7 +660,9 @@ activityLogSchema.query.success =
 function()
 {
 
+
     return this.where({
+
 
         status:"Success"
 
@@ -763,15 +671,13 @@ function()
 };
 
 
-
-
-
-
 activityLogSchema.query.failed =
 function()
 {
 
+
     return this.where({
+
 
         status:"Failed"
 
@@ -780,27 +686,19 @@ function()
 };
 
 
-
-
-
-
 activityLogSchema.query.recent =
 function()
 {
 
+
     return this.sort({
+
 
         createdAt:-1
 
     });
 
 };
-
-
-
-
-
-
 
 
 // ==========================================================
@@ -812,6 +710,7 @@ activityLogSchema.set(
 "toJSON",
 {
 
+
     virtuals:true,
 
     versionKey:false,
@@ -822,6 +721,7 @@ activityLogSchema.set(
         ret
     ){
 
+
         delete ret._id;
 
         return ret;
@@ -829,12 +729,6 @@ activityLogSchema.set(
     }
 
 });
-
-
-
-
-
-
 
 
 // ==========================================================

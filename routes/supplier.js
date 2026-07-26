@@ -1,51 +1,105 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const Supplier = require('../model/supplier');
 
-// Get all
-router.get('/', async (req, res) => {
-    try {
-        const suppliers = await Supplier.find();
-        res.json(suppliers);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-});
+const supplierController = require("../controllers/supplierController");
+const validate = require("../middleware/validate");
+const {
+    createSupplierValidator,
+    updateSupplierValidator,
+    idValidator,
+    listSupplierValidator,
+    rateSupplierValidator
+} = require("../validators/supplierValidator");
 
-// Add
-router.post('/', async (req, res) => {
-    try {
-        const newSupplier = new Supplier(req.body);
-        await newSupplier.save();
-        res.status(201).json(newSupplier);
-    } catch (error) {
-        // This will catch duplicate supplierId errors or missing required fields
-        console.error("Save Error:", error.message); 
-        res.status(400).json({ message: error.message, error });
-    }
-});
+// ==========================================================
+// Supplier Routes
+// Base: /api/suppliers
+// Auth will be attached after authentication phase
+// ==========================================================
 
-// Update
-router.put('/:id', async (req, res) => {
-    try {
-        const updated = await Supplier.findByIdAndUpdate(req.params.id, req.body, { new: true });
-        if (!updated) return res.status(404).json({ message: "Supplier not found" });
-        res.json(updated);
-    } catch (error) {
-        console.error("Update Error:", error.message);
-        res.status(400).json({ message: error.message });
-    }
-});
+router.get(
+    "/",
+    listSupplierValidator,
+    validate,
+    supplierController.getSuppliers
+);
 
-// Delete
-router.delete('/:id', async (req, res) => {
-    try {
-        const deleted = await Supplier.findByIdAndDelete(req.params.id);
-        if (!deleted) return res.status(404).json({ message: "Supplier not found" });
-        res.json({ message: "Supplier deleted" });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-});
+router.get(
+    "/active",
+    supplierController.getActiveSuppliers
+);
+
+router.get(
+    "/reports/purchase",
+    supplierController.getPurchaseReport
+);
+
+router.get(
+    "/reports/due",
+    supplierController.getDueReport
+);
+
+router.get(
+    "/:id",
+    idValidator,
+    validate,
+    supplierController.getSupplierById
+);
+
+router.post(
+    "/",
+    createSupplierValidator,
+    validate,
+    supplierController.createSupplier
+);
+
+router.put(
+    "/:id",
+    updateSupplierValidator,
+    validate,
+    supplierController.updateSupplier
+);
+
+router.delete(
+    "/:id",
+    idValidator,
+    validate,
+    supplierController.deleteSupplier
+);
+
+router.patch(
+    "/:id/approve",
+    idValidator,
+    validate,
+    supplierController.approveSupplier
+);
+
+router.patch(
+    "/:id/block",
+    idValidator,
+    validate,
+    supplierController.blockSupplier
+);
+
+router.patch(
+    "/:id/activate",
+    idValidator,
+    validate,
+    supplierController.activateSupplier
+);
+
+router.patch(
+    "/:id/deactivate",
+    idValidator,
+    validate,
+    supplierController.deactivateSupplier
+);
+
+router.patch(
+    "/:id/rate",
+    rateSupplierValidator,
+    validate,
+    supplierController.rateSupplier
+);
 
 module.exports = router;

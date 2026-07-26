@@ -3,34 +3,28 @@ const mongoose = require("mongoose");
 const attendanceSchema = new mongoose.Schema(
 {
 
-// ===================================================
-// Company Information
-// ===================================================
-
-companyId:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Company",
-    required:true,
-    index:true
-},
 
 branchId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
     required:true
 },
 
 departmentId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Department"
 },
 
 designationId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Designation"
 },
 
 shiftId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Shift"
 },
@@ -40,6 +34,7 @@ shiftId:{
 // ===================================================
 
 employeeId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Employee",
     required:true,
@@ -47,6 +42,7 @@ employeeId:{
 },
 
 userId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
@@ -56,31 +52,37 @@ userId:{
 // ===================================================
 
 employeeCode:{
+
     type:String,
     required:true
 },
 
 employeeName:{
+
     type:String,
     required:true
 },
 
 branchName:{
+
     type:String,
     default:""
 },
 
 departmentName:{
+
     type:String,
     default:""
 },
 
 designationName:{
+
     type:String,
     default:""
 },
 
 shiftName:{
+
     type:String,
     default:""
 },
@@ -90,20 +92,24 @@ shiftName:{
 // ===================================================
 
 attendanceDate:{
+
     type:Date,
     required:true
 },
 
 dayName:{
+
     type:String,
     default:""
 },
 
 month:{
+
     type:Number
 },
 
 year:{
+
     type:Number
 },
 
@@ -112,10 +118,12 @@ year:{
 // ===================================================
 
 checkIn:{
+
     type:Date
 },
 
 checkOut:{
+
     type:Date
 },
 
@@ -124,6 +132,7 @@ checkOut:{
 // ===================================================
 
 attendanceStatus:{
+
     type:String,
     enum:[
         "Present",
@@ -140,6 +149,7 @@ attendanceStatus:{
 },
 
 checkInStatus:{
+
     type:String,
     enum:[
         "On Time",
@@ -155,6 +165,7 @@ checkInStatus:{
 },
 
 checkOutStatus:{
+
     type:String,
     enum:[
         "Completed",
@@ -170,44 +181,53 @@ checkOutStatus:{
 // ===================================================
 
 scheduledIn:{
+
     type:Date
 },
 
 scheduledOut:{
+
     type:Date
 },
 
 workingMinutes:{
+
     type:Number,
     default:0
 },
 
 workingHours:{
+
     type:Number,
     default:0
 },
 
 breakMinutes:{
+
     type:Number,
     default:0
 },
 
 lateMinutes:{
+
     type:Number,
     default:0
 },
 
 earlyLeaveMinutes:{
+
     type:Number,
     default:0
 },
 
 overtimeMinutes:{
+
     type:Number,
     default:0
 },
 
 overtimeHours:{
+
     type:Number,
     default:0
 },
@@ -217,6 +237,7 @@ overtimeHours:{
 // ===================================================
 
 attendanceSource:{
+
     type:String,
     enum:[
         "Biometric",
@@ -231,16 +252,19 @@ attendanceSource:{
 },
 
 deviceName:{
+
     type:String,
     default:""
 },
 
 deviceId:{
+
     type:String,
     default:""
 },
 
 terminalId:{
+
     type:String,
     default:""
 },
@@ -250,19 +274,23 @@ terminalId:{
 // ===================================================
 
 latitude:{
+
     type:Number
 },
 
 longitude:{
+
     type:Number
 },
 
 locationName:{
+
     type:String,
     default:""
 },
 
 ipAddress:{
+
     type:String,
     default:""
 },
@@ -272,31 +300,37 @@ ipAddress:{
 // ===================================================
 
 isLate:{
+
     type:Boolean,
     default:false
 },
 
 leftEarly:{
+
     type:Boolean,
     default:false
 },
 
 isOvertime:{
+
     type:Boolean,
     default:false
 },
 
 isHoliday:{
+
     type:Boolean,
     default:false
 },
 
 isWeekend:{
+
     type:Boolean,
     default:false
 },
 
 isLeave:{
+
     type:Boolean,
     default:false
 },
@@ -306,20 +340,24 @@ isLeave:{
 // ===================================================
 
 isApproved:{
+
     type:Boolean,
     default:true
 },
 
 approvedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 approvedAt:{
+
     type:Date
 },
 
 approvalRemarks:{
+
     type:String,
     default:""
 },
@@ -329,16 +367,19 @@ approvalRemarks:{
 // ===================================================
 
 employeeRemarks:{
+
     type:String,
     default:""
 },
 
 managerRemarks:{
+
     type:String,
     default:""
 },
 
 hrRemarks:{
+
     type:String,
     default:""
 },
@@ -348,11 +389,13 @@ hrRemarks:{
 // ===================================================
 
 payrollProcessed:{
+
     type:Boolean,
     default:false
 },
 
 payrollId:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"Payroll"
 },
@@ -362,31 +405,37 @@ payrollId:{
 // ===================================================
 
 createdBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 updatedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 deletedBy:{
+
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser"
 },
 
 isDeleted:{
+
     type:Boolean,
     default:false
 },
 
 deletedAt:{
+
     type:Date
 }
 
 },
 {
+
     timestamps:true,
     versionKey:false
 });
@@ -396,52 +445,42 @@ deletedAt:{
 // ==========================================================
 
 // One employee cannot have duplicate attendance for same date
-attendanceSchema.index(
-{
-    companyId:1,
-    employeeId:1,
+attendanceSchema.index({ employeeId:1,
     attendanceDate:1
-},
-{
+ }, {
+
     unique:true
 });
 
 
-attendanceSchema.index({
-    companyId:1,
-    branchId:1,
+attendanceSchema.index({ branchId:1,
     attendanceDate:1
-});
+ });
 
 
-attendanceSchema.index({
-    companyId:1,
-    departmentId:1,
+attendanceSchema.index({ departmentId:1,
     attendanceDate:1
-});
+ });
 
 
 attendanceSchema.index({
+
     employeeId:1,
     attendanceStatus:1
 });
 
 
-attendanceSchema.index({
-    attendanceDate:1
-});
+attendanceSchema.index({ attendanceDate:1 });
 
 
 attendanceSchema.index({
+
     month:1,
     year:1
 });
 
 
-attendanceSchema.index({
-    payrollProcessed:1
-});
-
+attendanceSchema.index({ payrollProcessed:1 });
 
 
 // ==========================================================
@@ -449,6 +488,7 @@ attendanceSchema.index({
 // ==========================================================
 
 attendanceSchema.virtual("totalWorkingTime").get(function(){
+
 
     if(!this.checkIn || !this.checkOut)
         return 0;
@@ -465,7 +505,6 @@ attendanceSchema.virtual("totalWorkingTime").get(function(){
 });
 
 
-
 // ==========================================================
 // PRE SAVE HOOK
 // ==========================================================
@@ -478,6 +517,7 @@ function(next){
     if(this.attendanceDate)
     {
 
+
         const date =
         new Date(this.attendanceDate);
 
@@ -486,6 +526,7 @@ function(next){
         date.toLocaleDateString(
             "en-US",
             {
+
                 weekday:"long"
             }
         );
@@ -501,38 +542,36 @@ function(next){
     }
 
 
-
     if(
         this.lateMinutes > 0
     )
     {
+
         this.isLate=true;
     }
-
 
 
     if(
         this.overtimeMinutes > 0
     )
     {
+
         this.isOvertime=true;
     }
-
 
 
     if(
         this.earlyLeaveMinutes > 0
     )
     {
+
         this.leftEarly=true;
     }
-
 
 
     next();
 
 });
-
 
 
 // ==========================================================
@@ -549,6 +588,7 @@ function(){
         !this.checkOut
     )
     {
+
         return 0;
     }
 
@@ -583,8 +623,6 @@ function(){
 };
 
 
-
-
 // ==========================================================
 // STATIC METHODS
 // ==========================================================
@@ -600,6 +638,7 @@ function(
 
     return this.find({
 
+
         employeeId,
 
         month,
@@ -610,12 +649,11 @@ function(
 
     })
     .sort({
+
         attendanceDate:1
     });
 
 };
-
-
 
 
 attendanceSchema.statics.getBranchAttendance =
@@ -624,7 +662,9 @@ function(
     date
 ){
 
+
     return this.find({
+
 
         branchId,
 
@@ -637,13 +677,8 @@ function(
 };
 
 
-
-
-
 attendanceSchema.statics.getMonthlySummary =
-async function(
-    companyId,
-    month,
+async function(month,
     year
 ){
 
@@ -651,9 +686,9 @@ async function(
     return this.aggregate([
 
         {
+
             $match:
             {
-                companyId,
                 month,
                 year,
                 isDeleted:false
@@ -662,13 +697,16 @@ async function(
 
 
         {
+
             $group:
             {
+
 
                 _id:"$attendanceStatus",
 
                 total:
                 {
+
                     $sum:1
                 }
 
@@ -681,8 +719,6 @@ async function(
 };
 
 
-
-
 // ==========================================================
 // QUERY HELPERS
 // ==========================================================
@@ -691,14 +727,15 @@ async function(
 attendanceSchema.query.active =
 function(){
 
+
     return this.where({
+
 
         isDeleted:false
 
     });
 
 };
-
 
 
 // ==========================================================
@@ -710,12 +747,14 @@ attendanceSchema.set(
 "toJSON",
 {
 
+
     virtuals:true,
 
     transform:function(
         doc,
         ret
     ){
+
 
         delete ret.__v;
 
@@ -724,8 +763,6 @@ attendanceSchema.set(
     }
 
 });
-
-
 
 
 // ==========================================================
