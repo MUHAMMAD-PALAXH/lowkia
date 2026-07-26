@@ -58,12 +58,16 @@ const buildEan13 = (sequenceNumber) => {
 // which can only happen if barcodes were imported manually.
 const generateProductBarcode = async () => {
     const Product = require("../model/product");
+    const ProductVariant = require("../model/productVariant");
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
         const barcode = buildEan13(await nextSequence());
 
-        const exists = await Product.exists({ barcode });
-        if (!exists) return barcode;
+        const [onProduct, onVariant] = await Promise.all([
+            Product.exists({ barcode }),
+            ProductVariant.exists({ barcode })
+        ]);
+        if (!onProduct && !onVariant) return barcode;
     }
 
     throw new Error("Unable to generate a unique barcode. Please try again.");

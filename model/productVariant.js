@@ -65,8 +65,9 @@ const productVariantSchema = new mongoose.Schema(
         barcode: {
 
             type: String,
-            trim: true,
-            default: ""
+            trim: true
+            // No default "" — sparse unique index treats empty string as a real value
+            // and blocks multi-variant IMEI creates (duplicate barcode: "").
         },
 
         qrCode: {

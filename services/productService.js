@@ -245,7 +245,43 @@ const normalizeAttributes = (attributes = []) =>
             variantTypeId: toObjectId(a?.variantTypeId),
             variantId: toObjectId(a?.variantId)
         }))
-        .filter((a) => a.variantTypeId && a.variantId);
+        .filter((a) => a.variantTypeId && a.variantId)
+        .sort((a, b) =>
+            String(a.variantTypeId).localeCompare(String(b.variantTypeId))
+        );
+
+const mapVariantWriteError = (err) => {
+    if (err instanceof AppError) return err;
+    if (err && err.code === 11000) {
+        const fields = Object.keys(err.keyPattern || {});
+        if (fields.includes("sku")) {
+            return new AppError(
+                "Duplicate variant SKU. Each combination needs a unique SKU (or leave SKU blank).",
+                400
+            );
+        }
+        if (fields.includes("barcode")) {
+            return new AppError(
+                "Duplicate variant barcode. Please retry — a unique barcode will be generated.",
+                400
+            );
+        }
+        if (fields.includes("attributes") || fields.includes("productId")) {
+            return new AppError(
+                "Duplicate variant combination. Check Color/Size selections — each combo must be unique.",
+                400
+            );
+        }
+        return new AppError(
+            "Duplicate variant data. Check SKU, barcode, and combinations.",
+            400
+        );
+    }
+    if (err && err.name === "ValidationError") {
+        return new AppError(err.message, 400);
+    }
+    return err;
+};
 
 const syncVariants = async (product, variantsInput, actorId = null) => {
     if (variantsInput === undefined || variantsInput === null) return;
@@ -258,113 +294,164 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
         product.vendorId ||
         (product.uploadedByType === "Vendor" ? product.uploadedById : null) ||
         actorId;
+    const seenSkus = new Set();
+    const productCode = (product.productCode || "VAR").toString();
 
-    for (const raw of variantsInput) {
-        const sellingPrice =
-            Number(raw.sellingPrice) || Number(raw.price) || 0;
+    // Legacy rows used barcode: "" which breaks the sparse unique index.
+    await ProductVariant.updateMany(
+        { barcode: "" },
+        { $unset: { barcode: 1 } }
+    );
 
-        const payload = {
-            productId: product._id,
-            attributes: normalizeAttributes(raw.attributes),
-            sku: (raw.sku || "").toString().trim().toUpperCase() || undefined,
-            purchasePrice: Number(raw.purchasePrice) || 0,
-            costPrice: Number(raw.costPrice) || 0,
-            sellingPrice,
-            wholesalePrice: Number(raw.wholesalePrice) || 0,
-            price: sellingPrice,
-            offerPrice: Number(raw.offerPrice) || 0,
-            quantity: Number(raw.quantity) || 0,
-            minimumStock: Number(raw.minimumStock) || 0,
-            maximumStock: Number(raw.maximumStock) || 0,
-            reorderLevel: Number(raw.reorderLevel) || 0,
-            unitId: toObjectId(raw.unitId),
-            status: raw.status || "Active",
-            isDefaultVariant: raw.isDefaultVariant === true,
-            updatedBy: actorId || null
-        };
+    try {
+        for (let index = 0; index < variantsInput.length; index += 1) {
+            const raw = variantsInput[index];
+            const sellingPrice =
+                Number(raw.sellingPrice) || Number(raw.price) || 0;
+            const attributes = normalizeAttributes(raw.attributes);
+            const label =
+                (raw.combinationString || "").toString().trim() ||
+                `Variant ${index + 1}`;
 
-        const existingId = toObjectId(raw._id || raw.id);
-        let variantDoc = null;
-
-        if (existingId) {
-            variantDoc = await ProductVariant.findOneAndUpdate(
-                { _id: existingId, productId: product._id },
-                { $set: payload },
-                { new: true }
-            );
-            if (variantDoc) keptIds.push(variantDoc._id);
-        } else {
-            // Non IMEI variants get their own scannable barcode
-            if (product.trackingType === "Non-IMEI" && !raw.barcode) {
-                payload.barcode = await generateProductBarcode();
-            } else if (raw.barcode) {
-                payload.barcode = String(raw.barcode).trim();
+            // Multi-variant rows must keep Color/Size attributes, otherwise Mongo's
+            // unique (productId, attributes) index collides on empty arrays.
+            if (variantsInput.length > 1 && attributes.length === 0) {
+                throw new AppError(
+                    `Variant "${label}" is missing Color/Size attributes. Re-select variant values and try again.`,
+                    400
+                );
             }
 
-            payload.createdBy = actorId || null;
-            variantDoc = await ProductVariant.create(payload);
-            keptIds.push(variantDoc._id);
-        }
-
-        // IMEI lives on the variant (ItemTrack). Stock quantity for Non-IMEI
-        // is informational only until the Inventory module posts stock.
-        if (
-            product.trackingType === "IMEI" &&
-            variantDoc &&
-            Array.isArray(raw.imeis) &&
-            raw.imeis.length
-        ) {
-            const existingImeis = await ItemTrack.find({
-                productId: product._id,
-                variantId: variantDoc._id
-            }).select("imei");
-
-            const known = new Set(existingImeis.map((i) => i.imei));
-            const fresh = raw.imeis
-                .map((i) => String(i).trim())
-                .filter((i) => i && !known.has(i));
-
-            if (fresh.length) {
-                if (!vendorId) {
+            let sku =
+                (raw.sku || "").toString().trim().toUpperCase() || undefined;
+            if (!sku && variantsInput.length > 1) {
+                const slug = label
+                    .toUpperCase()
+                    .replace(/[^A-Z0-9]+/g, "-")
+                    .replace(/^-+|-+$/g, "")
+                    .slice(0, 24);
+                sku = `${productCode}-${slug || index + 1}`;
+            }
+            if (sku) {
+                if (seenSkus.has(sku)) {
                     throw new AppError(
-                        "Vendor / uploader id is required to register IMEIs.",
+                        `Duplicate SKU "${sku}" in this product. Each combination needs a unique SKU.`,
                         400
                     );
                 }
+                seenSkus.add(sku);
+            }
 
-                await ItemTrack.insertMany(
-                    fresh.map((imei) => ({
-                        imei,
-                        productId: product._id,
-                        variantId: variantDoc._id,
-                        vendorId,
-                        status: "available"
-                    }))
+            const payload = {
+                productId: product._id,
+                attributes,
+                sku,
+                purchasePrice: Number(raw.purchasePrice) || 0,
+                costPrice: Number(raw.costPrice) || 0,
+                sellingPrice,
+                wholesalePrice: Number(raw.wholesalePrice) || 0,
+                price: sellingPrice,
+                offerPrice: Number(raw.offerPrice) || 0,
+                quantity: Number(raw.quantity) || 0,
+                minimumStock: Number(raw.minimumStock) || 0,
+                maximumStock: Number(raw.maximumStock) || 0,
+                reorderLevel: Number(raw.reorderLevel) || 0,
+                unitId: toObjectId(raw.unitId),
+                status: raw.status || "Active",
+                isDefaultVariant: raw.isDefaultVariant === true || index === 0,
+                updatedBy: toObjectId(actorId),
+                createdBy: toObjectId(actorId)
+            };
+
+            // Only Non-IMEI variants get barcodes. Never write "" — sparse unique
+            // indexes treat empty string as a value and break multi-variant IMEI.
+            if (product.trackingType === "Non-IMEI") {
+                const incoming = (raw.barcode || "").toString().trim();
+                payload.barcode = incoming || (await generateProductBarcode());
+            }
+
+            const existingId = toObjectId(raw._id || raw.id);
+            let variantDoc = null;
+
+            if (existingId) {
+                const $set = { ...payload };
+                delete $set.createdBy;
+                if (product.trackingType === "IMEI") {
+                    delete $set.barcode;
+                }
+                variantDoc = await ProductVariant.findOneAndUpdate(
+                    { _id: existingId, productId: product._id },
+                    { $set },
+                    { new: true }
                 );
+                if (variantDoc) keptIds.push(variantDoc._id);
+            } else {
+                variantDoc = await ProductVariant.create(payload);
+                keptIds.push(variantDoc._id);
+            }
+
+            // IMEI lives on the variant (ItemTrack). Stock quantity for Non-IMEI
+            // is informational only until the Inventory module posts stock.
+            if (
+                product.trackingType === "IMEI" &&
+                variantDoc &&
+                Array.isArray(raw.imeis) &&
+                raw.imeis.length
+            ) {
+                const existingImeis = await ItemTrack.find({
+                    productId: product._id,
+                    variantId: variantDoc._id
+                }).select("imei");
+
+                const known = new Set(existingImeis.map((i) => i.imei));
+                const fresh = raw.imeis
+                    .map((i) => String(i).trim())
+                    .filter((i) => i && !known.has(i));
+
+                if (fresh.length) {
+                    if (!vendorId) {
+                        throw new AppError(
+                            "Vendor / uploader id is required to register IMEIs.",
+                            400
+                        );
+                    }
+
+                    await ItemTrack.insertMany(
+                        fresh.map((imei) => ({
+                            imei,
+                            productId: product._id,
+                            variantId: variantDoc._id,
+                            vendorId,
+                            status: "available"
+                        }))
+                    );
+                }
             }
         }
-    }
 
-    // Variants removed from the payload are soft deleted, never hard deleted
-    await ProductVariant.updateMany(
-        {
-            productId: product._id,
-            _id: { $nin: keptIds },
-            isDeleted: { $ne: true }
-        },
-        {
-            $set: {
-                isDeleted: true,
-                deletedAt: new Date(),
-                deletedBy: actorId || null
+        // Variants removed from the payload are soft deleted, never hard deleted
+        await ProductVariant.updateMany(
+            {
+                productId: product._id,
+                _id: { $nin: keptIds },
+                isDeleted: { $ne: true }
+            },
+            {
+                $set: {
+                    isDeleted: true,
+                    deletedAt: new Date(),
+                    deletedBy: toObjectId(actorId)
+                }
             }
-        }
-    );
+        );
 
-    product.productVariants = keptIds;
-    product.hasVariants = keptIds.length > 0;
-    if (product.hasVariants && product.productType === "Simple") {
-        product.productType = "Variant";
+        product.productVariants = keptIds;
+        product.hasVariants = keptIds.length > 0;
+        if (product.hasVariants && product.productType === "Simple") {
+            product.productType = "Variant";
+        }
+    } catch (err) {
+        throw mapVariantWriteError(err);
     }
 };
 
@@ -469,8 +556,34 @@ const createProduct = async (payload = {}, actorId = null) => {
 
     await product.save();
 
-    await syncVariants(product, payload.productVariants, actorId);
-    if (product.isModified()) await product.save();
+    try {
+        await syncVariants(product, payload.productVariants, actorId);
+        if (product.isModified()) await product.save();
+    } catch (err) {
+        // Product row was already persisted — soft-delete so the same name
+        // can be retried instead of returning "already exists".
+        try {
+            product.isDeleted = true;
+            product.deletedAt = new Date();
+            product.deletedBy = toObjectId(actorId);
+            product.status = "Archived";
+            product.isPublished = false;
+            await product.save();
+            await ProductVariant.updateMany(
+                { productId: product._id, isDeleted: { $ne: true } },
+                {
+                    $set: {
+                        isDeleted: true,
+                        deletedAt: new Date(),
+                        deletedBy: toObjectId(actorId)
+                    }
+                }
+            );
+        } catch (_) {
+            // best-effort cleanup
+        }
+        throw err;
+    }
 
     return populateProduct(Product.findById(product._id));
 };
