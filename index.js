@@ -31,22 +31,27 @@ app.use('/image/poster', express.static('public/posters'));
 // ============================================================
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URL);
+    if (!process.env.MONGO_URL) {
+      throw new Error("MONGO_URL environment variable is missing!");
+    }
+
+    await mongoose.connect(process.env.MONGO_URL, {
+      serverSelectionTimeoutMS: 5000, // Timeout in 5s if DB is unreachable
+    });
     console.log('✅ Connected to MongoDB');
-
-    mongoose.connection.on('disconnected', () => {
-      console.warn('MongoDB disconnected. Attempting to reconnect...');
-      connectDB();
-    });
-
-    mongoose.connection.on('error', (err) => {
-      console.error('MongoDB connection error:', err.message);
-    });
   } catch (err) {
     console.error('❌ MongoDB connection failed:', err.message);
-    process.exit(1);
+    // Do NOT call process.exit(1) here so the server stays alive for health checks
   }
 };
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB disconnected.');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB connection error:', err.message);
+});
 
 // ============================================================
 // MODEL REGISTRATION
@@ -64,7 +69,6 @@ require('./model/user');
 require('./model/adminUser');
 require('./model/order');
 require('./model/review');
-// --- NEW FEATURE: Supplier Model Registration ---
 require('./model/supplier'); 
 require('./model/warehouse');
 require('./model/company');
@@ -88,10 +92,8 @@ app.use('/payment', require('./routes/payment'));
 app.use('/notification', require('./routes/notification'));
 app.use('/api/reviews', require('./routes/reviewRoute'));
 app.use('/api/imei-inventory', require('./routes/imeiInventory'));
-// --- NEW FEATURE: Supplier Route Registration ---
 app.use('/api/suppliers', require('./routes/supplier')); 
 app.use('/api/warehouses', require('./routes/warehouse'));
-// app.use('/api/company', require('./routes/company'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');
@@ -140,13 +142,12 @@ app.use((err, req, res, next) => {
 // START SERVER
 // ============================================================
 const PORT = process.env.PORT || 5000;
-const startServer = async () => {
+
+// Listen immediately on 0.0.0.0 so Render detects host port ready
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`🚀 Server running on port ${PORT}`);
   await connectDB();
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
-};
-startServer();
+});
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Closing server...');
