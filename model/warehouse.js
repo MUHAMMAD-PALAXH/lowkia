@@ -8,8 +8,16 @@ branchId:{
 
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
-    required:true
+    default:null
 },
+
+// Many-to-many: warehouse can serve multiple branches
+branchIds:[
+    {
+        type:mongoose.Schema.Types.ObjectId,
+        ref:"Branch"
+    }
+],
 
 
 // ==========================================================

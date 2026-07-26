@@ -1,140 +1,185 @@
 const mongoose = require("mongoose");
 
 const branchSchema = new mongoose.Schema(
-{
+    {
+        // ==========================================================
+        // Identity — BRN-000001 (auto-generated, never editable)
+        // ==========================================================
 
-        // Branch Code
+        branchCode: {
+            type: String,
+            required: true,
+            unique: true,
+            trim: true,
+            uppercase: true
+        },
 
-    branchCode:{
+        name: {
+            type: String,
+            required: true,
+            trim: true
+        },
 
-        type:String,
-        required:true,
-        unique:true,
-        trim:true,
-        uppercase:true
-    },
+        email: {
+            type: String,
+            default: "",
+            lowercase: true,
+            trim: true
+        },
 
-    // Basic
+        phone: {
+            type: String,
+            default: "",
+            trim: true
+        },
 
-    name:{
+        // ==========================================================
+        // Manager (AdminUser until auth/HR phase)
+        // ==========================================================
 
-        type:String,
-        required:true,
-        trim:true
-    },
+        managerId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null
+        },
 
-    email:{
+        // ==========================================================
+        // Address
+        // ==========================================================
 
-        type:String,
-        default:"",
-        lowercase:true,
-        trim:true
-    },
+        country: {
+            type: String,
+            default: "Bangladesh",
+            trim: true
+        },
 
-    phone:{
+        city: {
+            type: String,
+            required: true,
+            trim: true
+        },
 
-        type:String,
-        default:"",
-        trim:true
-    },
+        address: {
+            type: String,
+            default: "",
+            trim: true
+        },
 
-    // Manager
+        postalCode: {
+            type: String,
+            default: "",
+            trim: true
+        },
 
-    managerId:{
+        // ==========================================================
+        // Many-to-many Warehouses
+        // One Branch → many Warehouses
+        // One Warehouse → many Branches (synced on Warehouse.branchIds)
+        // ==========================================================
 
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"AdminUser",
-        default:null
-    },
-
-    // Address
-
-    country:{
-
-        type:String,
-        default:"Bangladesh"
-    },
-
-    city:{
-
-        type:String,
-        required:true
-    },
-
-    address:{
-
-        type:String,
-        default:""
-    },
-
-    postalCode:{
-
-        type:String,
-        default:""
-    },
-
-    // Status
-
-    status:{
-
-        type:String,
-        enum:[
-            "Active",
-            "Inactive"
+        warehouseIds: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "Warehouse"
+            }
         ],
-        default:"Active"
+
+        // ==========================================================
+        // Status
+        // ==========================================================
+
+        status: {
+            type: String,
+            enum: ["Active", "Inactive", "Closed", "Maintenance"],
+            default: "Active",
+            index: true
+        },
+
+        isHeadOffice: {
+            type: Boolean,
+            default: false,
+            index: true
+        },
+
+        description: {
+            type: String,
+            default: ""
+        },
+
+        // ==========================================================
+        // Audit
+        // ==========================================================
+
+        createdBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null
+        },
+
+        updatedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null
+        },
+
+        deletedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null
+        },
+
+        isDeleted: {
+            type: Boolean,
+            default: false,
+            index: true
+        },
+
+        deletedAt: {
+            type: Date,
+            default: null
+        }
     },
-
-    // Head Office
-
-    isHeadOffice:{
-
-        type:Boolean,
-        default:false
-    },
-
-    // Description
-
-    description:{
-
-        type:String,
-        default:""
-    },
-
-    // Audit
-
-    createdBy:{
-
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"AdminUser",
-        default:null
-    },
-
-    updatedBy:{
-
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"AdminUser",
-        default:null
-    },
-
-    isDeleted:{
-
-        type:Boolean,
-        default:false
+    {
+        timestamps: true,
+        versionKey: false
     }
+);
 
-},
-{
+branchSchema.index({ name: 1 });
+branchSchema.index({ managerId: 1 });
+branchSchema.index({ warehouseIds: 1 });
+branchSchema.index({ isDeleted: 1, status: 1 });
 
-    timestamps:true,
-    versionKey:false
+branchSchema.methods.activate = function () {
+    this.status = "Active";
+    return this.save();
+};
+
+branchSchema.methods.deactivate = function () {
+    this.status = "Inactive";
+    return this.save();
+};
+
+branchSchema.statics.getActiveBranches = function () {
+    return this.find({
+        status: "Active",
+        isDeleted: { $ne: true }
+    }).sort({ name: 1 });
+};
+
+branchSchema.query.active = function () {
+    return this.where({
+        status: "Active",
+        isDeleted: { $ne: true }
+    });
+};
+
+branchSchema.set("toJSON", {
+    virtuals: true,
+    transform: function (doc, ret) {
+        delete ret.__v;
+        return ret;
+    }
 });
 
-branchSchema.index({ name:1 });
-
-branchSchema.index({ managerId:1 });
-
-module.exports=mongoose.model(
-    "Branch",
-    branchSchema
-);
+module.exports = mongoose.model("Branch", branchSchema);

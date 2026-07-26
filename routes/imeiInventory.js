@@ -12,7 +12,7 @@ const asyncHandler = require('express-async-handler');
 // 🚀 DYNAMIC FETCH: GET ALL DISTRIBUTION BRANCHES
 // =========================================================
 router.get('/branches', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
-  const allBranches = await Branch.find({}).lean();
+  const allBranches = await Branch.find({ isDeleted: { $ne: true } }).lean();
 
   if (!allBranches || allBranches.length === 0) {
     return res.status(404).json({ success: false, message: "No distribution hubs found in database." });
@@ -64,21 +64,35 @@ router.post('/stock-in', protect, asyncHandler(async (req, res) => {
 // 🚀 CREATE NEW BRANCH
 // =========================================================
 router.post('/add-branch', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
-  const { name, location, phone, isActive } = req.body; // 'phone' যোগ করুন
+  // Legacy endpoint — prefer POST /api/branches
+  const branchService = require('../services/branchService');
+  const { name, location, phone, isActive, city, address, warehouseIds } = req.body;
 
-  if (!name || !location) {
-    return res.status(400).json({ success: false, message: "Branch name and location are required." });
+  if (!name || (!location && !city)) {
+    return res.status(400).json({ success: false, message: "Branch name and location/city are required." });
   }
 
-  const newBranch = new Branch({
-    name,
-    location,
-    phone: phone || '', // ফোন নম্বর না থাকলে ফাঁকা স্ট্রিং
-    isActive: isActive ?? true
-  });
+  try {
+    const createdBranch = await branchService.createBranch(
+      {
+        name,
+        location,
+        city: city || location,
+        address: address || location || "",
+        phone: phone || "",
+        isActive: isActive ?? true,
+        warehouseIds: warehouseIds || []
+      },
+      req.user?._id || null
+    );
 
-  const createdBranch = await newBranch.save();
-  res.status(201).json({ success: true, data: createdBranch });
+    res.status(201).json({ success: true, data: createdBranch });
+  } catch (error) {
+    res.status(error.statusCode || 400).json({
+      success: false,
+      message: error.message
+    });
+  }
 }));
 
 // =========================================================

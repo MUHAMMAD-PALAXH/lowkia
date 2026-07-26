@@ -71,6 +71,7 @@ require('./model/order');
 require('./model/review');
 require('./model/supplier');
 require('./model/warehouse');
+require('./model/branch');
 require('./model/counter');
 
 // ============================================================
@@ -93,6 +94,7 @@ app.use('/api/reviews', require('./routes/reviewRoute'));
 app.use('/api/imei-inventory', require('./routes/imeiInventory'));
 app.use('/api/suppliers', require('./routes/supplier')); 
 app.use('/api/warehouses', require('./routes/warehouse'));
+app.use('/api/branches', require('./routes/branch'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');

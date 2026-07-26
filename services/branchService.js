@@ -1,0 +1,429 @@
+const mongoose = require("mongoose");
+const Branch = require("../model/branch");
+const Warehouse = require("../model/warehouse");
+const { generateBranchCode } = require("./codeGenerator");
+const AppError = require("../utils/appError");
+
+// Matches false / null / missing — safe for legacy IMEI-created branches
+const NOT_DELETED = { isDeleted: { $ne: true } };
+
+const PROTECTED_FIELDS = [
+    "branchCode",
+    "isDeleted",
+    "deletedAt",
+    "deletedBy",
+    "createdBy",
+    "createdAt",
+    "updatedAt"
+];
+
+const escapeRegex = (value = "") =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const pickUpdatableFields = (payload = {}) => {
+    const data = { ...payload };
+
+    // Legacy Flutter aliases
+    if (!data.address && data.location) {
+        data.address = data.location;
+    }
+    if (!data.city && data.location) {
+        data.city = data.location;
+    }
+    if (data.isActive !== undefined && data.status === undefined) {
+        data.status = data.isActive ? "Active" : "Inactive";
+    }
+
+    delete data.location;
+    delete data.isActive;
+
+    PROTECTED_FIELDS.forEach((field) => {
+        delete data[field];
+    });
+
+    return data;
+};
+
+const normalizeWarehouseIds = (ids = []) => {
+    if (!Array.isArray(ids)) return [];
+    const unique = [...new Set(ids.map((id) => String(id)))];
+    return unique.filter((id) => mongoose.Types.ObjectId.isValid(id));
+};
+
+const validateWarehousesExist = async (warehouseIds) => {
+    if (!warehouseIds.length) return;
+
+    const count = await Warehouse.countDocuments({
+        _id: { $in: warehouseIds },
+        isDeleted: { $ne: true }
+    });
+
+    if (count !== warehouseIds.length) {
+        throw new AppError(
+            "One or more selected warehouses are invalid or deleted.",
+            400
+        );
+    }
+};
+
+// Sync many-to-many: Branch.warehouseIds ↔ Warehouse.branchIds
+const syncWarehouseBranchLinks = async (branchId, nextWarehouseIds = []) => {
+    const branchObjectId = new mongoose.Types.ObjectId(branchId);
+    const nextIds = nextWarehouseIds.map(
+        (id) => new mongoose.Types.ObjectId(id)
+    );
+
+    const previous = await Warehouse.find({
+        branchIds: branchObjectId
+    }).select("_id");
+
+    const previousIds = previous.map((w) => String(w._id));
+    const nextIdStrings = nextIds.map((id) => String(id));
+
+    const toRemove = previousIds.filter((id) => !nextIdStrings.includes(id));
+    const toAdd = nextIdStrings.filter((id) => !previousIds.includes(id));
+
+    if (toRemove.length) {
+        await Warehouse.updateMany(
+            { _id: { $in: toRemove } },
+            {
+                $pull: { branchIds: branchObjectId },
+                $unset: {
+                    // clear legacy primary only if it pointed to this branch
+                }
+            }
+        );
+
+        await Warehouse.updateMany(
+            {
+                _id: { $in: toRemove },
+                branchId: branchObjectId
+            },
+            {
+                $set: { branchId: null }
+            }
+        );
+    }
+
+    if (toAdd.length) {
+        await Warehouse.updateMany(
+            { _id: { $in: toAdd } },
+            {
+                $addToSet: { branchIds: branchObjectId }
+            }
+        );
+
+        // Set legacy branchId if empty (backward compatible)
+        await Warehouse.updateMany(
+            {
+                _id: { $in: toAdd },
+                $or: [{ branchId: null }, { branchId: { $exists: false } }]
+            },
+            {
+                $set: { branchId: branchObjectId }
+            }
+        );
+    }
+};
+
+const ensureSingleHeadOffice = async (branchId = null) => {
+    const filter = {
+        isHeadOffice: true,
+        ...NOT_DELETED
+    };
+
+    if (branchId) {
+        filter._id = { $ne: branchId };
+    }
+
+    await Branch.updateMany(filter, {
+        $set: { isHeadOffice: false }
+    });
+};
+
+const findActiveBranchOrFail = async (id) => {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw new AppError("Invalid branch id.", 400);
+    }
+
+    const branch = await Branch.findOne({
+        _id: id,
+        ...NOT_DELETED
+    });
+
+    if (!branch) {
+        throw new AppError("Branch not found.", 404);
+    }
+
+    return branch;
+};
+
+const populateBranch = (query) =>
+    query
+        .populate("managerId", "firstName lastName email phone")
+        .populate(
+            "warehouseIds",
+            "warehouseCode warehouseName warehouseType status city fullAddress"
+        )
+        .populate("createdBy", "firstName lastName email")
+        .populate("updatedBy", "firstName lastName email");
+
+// ==========================================================
+// Create
+// ==========================================================
+
+const createBranch = async (payload, actorId = null) => {
+    const data = pickUpdatableFields(payload);
+    const name = data.name?.trim();
+
+    if (!name) {
+        throw new AppError("Branch name is required.", 400);
+    }
+
+    if (!data.city?.trim()) {
+        throw new AppError("City is required.", 400);
+    }
+
+    const duplicate = await Branch.findOne({
+        name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
+        ...NOT_DELETED
+    });
+
+    if (duplicate) {
+        throw new AppError("Branch with this name already exists.", 409);
+    }
+
+    const warehouseIds = normalizeWarehouseIds(
+        data.warehouseIds || payload.warehouseIds || []
+    );
+    await validateWarehousesExist(warehouseIds);
+
+    if (data.isHeadOffice === true) {
+        await ensureSingleHeadOffice();
+    }
+
+    const branchCode = await generateBranchCode();
+
+    const branch = await Branch.create({
+        ...data,
+        name,
+        city: data.city.trim(),
+        warehouseIds,
+        branchCode,
+        createdBy: actorId || null
+    });
+
+    await syncWarehouseBranchLinks(branch._id, warehouseIds);
+
+    return populateBranch(Branch.findById(branch._id));
+};
+
+// ==========================================================
+// List
+// ==========================================================
+
+const getBranches = async (query = {}) => {
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const filter = { ...NOT_DELETED };
+
+    if (query.status) filter.status = query.status;
+    if (query.isHeadOffice !== undefined) {
+        filter.isHeadOffice =
+            query.isHeadOffice === true || query.isHeadOffice === "true";
+    }
+    if (query.warehouseId && mongoose.Types.ObjectId.isValid(query.warehouseId)) {
+        filter.warehouseIds = query.warehouseId;
+    }
+
+    if (query.search) {
+        const search = escapeRegex(query.search.trim());
+        filter.$or = [
+            { name: { $regex: search, $options: "i" } },
+            { branchCode: { $regex: search, $options: "i" } },
+            { city: { $regex: search, $options: "i" } },
+            { phone: { $regex: search, $options: "i" } },
+            { email: { $regex: search, $options: "i" } },
+            { address: { $regex: search, $options: "i" } }
+        ];
+    }
+
+    const [items, total] = await Promise.all([
+        populateBranch(
+            Branch.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)
+        ),
+        Branch.countDocuments(filter)
+    ]);
+
+    return {
+        items,
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit) || 0
+        }
+    };
+};
+
+const getBranchById = async (id) => {
+    const branch = await populateBranch(
+        Branch.findOne({ _id: id, ...NOT_DELETED })
+    );
+
+    if (!branch) {
+        throw new AppError("Branch not found.", 404);
+    }
+
+    return branch;
+};
+
+const getActiveBranches = async () => {
+    return populateBranch(Branch.getActiveBranches());
+};
+
+// ==========================================================
+// Update
+// ==========================================================
+
+const updateBranch = async (id, payload, actorId = null) => {
+    const branch = await findActiveBranchOrFail(id);
+    const data = pickUpdatableFields(payload);
+
+    if (data.name) {
+        const name = data.name.trim();
+        const duplicate = await Branch.findOne({
+            _id: { $ne: id },
+            name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
+            ...NOT_DELETED
+        });
+
+        if (duplicate) {
+            throw new AppError("Branch with this name already exists.", 409);
+        }
+
+        data.name = name;
+    }
+
+    let warehouseIds = branch.warehouseIds.map((w) => String(w));
+    if (payload.warehouseIds !== undefined || data.warehouseIds !== undefined) {
+        warehouseIds = normalizeWarehouseIds(
+            payload.warehouseIds ?? data.warehouseIds
+        );
+        await validateWarehousesExist(warehouseIds);
+        data.warehouseIds = warehouseIds;
+    }
+
+    if (data.isHeadOffice === true) {
+        await ensureSingleHeadOffice(id);
+    }
+
+    Object.assign(branch, data);
+    branch.updatedBy = actorId || branch.updatedBy;
+    await branch.save();
+
+    if (payload.warehouseIds !== undefined || data.warehouseIds !== undefined) {
+        await syncWarehouseBranchLinks(branch._id, warehouseIds);
+    }
+
+    return populateBranch(Branch.findById(branch._id));
+};
+
+// Assign / replace warehouses (dedicated endpoint)
+const assignWarehouses = async (id, warehouseIdsInput, actorId = null) => {
+    const branch = await findActiveBranchOrFail(id);
+    const warehouseIds = normalizeWarehouseIds(warehouseIdsInput);
+
+    await validateWarehousesExist(warehouseIds);
+
+    branch.warehouseIds = warehouseIds;
+    branch.updatedBy = actorId || null;
+    await branch.save();
+
+    await syncWarehouseBranchLinks(branch._id, warehouseIds);
+
+    return populateBranch(Branch.findById(branch._id));
+};
+
+// ==========================================================
+// Soft delete — blocked if warehouses still assigned
+// ==========================================================
+
+const deleteBranch = async (id, actorId = null) => {
+    const branch = await findActiveBranchOrFail(id);
+
+    if (branch.warehouseIds && branch.warehouseIds.length > 0) {
+        throw new AppError(
+            "Cannot delete branch while warehouses are assigned. Reassign or remove warehouses first.",
+            400
+        );
+    }
+
+    // Extra safety: warehouses still linking this branch
+    const linkedCount = await Warehouse.countDocuments({
+        isDeleted: { $ne: true },
+        $or: [{ branchIds: branch._id }, { branchId: branch._id }]
+    });
+
+    if (linkedCount > 0) {
+        throw new AppError(
+            "Cannot delete branch while warehouses are still linked. Reassign warehouses first.",
+            400
+        );
+    }
+
+    if (branch.isHeadOffice) {
+        throw new AppError(
+            "Cannot delete Head Office branch. Assign another Head Office first.",
+            400
+        );
+    }
+
+    branch.isDeleted = true;
+    branch.deletedAt = new Date();
+    branch.deletedBy = actorId || null;
+    branch.status = "Closed";
+    await branch.save();
+
+    return branch;
+};
+
+// ==========================================================
+// Status / Head Office
+// ==========================================================
+
+const setStatus = async (id, status, actorId = null) => {
+    const allowed = ["Active", "Inactive", "Closed", "Maintenance"];
+    if (!allowed.includes(status)) {
+        throw new AppError("Invalid branch status.", 400);
+    }
+
+    const branch = await findActiveBranchOrFail(id);
+    branch.status = status;
+    branch.updatedBy = actorId || null;
+    await branch.save();
+    return populateBranch(Branch.findById(branch._id));
+};
+
+const setHeadOffice = async (id, actorId = null) => {
+    const branch = await findActiveBranchOrFail(id);
+    await ensureSingleHeadOffice(id);
+    branch.isHeadOffice = true;
+    branch.updatedBy = actorId || null;
+    await branch.save();
+    return populateBranch(Branch.findById(branch._id));
+};
+
+module.exports = {
+    createBranch,
+    getBranches,
+    getBranchById,
+    getActiveBranches,
+    updateBranch,
+    assignWarehouses,
+    deleteBranch,
+    setStatus,
+    setHeadOffice
+};
