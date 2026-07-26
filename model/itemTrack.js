@@ -26,7 +26,7 @@ const itemTrackSchema = new mongoose.Schema({
   currentBranchId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Branch', 
-    required: function() { return this.status !== 'sold'; } 
+    default: null
   },
   status: { 
     type: String, 

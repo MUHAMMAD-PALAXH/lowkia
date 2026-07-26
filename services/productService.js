@@ -21,6 +21,11 @@ const PROTECTED_FIELDS = [
     "barcode",
     "barcodeType",
     "barcodeGeneratedAt",
+    "uploadedByType",
+    "uploadedById",
+    "uploadedByModel",
+    "uploadedByName",
+    "uploadedAt",
     "approvalStatus",
     "approvalRequired",
     "approvedBy",
@@ -242,18 +247,26 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
     }
 
     const keptIds = [];
+    const vendorId =
+        product.vendorId ||
+        (product.uploadedByType === "Vendor" ? product.uploadedById : null) ||
+        actorId;
 
     for (const raw of variantsInput) {
+        const sellingPrice =
+            Number(raw.sellingPrice) || Number(raw.price) || 0;
+
         const payload = {
             productId: product._id,
             attributes: normalizeAttributes(raw.attributes),
             sku: (raw.sku || "").toString().trim().toUpperCase() || undefined,
             purchasePrice: Number(raw.purchasePrice) || 0,
             costPrice: Number(raw.costPrice) || 0,
-            sellingPrice: Number(raw.sellingPrice) || 0,
+            sellingPrice,
             wholesalePrice: Number(raw.wholesalePrice) || 0,
-            price: Number(raw.price) || Number(raw.sellingPrice) || 0,
+            price: sellingPrice,
             offerPrice: Number(raw.offerPrice) || 0,
+            quantity: Number(raw.quantity) || 0,
             minimumStock: Number(raw.minimumStock) || 0,
             maximumStock: Number(raw.maximumStock) || 0,
             reorderLevel: Number(raw.reorderLevel) || 0,
@@ -264,28 +277,65 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
         };
 
         const existingId = toObjectId(raw._id || raw.id);
+        let variantDoc = null;
 
         if (existingId) {
-            const updated = await ProductVariant.findOneAndUpdate(
+            variantDoc = await ProductVariant.findOneAndUpdate(
                 { _id: existingId, productId: product._id },
                 { $set: payload },
                 { new: true }
             );
-            if (updated) keptIds.push(updated._id);
-            continue;
+            if (variantDoc) keptIds.push(variantDoc._id);
+        } else {
+            // Non IMEI variants get their own scannable barcode
+            if (product.trackingType === "Non-IMEI" && !raw.barcode) {
+                payload.barcode = await generateProductBarcode();
+            } else if (raw.barcode) {
+                payload.barcode = String(raw.barcode).trim();
+            }
+
+            payload.createdBy = actorId || null;
+            variantDoc = await ProductVariant.create(payload);
+            keptIds.push(variantDoc._id);
         }
 
-        // Non IMEI variants get their own scannable barcode
-        if (product.trackingType === "Non-IMEI" && !raw.barcode) {
-            payload.barcode = await generateProductBarcode();
-        } else if (raw.barcode) {
-            payload.barcode = String(raw.barcode).trim();
+        // IMEI lives on the variant (ItemTrack). Stock quantity for Non-IMEI
+        // is informational only until the Inventory module posts stock.
+        if (
+            product.trackingType === "IMEI" &&
+            variantDoc &&
+            Array.isArray(raw.imeis) &&
+            raw.imeis.length
+        ) {
+            const existingImeis = await ItemTrack.find({
+                productId: product._id,
+                variantId: variantDoc._id
+            }).select("imei");
+
+            const known = new Set(existingImeis.map((i) => i.imei));
+            const fresh = raw.imeis
+                .map((i) => String(i).trim())
+                .filter((i) => i && !known.has(i));
+
+            if (fresh.length) {
+                if (!vendorId) {
+                    throw new AppError(
+                        "Vendor / uploader id is required to register IMEIs.",
+                        400
+                    );
+                }
+
+                await ItemTrack.insertMany(
+                    fresh.map((imei) => ({
+                        imei,
+                        productId: product._id,
+                        variantId: variantDoc._id,
+                        vendorId,
+                        status: "available"
+                    }))
+                );
+            }
         }
-
-        payload.createdBy = actorId || null;
-
-        const created = await ProductVariant.create(payload);
-        keptIds.push(created._id);
     }
 
     // Variants removed from the payload are soft deleted, never hard deleted
@@ -350,6 +400,14 @@ const createProduct = async (payload = {}, actorId = null) => {
 
     const isOwnerUpload = uploader.uploadedByType === "Owner";
 
+    // Vendor uploads also set vendorId so the user-app /products filter works.
+    // Owner / Employee still get vendorId = their account id for catalog ownership
+    // (same as the old dashboard form which always set vendorId = req.user._id).
+    const vendorId =
+        toObjectId(payload.vendorId) ||
+        uploader.uploadedById ||
+        toObjectId(actorId);
+
     const product = new Product({
         ...data,
         name,
@@ -365,6 +423,7 @@ const createProduct = async (payload = {}, actorId = null) => {
         unitId: toObjectId(data.unitId),
         proVariantTypeId: toObjectId(data.proVariantTypeId),
         trackingType,
+        vendorId,
         suppliers,
         primarySupplierId: resolvePrimarySupplier(suppliers),
         ...uploader,
@@ -393,6 +452,13 @@ const createProduct = async (payload = {}, actorId = null) => {
 
     product.recomputeProfit();
     product.recomputeLowStock();
+
+    // Owner uploads are immediately usable by the user app catalog
+    if (isOwnerUpload) {
+        product.status = "Active";
+        product.isPublished = true;
+        product.publishedAt = new Date();
+    }
 
     await product.save();
 
@@ -627,6 +693,9 @@ const approveProduct = async (id, actor = {}, note = "") => {
     product.rejectionReason = "";
 
     if (product.status === "Draft") product.status = "Active";
+    // Make approved products available to the user-app catalog (/products)
+    product.isPublished = true;
+    product.publishedAt = new Date();
 
     pushApproval(product, "Approved", { ...actor, type: actor.type || "Owner" }, note);
     await product.save();

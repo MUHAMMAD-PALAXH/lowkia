@@ -48,6 +48,18 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const query = { isDeleted: false };
 
+  // User app must not sell unapproved employee/vendor uploads.
+  // Older products without approvalStatus are treated as approved.
+  query.$and = [
+    {
+      $or: [
+        { approvalStatus: "Approved" },
+        { approvalStatus: { $exists: false } },
+        { approvalStatus: null }
+      ]
+    }
+  ];
+
   if (status) query.status = status;
   if (isPublished !== undefined) query.isPublished = isPublished === 'true';
   if (proCategoryId) query.proCategoryId = safeObjectId(proCategoryId);
