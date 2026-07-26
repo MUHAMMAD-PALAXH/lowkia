@@ -91,7 +91,7 @@ app.use('/api/imei-inventory', require('./routes/imeiInventory'));
 // --- NEW FEATURE: Supplier Route Registration ---
 app.use('/api/suppliers', require('./routes/supplier')); 
 app.use('/api/warehouses', require('./routes/warehouse'));
-app.use('/api/company', require('./routes/company'));
+// app.use('/api/company', require('./routes/company'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');
