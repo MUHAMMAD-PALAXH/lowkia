@@ -14,7 +14,7 @@ const companySchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      unique: true
+      unique: true,
     },
 
     legalName: {
@@ -90,9 +90,12 @@ const companySchema = new mongoose.Schema(
       required: true,
     },
 
+    // ✅ FIXED: Correctly configured nested logo object
     logo: {
-      url: String,
-      default: "",
+      url: {
+        type: String,
+        default: "",
+      },
     },
 
     subscriptionPlan: {
@@ -128,38 +131,38 @@ const companySchema = new mongoose.Schema(
     },
 
     defaultBranch: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Branch",
-    default: null
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Branch",
+      default: null,
     },
 
     defaultWarehouse: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Warehouse",
-        default: null
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Warehouse",
+      default: null,
     },
-    settings:{
-      fiscalYearStart:{
-          type:Number,
-          default:7
+
+    settings: {
+      fiscalYearStart: {
+        type: Number,
+        default: 7,
       },
 
-      dateFormat:{
-          type:String,
-          default:"DD-MM-YYYY"
+      dateFormat: {
+        type: String,
+        default: "DD-MM-YYYY",
       },
 
-      invoicePrefix:{
-          type:String,
-          default:"INV"
+      invoicePrefix: {
+        type: String,
+        default: "INV",
       },
 
-      poPrefix:{
-          type:String,
-          default:"PO"
-      }
-  }
-    
+      poPrefix: {
+        type: String,
+        default: "PO",
+      },
+    },
   },
   {
     timestamps: true,
