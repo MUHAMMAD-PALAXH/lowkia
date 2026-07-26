@@ -73,6 +73,9 @@ require('./model/supplier');
 require('./model/warehouse');
 require('./model/branch');
 require('./model/counter');
+require('./model/unit');
+require('./model/itemTrack');
+require('./model/inventory');
 
 // ============================================================
 // ROUTES
@@ -95,6 +98,7 @@ app.use('/api/imei-inventory', require('./routes/imeiInventory'));
 app.use('/api/suppliers', require('./routes/supplier')); 
 app.use('/api/warehouses', require('./routes/warehouse'));
 app.use('/api/branches', require('./routes/branch'));
+app.use('/api/products', require('./routes/productMaster'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');

@@ -135,13 +135,29 @@ const productSchema = new mongoose.Schema(
         },
 
         // ======================================================
+        // ERP Tracking Type (IMEI vs Non IMEI)
+        // ======================================================
+
+        trackingType: {
+            type: String,
+            enum: ["IMEI", "Non-IMEI"],
+            default: "Non-IMEI",
+            index: true
+        },
+
+        hasVariants: {
+            type: Boolean,
+            default: false
+        },
+
+        // ======================================================
         // Existing Compatibility
         // ======================================================
 
         vendorId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
-            required: true
+            default: null
         },
 
         proVariantTypeId: {
@@ -269,6 +285,19 @@ const productSchema = new mongoose.Schema(
             trim: true
         },
 
+        // Auto generated barcodes are EAN-13 for Non IMEI products.
+        // IMEI products are identified by their IMEI, not by barcode.
+        barcodeType: {
+            type: String,
+            enum: ["EAN13", "Internal", "None"],
+            default: "None"
+        },
+
+        barcodeGeneratedAt: {
+            type: Date,
+            default: null
+        },
+
         qrCode: {
             type: String,
             default: "",
@@ -382,7 +411,8 @@ const productSchema = new mongoose.Schema(
         approvalStatus: {
             type: String,
             enum: ["Pending", "Approved", "Rejected"],
-            default: "Approved"
+            default: "Pending",
+            index: true
         },
 
         // ======================================================
@@ -542,6 +572,312 @@ const productSchema = new mongoose.Schema(
         },
 
         // ======================================================
+        // Uploader Information (Owner / Employee / Vendor)
+        // ======================================================
+
+        uploadedByType: {
+            type: String,
+            enum: ["Owner", "Employee", "Vendor"],
+            default: "Owner",
+            index: true
+        },
+
+        uploadedByModel: {
+            type: String,
+            enum: ["AdminUser", "Employee", null],
+            default: null
+        },
+
+        uploadedById: {
+            type: mongoose.Schema.Types.ObjectId,
+            refPath: "uploadedByModel",
+            default: null
+        },
+
+        uploadedByName: {
+            type: String,
+            default: "",
+            trim: true
+        },
+
+        uploadedAt: {
+            type: Date,
+            default: Date.now
+        },
+
+        // ======================================================
+        // Approval Workflow
+        // Owner uploads are auto approved.
+        // Employee / Vendor uploads wait for Owner approval.
+        // ======================================================
+
+        approvalRequired: {
+            type: Boolean,
+            default: false
+        },
+
+        submittedForApprovalAt: {
+            type: Date,
+            default: null
+        },
+
+        approvedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null
+        },
+
+        approvedByName: {
+            type: String,
+            default: ""
+        },
+
+        approvedAt: {
+            type: Date,
+            default: null
+        },
+
+        rejectedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null
+        },
+
+        rejectedByName: {
+            type: String,
+            default: ""
+        },
+
+        rejectedAt: {
+            type: Date,
+            default: null
+        },
+
+        rejectionReason: {
+            type: String,
+            default: ""
+        },
+
+        approvalHistory: [
+            {
+                action: {
+                    type: String,
+                    enum: ["Submitted", "Approved", "Rejected", "Resubmitted"]
+                },
+                actorType: {
+                    type: String,
+                    enum: ["Owner", "Employee", "Vendor", "System"],
+                    default: "System"
+                },
+                actorId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    default: null
+                },
+                actorName: {
+                    type: String,
+                    default: ""
+                },
+                note: {
+                    type: String,
+                    default: ""
+                },
+                at: {
+                    type: Date,
+                    default: Date.now
+                },
+                _id: false
+            }
+        ],
+
+        // ======================================================
+        // Suppliers (a product can come from many suppliers)
+        // ======================================================
+
+        suppliers: [
+            {
+                supplierId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "Supplier",
+                    required: true
+                },
+                isPrimary: {
+                    type: Boolean,
+                    default: false
+                },
+                supplierSku: {
+                    type: String,
+                    default: "",
+                    trim: true
+                },
+                lastPurchasePrice: {
+                    type: Number,
+                    default: 0,
+                    min: 0
+                },
+                leadTimeDays: {
+                    type: Number,
+                    default: 0,
+                    min: 0
+                },
+                notes: {
+                    type: String,
+                    default: ""
+                },
+                _id: false
+            }
+        ],
+
+        primarySupplierId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Supplier",
+            default: null,
+            index: true
+        },
+
+        // ======================================================
+        // Stock Summary (READ ONLY)
+        // Maintained by Inventory Service only. Never edit directly.
+        // ======================================================
+
+        totalStock: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        availableStock: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        reservedStock: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        damagedStock: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        inTransitStock: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        warehouseStock: [
+            {
+                warehouseId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "Warehouse"
+                },
+                quantity: {
+                    type: Number,
+                    default: 0
+                },
+                availableQuantity: {
+                    type: Number,
+                    default: 0
+                },
+                reservedQuantity: {
+                    type: Number,
+                    default: 0
+                },
+                updatedAt: {
+                    type: Date,
+                    default: Date.now
+                },
+                _id: false
+            }
+        ],
+
+        totalImeiCount: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        stockValue: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        lastStockUpdatedAt: {
+            type: Date,
+            default: null
+        },
+
+        // ======================================================
+        // Reorder Configuration
+        // ======================================================
+
+        minimumStock: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        maximumStock: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        reorderLevel: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        reorderQuantity: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        isLowStock: {
+            type: Boolean,
+            default: false,
+            index: true
+        },
+
+        // ======================================================
+        // Purchase & Profit Summary
+        // ======================================================
+
+        lastPurchasePrice: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        averagePurchasePrice: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        lastPurchaseDate: {
+            type: Date,
+            default: null
+        },
+
+        grossProfit: {
+            type: Number,
+            default: 0
+        },
+
+        profitMarginPercent: {
+            type: Number,
+            default: 0
+        },
+
+        // ======================================================
         // Audit Information
         // ======================================================
 
@@ -648,6 +984,27 @@ productSchema.index({
     description: "text"
 });
 
+// Barcode must uniquely identify a product when present
+productSchema.index(
+    { barcode: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { barcode: { $type: "string", $gt: "" } }
+    }
+);
+
+// Approval queue
+productSchema.index({ approvalStatus: 1, isDeleted: 1 });
+
+// Tracking type wise products (IMEI / Non-IMEI)
+productSchema.index({ trackingType: 1, isDeleted: 1 });
+
+// Supplier wise products (for restock contact)
+productSchema.index({ "suppliers.supplierId": 1, isDeleted: 1 });
+
+// Low stock alerts
+productSchema.index({ isLowStock: 1, isDeleted: 1 });
+
 // ==========================================================
 // Virtual
 // ==========================================================
@@ -690,6 +1047,39 @@ productSchema.methods.unpublish = function () {
     return this.save();
 };
 
+// Recompute gross profit / margin from current prices
+productSchema.methods.recomputeProfit = function () {
+    const selling = Number(this.sellingPrice) || 0;
+    const cost =
+        Number(this.purchasePrice) ||
+        Number(this.costPrice) ||
+        Number(this.lastPurchasePrice) ||
+        0;
+
+    this.grossProfit = Number((selling - cost).toFixed(2));
+    this.profitMarginPercent =
+        selling > 0 ? Number((((selling - cost) / selling) * 100).toFixed(2)) : 0;
+
+    return this;
+};
+
+// Recompute low stock flag from stock summary
+productSchema.methods.recomputeLowStock = function () {
+    const available = Number(this.availableStock) || 0;
+    const threshold = Number(this.reorderLevel) || Number(this.minimumStock) || 0;
+    this.isLowStock = threshold > 0 && available <= threshold;
+    return this;
+};
+
+// A product can only be sold / purchased after Owner approval
+productSchema.methods.isUsable = function () {
+    return (
+        this.isDeleted !== true &&
+        this.approvalStatus === "Approved" &&
+        ["Active", "Draft"].includes(this.status)
+    );
+};
+
 // ==========================================================
 // Static Methods
 // ==========================================================
@@ -709,6 +1099,33 @@ productSchema.statics.getPublishedProducts = function() {
         status: "Active",
         isDeleted: false
     });
+};
+
+// Products waiting for Owner approval
+productSchema.statics.getPendingApprovals = function () {
+    return this.find({
+        approvalStatus: "Pending",
+        isDeleted: { $ne: true }
+    }).sort({ submittedForApprovalAt: 1, createdAt: 1 });
+};
+
+// Approved products usable in Purchase Order / Stock / Sale
+productSchema.statics.getApprovedProducts = function () {
+    return this.find({
+        approvalStatus: "Approved",
+        isDeleted: { $ne: true }
+    }).sort({ name: 1 });
+};
+
+// Low stock products with supplier contact info
+productSchema.statics.getLowStockProducts = function () {
+    return this.find({
+        isLowStock: true,
+        approvalStatus: "Approved",
+        isDeleted: { $ne: true }
+    })
+        .populate("primarySupplierId", "supplierCode name phone email")
+        .sort({ availableStock: 1 });
 };
 
 // ==========================================================
