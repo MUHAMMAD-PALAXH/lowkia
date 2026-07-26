@@ -11,7 +11,7 @@ const purchaseItemSchema = new mongoose.Schema(
 
             type: mongoose.Schema.Types.ObjectId,
             ref: "Product",
-            required: true,
+            default: null,
             index: true
         },
 
@@ -93,11 +93,17 @@ const purchaseItemSchema = new mongoose.Schema(
 
             type: String,
             default: ""
+        },
+
+        // Snapshot for UI / print
+        currentStock: {
+            type: Number,
+            default: 0
         }
     },
     {
-
-        _id: false
+        // Keep line ids for GRN matching later
+        _id: true
     }
 );
 
@@ -113,7 +119,15 @@ const purchaseOrderSchema = new mongoose.Schema(
 
             type: mongoose.Schema.Types.ObjectId,
             ref: "Branch",
-            required: true,
+            default: null,
+            index: true
+        },
+
+        // Existing Product Purchase | New Product Purchase
+        purchaseType: {
+            type: String,
+            enum: ["Existing", "New"],
+            default: "Existing",
             index: true
         },
 
@@ -273,6 +287,7 @@ const purchaseOrderSchema = new mongoose.Schema(
                 "Ordered",
                 "Partially Received",
                 "Received",
+                "Completed",
                 "Cancelled"
             ],
             default: "Draft"
@@ -553,7 +568,7 @@ purchaseOrderSchema.methods.updateReceivingStatus = function () {
         this.status = "Partially Received";
     } else {
 
-        this.status = "Received";
+        this.status = "Completed";
         this.isFullyReceived = true;
     }
 

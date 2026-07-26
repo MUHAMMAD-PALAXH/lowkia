@@ -99,6 +99,7 @@ app.use('/api/suppliers', require('./routes/supplier'));
 app.use('/api/warehouses', require('./routes/warehouse'));
 app.use('/api/branches', require('./routes/branch'));
 app.use('/api/products', require('./routes/productMaster'));
+app.use('/api/purchase-orders', require('./routes/purchaseOrder'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');
