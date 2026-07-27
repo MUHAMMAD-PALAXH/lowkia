@@ -26,8 +26,11 @@ const escapeRegex = (value = "") =>
 
 const populatePo = (query) =>
     query
-        .populate("branchId", "name code city")
-        .populate("supplierId", "supplierCode name phone email status")
+        .populate("branchId", "name code city branchCode")
+        .populate(
+            "supplierId",
+            "supplierCode name companyName phone email status paymentTerms creditLimit creditDays currentBalance totalPurchaseAmount totalPaidAmount totalDueAmount openingBalance lastPurchaseDate lastPaymentDate"
+        )
         .populate("warehouseId", "warehouseCode warehouseName city status")
         .populate("items.productId", "name productCode trackingType productType totalStock availableStock purchasePrice")
         .populate("items.productVariantId", "sku combinationString sellingPrice purchasePrice attributes")
@@ -35,6 +38,19 @@ const populatePo = (query) =>
         .populate("createdBy", "name email")
         .populate("rejectedBy", "name email")
         .populate("cancelledBy", "name email");
+
+const chargeType = (value) =>
+    String(value || "Fixed").toLowerCase() === "percentage"
+        ? "Percentage"
+        : "Fixed";
+
+const resolveCharge = (value, type, base) => {
+    const v = Math.max(Number(value) || 0, 0);
+    if (type === "Percentage") {
+        return Math.max((Math.max(Number(base) || 0, 0) * v) / 100, 0);
+    }
+    return v;
+};
 
 const calculateLines = (items = [], header = {}) => {
     let subtotal = 0;
@@ -58,13 +74,27 @@ const calculateLines = (items = [], header = {}) => {
         };
     });
 
-    const discount = Math.max(Number(header.discount) || 0, 0);
-    const tax = Math.max(Number(header.tax) || 0, 0);
-    const shippingCost = Math.max(Number(header.shippingCost) || 0, 0);
+    const discountType = chargeType(header.discountType);
+    const taxType = chargeType(header.taxType);
+    const shippingType = chargeType(header.shippingType);
+
+    const discountValue = Math.max(Number(header.discount) || 0, 0);
+    const taxValue = Math.max(Number(header.tax) || 0, 0);
+    const shippingValue = Math.max(Number(header.shippingCost) || 0, 0);
     const otherCharges = Math.max(Number(header.otherCharges) || 0, 0);
     const paidAmount = Math.max(Number(header.paidAmount) || 0, 0);
+
+    const appliedDiscount = resolveCharge(discountValue, discountType, subtotal);
+    const taxBase = Math.max(subtotal - appliedDiscount, 0);
+    const appliedTax = resolveCharge(taxValue, taxType, taxBase);
+    const appliedShipping = resolveCharge(
+        shippingValue,
+        shippingType,
+        subtotal
+    );
+
     const grandTotal =
-        subtotal - discount + tax + shippingCost + otherCharges;
+        subtotal - appliedDiscount + appliedTax + appliedShipping + otherCharges;
     const dueAmount = Math.max(grandTotal - paidAmount, 0);
 
     let paymentStatus = "Pending";
@@ -75,9 +105,15 @@ const calculateLines = (items = [], header = {}) => {
     return {
         items: normalized,
         subtotal,
-        discount,
-        tax,
-        shippingCost,
+        discount: discountValue,
+        discountType,
+        tax: taxValue,
+        taxType,
+        shippingCost: shippingValue,
+        shippingType,
+        appliedDiscount,
+        appliedTax,
+        appliedShipping,
         otherCharges,
         paidAmount,
         grandTotal,
@@ -228,17 +264,24 @@ const normalizeItems = async (itemsInput = [], purchaseType, supplierId) => {
 };
 
 const assertRefs = async ({ supplierId, warehouseId, branchId }) => {
-    const supplier = await Supplier.findOne({
-        _id: supplierId,
-        ...NOT_DELETED
-    });
-    if (!supplier) throw new AppError("Supplier not found.", 404);
+    let supplier = null;
+    let warehouse = null;
 
-    const warehouse = await Warehouse.findOne({
-        _id: warehouseId,
-        ...NOT_DELETED
-    });
-    if (!warehouse) throw new AppError("Warehouse not found.", 404);
+    if (supplierId) {
+        supplier = await Supplier.findOne({
+            _id: supplierId,
+            ...NOT_DELETED
+        });
+        if (!supplier) throw new AppError("Supplier not found.", 404);
+    }
+
+    if (warehouseId) {
+        warehouse = await Warehouse.findOne({
+            _id: warehouseId,
+            ...NOT_DELETED
+        });
+        if (!warehouse) throw new AppError("Warehouse not found.", 404);
+    }
 
     if (branchId) {
         const branch = await Branch.findOne({ _id: branchId, ...NOT_DELETED });
@@ -265,8 +308,6 @@ const createPurchaseOrder = async (payload = {}, actorId = null) => {
     const branchId = toObjectId(payload.branchId);
     const createdBy = toObjectId(actorId) || toObjectId(payload.createdBy);
 
-    if (!supplierId) throw new AppError("Supplier is required.", 400);
-    if (!warehouseId) throw new AppError("Warehouse is required.", 400);
     if (!createdBy) {
         throw new AppError("Creator (createdBy / auth user) is required.", 400);
     }
@@ -300,8 +341,11 @@ const createPurchaseOrder = async (payload = {}, actorId = null) => {
         items: totals.items,
         subtotal: totals.subtotal,
         discount: totals.discount,
+        discountType: totals.discountType,
         tax: totals.tax,
+        taxType: totals.taxType,
         shippingCost: totals.shippingCost,
+        shippingType: totals.shippingType,
         otherCharges: totals.otherCharges,
         grandTotal: totals.grandTotal,
         paidAmount: totals.paidAmount,
@@ -470,9 +514,13 @@ const updatePurchaseOrder = async (id, payload = {}, actorId = null) => {
               : po.purchaseType;
 
     const supplierId =
-        toObjectId(payload.supplierId) || po.supplierId;
+        payload.supplierId === null || payload.supplierId === ""
+            ? null
+            : toObjectId(payload.supplierId) || po.supplierId;
     const warehouseId =
-        toObjectId(payload.warehouseId) || po.warehouseId;
+        payload.warehouseId === null || payload.warehouseId === ""
+            ? null
+            : toObjectId(payload.warehouseId) || po.warehouseId;
     const branchId =
         payload.branchId === null || payload.branchId === ""
             ? null
@@ -480,24 +528,32 @@ const updatePurchaseOrder = async (id, payload = {}, actorId = null) => {
 
     await assertRefs({ supplierId, warehouseId, branchId });
 
+    const chargeHeader = {
+        discount: payload.discount ?? po.discount,
+        discountType: payload.discountType ?? po.discountType,
+        tax: payload.tax ?? po.tax,
+        taxType: payload.taxType ?? po.taxType,
+        shippingCost: payload.shippingCost ?? po.shippingCost,
+        shippingType: payload.shippingType ?? po.shippingType,
+        otherCharges: payload.otherCharges ?? po.otherCharges,
+        paidAmount: payload.paidAmount ?? po.paidAmount
+    };
+
     if (payload.items || payload.products) {
         const items = await normalizeItems(
             payload.items || payload.products,
             purchaseType,
             supplierId
         );
-        const totals = calculateLines(items, {
-            discount: payload.discount ?? po.discount,
-            tax: payload.tax ?? po.tax,
-            shippingCost: payload.shippingCost ?? po.shippingCost,
-            otherCharges: payload.otherCharges ?? po.otherCharges,
-            paidAmount: payload.paidAmount ?? po.paidAmount
-        });
+        const totals = calculateLines(items, chargeHeader);
         po.items = totals.items;
         po.subtotal = totals.subtotal;
         po.discount = totals.discount;
+        po.discountType = totals.discountType;
         po.tax = totals.tax;
+        po.taxType = totals.taxType;
         po.shippingCost = totals.shippingCost;
+        po.shippingType = totals.shippingType;
         po.otherCharges = totals.otherCharges;
         po.grandTotal = totals.grandTotal;
         po.paidAmount = totals.paidAmount;
@@ -505,23 +561,26 @@ const updatePurchaseOrder = async (id, payload = {}, actorId = null) => {
         po.paymentStatus = totals.paymentStatus;
     } else if (
         payload.discount !== undefined ||
+        payload.discountType !== undefined ||
         payload.tax !== undefined ||
+        payload.taxType !== undefined ||
         payload.shippingCost !== undefined ||
+        payload.shippingType !== undefined ||
         payload.otherCharges !== undefined ||
         payload.paidAmount !== undefined
     ) {
-        const totals = calculateLines(po.items.map((i) => i.toObject()), {
-            discount: payload.discount ?? po.discount,
-            tax: payload.tax ?? po.tax,
-            shippingCost: payload.shippingCost ?? po.shippingCost,
-            otherCharges: payload.otherCharges ?? po.otherCharges,
-            paidAmount: payload.paidAmount ?? po.paidAmount
-        });
+        const totals = calculateLines(
+            po.items.map((i) => i.toObject()),
+            chargeHeader
+        );
         po.items = totals.items;
         po.subtotal = totals.subtotal;
         po.discount = totals.discount;
+        po.discountType = totals.discountType;
         po.tax = totals.tax;
+        po.taxType = totals.taxType;
         po.shippingCost = totals.shippingCost;
+        po.shippingType = totals.shippingType;
         po.otherCharges = totals.otherCharges;
         po.grandTotal = totals.grandTotal;
         po.paidAmount = totals.paidAmount;
@@ -543,6 +602,11 @@ const updatePurchaseOrder = async (id, payload = {}, actorId = null) => {
             : null;
     }
     if (payload.paymentTerms) po.paymentTerms = payload.paymentTerms;
+    if (payload.paymentDueDate !== undefined) {
+        po.paymentDueDate = payload.paymentDueDate
+            ? new Date(payload.paymentDueDate)
+            : null;
+    }
     if (payload.supplierNote !== undefined) {
         po.supplierNote = String(payload.supplierNote).trim();
     }
@@ -676,8 +740,14 @@ const getProductPurchaseContext = async (productId) => {
     if (!id) throw new AppError("Invalid product id.", 400);
 
     const product = await Product.findOne({ _id: id, ...NOT_DELETED })
-        .populate("suppliers.supplierId", "supplierCode name phone email status")
-        .populate("primarySupplierId", "supplierCode name phone email")
+        .populate(
+            "suppliers.supplierId",
+            "supplierCode name companyName phone email status paymentTerms creditLimit creditDays currentBalance totalPurchaseAmount totalPaidAmount totalDueAmount openingBalance lastPurchaseDate lastPaymentDate address city country bankAccounts contactPersons"
+        )
+        .populate(
+            "primarySupplierId",
+            "supplierCode name companyName phone email paymentTerms totalPaidAmount totalDueAmount currentBalance"
+        )
         .lean();
 
     if (!product) throw new AppError("Product not found.", 404);

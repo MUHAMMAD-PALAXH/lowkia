@@ -3,9 +3,15 @@ const { body, param, query } = require("express-validator");
 const mongoId = (field) =>
     body(field).optional({ checkFalsy: true }).isMongoId().withMessage(`Invalid ${field}.`);
 
+const chargeTypeRule = (field) =>
+    body(field)
+        .optional()
+        .isIn(["Fixed", "Percentage"])
+        .withMessage(`${field} must be Fixed or Percentage.`);
+
 const createPurchaseOrderValidator = [
-    body("supplierId").notEmpty().withMessage("Supplier is required.").isMongoId(),
-    body("warehouseId").notEmpty().withMessage("Warehouse is required.").isMongoId(),
+    body("supplierId").optional({ checkFalsy: true }).isMongoId(),
+    body("warehouseId").optional({ checkFalsy: true }).isMongoId(),
     body("branchId").optional({ checkFalsy: true }).isMongoId(),
     body("purchaseType")
         .optional()
@@ -25,6 +31,14 @@ const createPurchaseOrderValidator = [
     body("items.*.purchasePrice")
         .optional()
         .isFloat({ min: 0 }),
+    body("discount").optional().isFloat({ min: 0 }),
+    body("tax").optional().isFloat({ min: 0 }),
+    body("shippingCost").optional().isFloat({ min: 0 }),
+    body("otherCharges").optional().isFloat({ min: 0 }),
+    body("paidAmount").optional().isFloat({ min: 0 }),
+    chargeTypeRule("discountType"),
+    chargeTypeRule("taxType"),
+    chargeTypeRule("shippingType"),
     body("paymentTerms")
         .optional()
         .isIn(["Cash", "7 Days", "15 Days", "30 Days", "60 Days", "90 Days", "Custom"]),
@@ -39,6 +53,14 @@ const updatePurchaseOrderValidator = [
     body("branchId").optional({ checkFalsy: true }).isMongoId(),
     body("purchaseType").optional().isIn(["Existing", "New"]),
     body("items").optional().isArray({ min: 1 }),
+    body("discount").optional().isFloat({ min: 0 }),
+    body("tax").optional().isFloat({ min: 0 }),
+    body("shippingCost").optional().isFloat({ min: 0 }),
+    body("otherCharges").optional().isFloat({ min: 0 }),
+    body("paidAmount").optional().isFloat({ min: 0 }),
+    chargeTypeRule("discountType"),
+    chargeTypeRule("taxType"),
+    chargeTypeRule("shippingType"),
     body("paymentTerms")
         .optional()
         .isIn(["Cash", "7 Days", "15 Days", "30 Days", "60 Days", "90 Days", "Custom"])

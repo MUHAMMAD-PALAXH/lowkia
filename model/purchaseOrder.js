@@ -171,7 +171,7 @@ const purchaseOrderSchema = new mongoose.Schema(
 
             type: mongoose.Schema.Types.ObjectId,
             ref: "Supplier",
-            required: true,
+            default: null,
             index: true
         },
 
@@ -179,7 +179,7 @@ const purchaseOrderSchema = new mongoose.Schema(
 
             type: mongoose.Schema.Types.ObjectId,
             ref: "Warehouse",
-            required: true,
+            default: null,
             index: true
         },
 
@@ -207,6 +207,12 @@ const purchaseOrderSchema = new mongoose.Schema(
             min: 0
         },
 
+        discountType: {
+            type: String,
+            enum: ["Fixed", "Percentage"],
+            default: "Fixed"
+        },
+
         tax: {
 
             type: Number,
@@ -214,11 +220,23 @@ const purchaseOrderSchema = new mongoose.Schema(
             min: 0
         },
 
+        taxType: {
+            type: String,
+            enum: ["Fixed", "Percentage"],
+            default: "Fixed"
+        },
+
         shippingCost: {
 
             type: Number,
             default: 0,
             min: 0
+        },
+
+        shippingType: {
+            type: String,
+            enum: ["Fixed", "Percentage"],
+            default: "Fixed"
         },
 
         otherCharges: {
