@@ -275,6 +275,14 @@ discount:{
 },
 
 
+discountType:{
+
+    type:String,
+    enum:["Fixed","Percentage"],
+    default:"Fixed"
+},
+
+
 tax:{
 
     type:Number,
@@ -282,10 +290,26 @@ tax:{
 },
 
 
+taxType:{
+
+    type:String,
+    enum:["Fixed","Percentage"],
+    default:"Fixed"
+},
+
+
 shippingCost:{
 
     type:Number,
     default:0
+},
+
+
+shippingType:{
+
+    type:String,
+    enum:["Fixed","Percentage"],
+    default:"Fixed"
 },
 
 

@@ -55,6 +55,19 @@ const populateSo = (query) =>
         .populate("approvedBy", "name email")
         .populate("createdBy", "name email");
 
+const chargeType = (value) =>
+    String(value || "Fixed").toLowerCase() === "percentage"
+        ? "Percentage"
+        : "Fixed";
+
+const resolveCharge = (value, type, base) => {
+    const v = Math.max(Number(value) || 0, 0);
+    if (type === "Percentage") {
+        return Math.max((Math.max(Number(base) || 0, 0) * v) / 100, 0);
+    }
+    return v;
+};
+
 const calculateLines = (items = [], header = {}) => {
     let subtotal = 0;
     const normalized = items.map((raw) => {
@@ -77,13 +90,23 @@ const calculateLines = (items = [], header = {}) => {
         };
     });
 
-    const discount = Math.max(Number(header.discount) || 0, 0);
-    const tax = Math.max(Number(header.tax) || 0, 0);
-    const shippingCost = Math.max(Number(header.shippingCost) || 0, 0);
+    const discountType = chargeType(header.discountType);
+    const taxType = chargeType(header.taxType);
+    const shippingType = chargeType(header.shippingType);
+
+    const discountValue = Math.max(Number(header.discount) || 0, 0);
+    const taxValue = Math.max(Number(header.tax) || 0, 0);
+    const shippingValue = Math.max(Number(header.shippingCost) || 0, 0);
     const otherCharges = Math.max(Number(header.otherCharges) || 0, 0);
     const paidAmount = Math.max(Number(header.paidAmount) || 0, 0);
 
-    const grandTotal = subtotal - discount + tax + shippingCost + otherCharges;
+    const appliedDiscount = resolveCharge(discountValue, discountType, subtotal);
+    const taxBase = Math.max(subtotal - appliedDiscount, 0);
+    const appliedTax = resolveCharge(taxValue, taxType, taxBase);
+    const appliedShipping = resolveCharge(shippingValue, shippingType, subtotal);
+
+    const grandTotal =
+        subtotal - appliedDiscount + appliedTax + appliedShipping + otherCharges;
     const dueAmount = Math.max(grandTotal - paidAmount, 0);
 
     let paymentStatus = "Pending";
@@ -94,9 +117,15 @@ const calculateLines = (items = [], header = {}) => {
     return {
         items: normalized,
         subtotal,
-        discount,
-        tax,
-        shippingCost,
+        discount: discountValue,
+        discountType,
+        tax: taxValue,
+        taxType,
+        shippingCost: shippingValue,
+        shippingType,
+        appliedDiscount,
+        appliedTax,
+        appliedShipping,
         otherCharges,
         paidAmount,
         grandTotal,
@@ -334,8 +363,11 @@ const createSalesOrder = async (payload, actorId = null) => {
         items: totals.items,
         subtotal: totals.subtotal,
         discount: totals.discount,
+        discountType: totals.discountType,
         tax: totals.tax,
+        taxType: totals.taxType,
         shippingCost: totals.shippingCost,
+        shippingType: totals.shippingType,
         otherCharges: totals.otherCharges,
         grandTotal: totals.grandTotal,
         paidAmount: totals.paidAmount,
@@ -431,16 +463,22 @@ const updateSalesOrder = async (id, payload, actorId = null) => {
         const items = await normalizeItems(payload.items);
         const totals = calculateLines(items, {
             discount: payload.discount ?? order.discount,
+            discountType: payload.discountType ?? order.discountType,
             tax: payload.tax ?? order.tax,
+            taxType: payload.taxType ?? order.taxType,
             shippingCost: payload.shippingCost ?? order.shippingCost,
+            shippingType: payload.shippingType ?? order.shippingType,
             otherCharges: payload.otherCharges ?? order.otherCharges,
             paidAmount: payload.paidAmount ?? order.paidAmount
         });
         order.items = totals.items;
         order.subtotal = totals.subtotal;
         order.discount = totals.discount;
+        order.discountType = totals.discountType;
         order.tax = totals.tax;
+        order.taxType = totals.taxType;
         order.shippingCost = totals.shippingCost;
+        order.shippingType = totals.shippingType;
         order.otherCharges = totals.otherCharges;
         order.paidAmount = totals.paidAmount;
         order.grandTotal = totals.grandTotal;
@@ -448,22 +486,31 @@ const updateSalesOrder = async (id, payload, actorId = null) => {
         order.paymentStatus = totals.paymentStatus;
     } else if (
         payload.discount !== undefined ||
+        payload.discountType !== undefined ||
         payload.tax !== undefined ||
+        payload.taxType !== undefined ||
         payload.shippingCost !== undefined ||
+        payload.shippingType !== undefined ||
         payload.otherCharges !== undefined ||
         payload.paidAmount !== undefined
     ) {
         const totals = calculateLines(order.items, {
             discount: payload.discount ?? order.discount,
+            discountType: payload.discountType ?? order.discountType,
             tax: payload.tax ?? order.tax,
+            taxType: payload.taxType ?? order.taxType,
             shippingCost: payload.shippingCost ?? order.shippingCost,
+            shippingType: payload.shippingType ?? order.shippingType,
             otherCharges: payload.otherCharges ?? order.otherCharges,
             paidAmount: payload.paidAmount ?? order.paidAmount
         });
         order.subtotal = totals.subtotal;
         order.discount = totals.discount;
+        order.discountType = totals.discountType;
         order.tax = totals.tax;
+        order.taxType = totals.taxType;
         order.shippingCost = totals.shippingCost;
+        order.shippingType = totals.shippingType;
         order.otherCharges = totals.otherCharges;
         order.paidAmount = totals.paidAmount;
         order.grandTotal = totals.grandTotal;
@@ -1084,6 +1131,229 @@ const lookupByImei = async (imei, warehouseId = null) => {
     };
 };
 
+/**
+ * Products / variants available to sell from a branch (and optional warehouse).
+ * Only rows with available stock (Inventory) or available IMEIs at the branch.
+ */
+const getBranchCatalog = async (query = {}) => {
+    const branchId = toObjectId(query.branchId);
+    if (!branchId) throw new AppError("Branch is required.", 400);
+
+    const warehouseId = toObjectId(query.warehouseId);
+    const categoryId = toObjectId(query.categoryId);
+    const subCategoryId = toObjectId(query.subCategoryId);
+    const brandId = toObjectId(query.brandId);
+    const search = String(query.search || "").trim();
+
+    const warehouses = await Warehouse.find({
+        ...NOT_DELETED,
+        branchIds: branchId,
+        ...(warehouseId ? { _id: warehouseId } : {})
+    }).select("_id");
+
+    const warehouseIds = warehouses.map((w) => w._id);
+    if (warehouseId && !warehouseIds.some((id) => String(id) === String(warehouseId))) {
+        warehouseIds.push(warehouseId);
+    }
+
+    const invFilter = {
+        isDeleted: { $ne: true },
+        availableStock: { $gt: 0 }
+    };
+    if (warehouseId) {
+        invFilter.warehouseId = warehouseId;
+    } else if (warehouseIds.length) {
+        invFilter.$or = [
+            { branchId },
+            { warehouseId: { $in: warehouseIds } }
+        ];
+    } else {
+        invFilter.branchId = branchId;
+    }
+
+    const invRows = await Inventory.find(invFilter)
+        .populate(
+            "productId",
+            "name productCode sku barcode trackingType productType sellingPrice proCategoryId proSubCategoryId proBrandId status approvalStatus hasVariants"
+        )
+        .populate(
+            "productVariantId",
+            "sku combinationString sellingPrice attributes barcode status isDeleted"
+        )
+        .lean();
+
+    // IMEI available counts at this branch
+    const imeiRows = await ItemTrack.aggregate([
+        {
+            $match: {
+                status: "available",
+                currentBranchId: branchId
+            }
+        },
+        {
+            $group: {
+                _id: {
+                    productId: "$productId",
+                    variantId: "$variantId"
+                },
+                count: { $sum: 1 }
+            }
+        }
+    ]);
+    const imeiMap = new Map(
+        imeiRows.map((r) => [
+            `${r._id.productId}::${r._id.variantId || "null"}`,
+            r.count
+        ])
+    );
+
+    const byProduct = new Map();
+
+    const ensureProduct = (product) => {
+        if (!product || !product._id) return null;
+        if (product.status && product.status !== "Active") return null;
+        if (
+            product.approvalStatus &&
+            product.approvalStatus !== "Approved" &&
+            product.approvalStatus !== ""
+        ) {
+            return null;
+        }
+        if (categoryId && String(product.proCategoryId) !== String(categoryId)) {
+            return null;
+        }
+        if (
+            subCategoryId &&
+            String(product.proSubCategoryId) !== String(subCategoryId)
+        ) {
+            return null;
+        }
+        if (brandId && String(product.proBrandId) !== String(brandId)) {
+            return null;
+        }
+        if (search) {
+            const s = search.toLowerCase();
+            const hay = `${product.name || ""} ${product.productCode || ""} ${product.sku || ""} ${product.barcode || ""}`.toLowerCase();
+            if (!hay.includes(s)) return null;
+        }
+
+        const pid = String(product._id);
+        if (!byProduct.has(pid)) {
+            byProduct.set(pid, {
+                productId: product._id,
+                productCode: product.productCode || "",
+                name: product.name || "",
+                trackingType: resolveTrackingType(product.trackingType),
+                productType: product.productType || "Simple",
+                hasVariants: !!product.hasVariants,
+                sellingPrice: Number(product.sellingPrice) || 0,
+                categoryId: product.proCategoryId || null,
+                subCategoryId: product.proSubCategoryId || null,
+                brandId: product.proBrandId || null,
+                availableStock: 0,
+                variants: []
+            });
+        }
+        return byProduct.get(pid);
+    };
+
+    for (const row of invRows) {
+        const product = row.productId;
+        const entry = ensureProduct(product);
+        if (!entry) continue;
+
+        const qty = Number(row.availableStock) || 0;
+        entry.availableStock += qty;
+
+        const variant = row.productVariantId;
+        if (variant && variant._id && variant.isDeleted !== true) {
+            const vid = String(variant._id);
+            let vEntry = entry.variants.find((v) => String(v.variantId) === vid);
+            if (!vEntry) {
+                vEntry = {
+                    variantId: variant._id,
+                    sku: variant.sku || "",
+                    label: variant.combinationString || variant.sku || "Variant",
+                    sellingPrice:
+                        Number(variant.sellingPrice) ||
+                        entry.sellingPrice ||
+                        0,
+                    barcode: variant.barcode || "",
+                    availableStock: 0,
+                    imeiAvailable: 0
+                };
+                entry.variants.push(vEntry);
+            }
+            vEntry.availableStock += qty;
+        }
+    }
+
+    // Merge IMEI availability (even if inventory qty is 0 for some setups)
+    for (const [key, count] of imeiMap.entries()) {
+        const [pid, vid] = key.split("::");
+        let entry = byProduct.get(pid);
+        if (!entry) {
+            const product = await Product.findOne({
+                _id: pid,
+                ...NOT_DELETED
+            }).lean();
+            entry = ensureProduct(product);
+            if (!entry) continue;
+        }
+        entry.availableStock += count;
+        if (vid && vid !== "null") {
+            let vEntry = entry.variants.find((v) => String(v.variantId) === vid);
+            if (!vEntry) {
+                const variant = await ProductVariant.findOne({
+                    _id: vid,
+                    isDeleted: { $ne: true }
+                }).lean();
+                if (!variant) continue;
+                vEntry = {
+                    variantId: variant._id,
+                    sku: variant.sku || "",
+                    label: variant.combinationString || variant.sku || "Variant",
+                    sellingPrice:
+                        Number(variant.sellingPrice) ||
+                        entry.sellingPrice ||
+                        0,
+                    barcode: variant.barcode || "",
+                    availableStock: 0,
+                    imeiAvailable: 0
+                };
+                entry.variants.push(vEntry);
+            }
+            vEntry.imeiAvailable = count;
+            vEntry.availableStock = Math.max(vEntry.availableStock, count);
+        }
+    }
+
+    // Keep only products that still have sellable stock after filters
+    const items = [...byProduct.values()]
+        .map((p) => {
+            if (p.trackingType === "IMEI") {
+                p.variants = p.variants.filter(
+                    (v) => (v.imeiAvailable || v.availableStock) > 0
+                );
+            } else {
+                p.variants = p.variants.filter((v) => v.availableStock > 0);
+            }
+            // Variant products must have at least one in-stock variant
+            if (
+                (p.hasVariants || p.productType === "Variant") &&
+                p.variants.length === 0
+            ) {
+                return null;
+            }
+            if (p.availableStock <= 0 && p.variants.length === 0) return null;
+            return p;
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    return { items, total: items.length };
+};
+
 const getSalesOrderStats = async () => {
     const [rows] = await SalesOrder.aggregate([
         { $match: NOT_DELETED },
@@ -1148,5 +1418,6 @@ module.exports = {
     cancelSalesOrder,
     getSalesOrderStats,
     lookupByBarcode,
-    lookupByImei
+    lookupByImei,
+    getBranchCatalog
 };

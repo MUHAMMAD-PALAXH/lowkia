@@ -128,6 +128,11 @@ exports.lookupByImei = asyncHandler(async (req, res) => {
     return success(res, "IMEI found.", data);
 });
 
+exports.getBranchCatalog = asyncHandler(async (req, res) => {
+    const data = await salesOrderService.getBranchCatalog(req.query);
+    return success(res, "Branch catalog retrieved.", data);
+});
+
 exports.cancelSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.cancelSalesOrder(
         req.params.id,
