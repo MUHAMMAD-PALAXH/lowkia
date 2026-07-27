@@ -269,6 +269,13 @@ const upsertInventory = async ({
             (inv.averageCost * previous + purchasePrice * qty) /
             (previous + qty);
     }
+
+    const avail = Number(inv.availableStock) || 0;
+    const reorder = Number(inv.reorderLevel) || 0;
+    if (avail <= 0) inv.stockStatus = "Out Of Stock";
+    else if (reorder > 0 && avail <= reorder) inv.stockStatus = "Low Stock";
+    else inv.stockStatus = "In Stock";
+
     await inv.save({ session });
     return { inv, previous, current: inv.currentStock };
 };
