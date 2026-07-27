@@ -27,6 +27,11 @@ exports.getImeiStock = asyncHandler(async (req, res) => {
     return success(res, "IMEI stock retrieved.", data);
 });
 
+exports.syncProductStock = asyncHandler(async (req, res) => {
+    const data = await inventoryService.syncProductStockSummaries();
+    return success(res, "Product stock summaries synced from inventory.", data);
+});
+
 exports.getInventoryById = asyncHandler(async (req, res) => {
     const data = await inventoryService.getInventoryById(req.params.id);
     return success(res, "Inventory record retrieved.", data);

@@ -1289,11 +1289,28 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
 
         await session.commitTransaction();
 
-        // Refresh product stock summaries outside txn
+        // Refresh product stock summaries outside txn (must not be silent forever)
+        const refreshErrors = [];
         for (const pid of productIds) {
             try {
                 await productService.refreshStockSummary(pid);
-            } catch (_) {}
+            } catch (err) {
+                refreshErrors.push(
+                    `${pid}: ${err?.message || err}`
+                );
+                console.error(
+                    "[GRN] refreshStockSummary failed:",
+                    pid,
+                    err?.message || err
+                );
+            }
+        }
+        if (refreshErrors.length && productIds.length === refreshErrors.length) {
+            // Inventory already committed — surface a clear follow-up error
+            throw new AppError(
+                `GRN completed and inventory updated, but product stock summary failed to refresh: ${refreshErrors.join("; ")}. Open product and use Refresh Stock, or retry refresh.`,
+                500
+            );
         }
 
         return populateGrn(GRN.findById(grn._id));

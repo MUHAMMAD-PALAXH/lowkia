@@ -30,6 +30,8 @@ router.get(
     inventoryController.getImeiStock
 );
 
+router.post("/sync-product-stock", inventoryController.syncProductStock);
+
 router.get("/", listValidator, validate, inventoryController.getInventoryList);
 
 router.get(

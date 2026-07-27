@@ -308,11 +308,33 @@ const getImeiStock = async (query = {}) => {
     };
 };
 
+/** Push Inventory totals onto Product.totalStock / stockValue for all stocked products */
+const syncProductStockSummaries = async () => {
+    const productService = require("./productService");
+    const ids = await Inventory.distinct("productId", {
+        isDeleted: { $ne: true },
+        currentStock: { $gt: 0 }
+    });
+    let updated = 0;
+    const errors = [];
+    for (const id of ids) {
+        if (!id) continue;
+        try {
+            await productService.refreshStockSummary(id);
+            updated += 1;
+        } catch (err) {
+            errors.push(`${id}: ${err?.message || err}`);
+        }
+    }
+    return { updated, total: ids.length, errors };
+};
+
 module.exports = {
     getInventoryList,
     getInventoryById,
     getInventoryStats,
     getLowStock,
     getStockMovements,
-    getImeiStock
+    getImeiStock,
+    syncProductStockSummaries
 };

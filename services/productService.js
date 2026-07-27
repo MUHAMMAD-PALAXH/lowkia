@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Product = require("../model/product");
 const ProductVariant = require("../model/productVariant");
 const ItemTrack = require("../model/itemTrack");
+const Inventory = require("../model/inventory");
 const Supplier = require("../model/supplier");
 const Category = require("../model/category");
 const SubCategory = require("../model/subCategory");
@@ -1120,22 +1121,26 @@ const restoreProduct = async (id) => {
 
 const refreshStockSummary = async (id) => {
     const product = await findProductOrFail(id);
-    const Inventory = mongoose.models.Inventory;
+    const productObjectId = product._id;
 
-    let rows = [];
-    if (Inventory) {
-        rows = await Inventory.aggregate([
-            { $match: { productId: product._id } },
-            {
-                $group: {
-                    _id: "$warehouseId",
-                    quantity: { $sum: "$currentStock" },
-                    availableQuantity: { $sum: "$availableStock" },
-                    reservedQuantity: { $sum: "$reservedStock" }
-                }
+    const rows = await Inventory.aggregate([
+        {
+            $match: {
+                productId: productObjectId,
+                isDeleted: { $ne: true }
             }
-        ]);
-    }
+        },
+        {
+            $group: {
+                _id: "$warehouseId",
+                quantity: { $sum: "$currentStock" },
+                availableQuantity: { $sum: "$availableStock" },
+                reservedQuantity: { $sum: "$reservedStock" },
+                lastPurchasePrice: { $max: "$lastPurchasePrice" },
+                averageCost: { $avg: "$averageCost" }
+            }
+        }
+    ]);
 
     product.warehouseStock = rows.map((row) => ({
         warehouseId: row._id,
@@ -1156,20 +1161,39 @@ const refreshStockSummary = async (id) => {
     );
 
     product.totalImeiCount = await ItemTrack.countDocuments({
-        productId: product._id,
+        productId: productObjectId,
         status: "available"
     });
+
+    // Prefer inventory costing, then product prices
+    const invAvg =
+        rows.length > 0
+            ? rows.reduce((s, r) => s + (Number(r.averageCost) || 0), 0) /
+              rows.length
+            : 0;
+    const invLast = rows.reduce(
+        (max, r) => Math.max(max, Number(r.lastPurchasePrice) || 0),
+        0
+    );
+
+    if (invAvg > 0) product.averagePurchasePrice = Number(invAvg.toFixed(2));
+    if (invLast > 0 && !(Number(product.purchasePrice) > 0)) {
+        product.purchasePrice = invLast;
+    }
 
     const unitCost =
         Number(product.averagePurchasePrice) ||
         Number(product.purchasePrice) ||
         Number(product.costPrice) ||
+        invLast ||
         0;
 
     product.stockValue = Number((product.totalStock * unitCost).toFixed(2));
     product.lastStockUpdatedAt = new Date();
 
-    product.recomputeLowStock();
+    if (typeof product.recomputeLowStock === "function") {
+        product.recomputeLowStock();
+    }
     await product.save();
 
     return populateProduct(Product.findById(product._id));
