@@ -28,6 +28,52 @@ const populateReturn = (query) =>
         .populate("customerId", "customerCode name phone")
         .populate("salesOrderId", "orderNumber status grandTotal");
 
+const ACTIVE_RETURN_STATUSES = [
+    "Draft",
+    "Pending Approval",
+    "Approved",
+    "Received",
+    "Refunded"
+];
+
+const lineKey = (productId, productVariantId) =>
+    `${String(productId)}::${productVariantId ? String(productVariantId) : "null"}`;
+
+/**
+ * Sum qty + IMEIs already claimed by prior returns (any active status).
+ * Prevents the same sold stock from being returned more than once.
+ */
+const getPriorReturnUsage = async (salesOrderId, excludeReturnId = null) => {
+    const filter = {
+        salesOrderId,
+        ...NOT_DELETED,
+        status: { $in: ACTIVE_RETURN_STATUSES }
+    };
+    if (excludeReturnId) {
+        filter._id = { $ne: excludeReturnId };
+    }
+
+    const prior = await SalesReturn.find(filter).select("items status").lean();
+    const qtyByLine = new Map();
+    const returnedImeis = new Set();
+
+    for (const doc of prior) {
+        for (const item of doc.items || []) {
+            const key = lineKey(item.productId, item.productVariantId);
+            qtyByLine.set(
+                key,
+                (qtyByLine.get(key) || 0) + (Number(item.returnQuantity) || 0)
+            );
+            for (const imei of item.imeis || []) {
+                const v = String(imei).trim();
+                if (v) returnedImeis.add(v);
+            }
+        }
+    }
+
+    return { qtyByLine, returnedImeis };
+};
+
 const createFromSalesOrder = async (payload, actorId = null) => {
     const salesOrderId = toObjectId(payload.salesOrderId);
     if (!salesOrderId) throw new AppError("salesOrderId is required.", 400);
@@ -49,29 +95,61 @@ const createFromSalesOrder = async (payload, actorId = null) => {
         throw new AppError("At least one return line is required.", 400);
     }
 
+    const { qtyByLine, returnedImeis } = await getPriorReturnUsage(salesOrderId);
+
+    // Fast path: if every line is already fully returned, block entirely
+    const anyReturnable = order.items.some((l) => {
+        const key = lineKey(l.productId, l.productVariantId);
+        const already =
+            Math.max(
+                Number(l.returnedQuantity) || 0,
+                qtyByLine.get(key) || 0
+            );
+        return Number(l.quantity) - already > 0;
+    });
+    if (!anyReturnable) {
+        throw new AppError(
+            "This sales order is already fully returned. Stock cannot be returned again.",
+            400
+        );
+    }
+
     const items = [];
     let subtotal = 0;
 
     for (const raw of itemsInput) {
         const productId = toObjectId(raw.productId);
+        const productVariantId = toObjectId(raw.productVariantId);
         const line = order.items.find(
             (l) =>
                 String(l.productId) === String(productId) &&
-                (!raw.productVariantId ||
-                    String(l.productVariantId) ===
-                        String(raw.productVariantId))
+                (!productVariantId ||
+                    String(l.productVariantId) === String(productVariantId))
         );
         if (!line) {
             throw new AppError("Return line does not match sales order.", 400);
         }
 
+        const key = lineKey(line.productId, line.productVariantId);
+        const alreadyReturned = Math.max(
+            Number(line.returnedQuantity) || 0,
+            qtyByLine.get(key) || 0
+        );
+        const remaining = Math.max(Number(line.quantity) - alreadyReturned, 0);
+
         const returnQuantity = Math.max(Number(raw.returnQuantity) || 0, 0);
         if (returnQuantity <= 0) {
             throw new AppError("returnQuantity must be > 0.", 400);
         }
-        if (returnQuantity > Number(line.quantity)) {
+        if (remaining <= 0) {
             throw new AppError(
-                `Return qty exceeds sold qty for ${line.productName}.`,
+                `"${line.productName}" was already fully returned. Cannot return again.`,
+                400
+            );
+        }
+        if (returnQuantity > remaining) {
+            throw new AppError(
+                `Only ${remaining} unit(s) left to return for "${line.productName}" (sold ${line.quantity}, already returned ${alreadyReturned}).`,
                 400
             );
         }
@@ -96,6 +174,12 @@ const createFromSalesOrder = async (payload, actorId = null) => {
                 if (!(line.imeis || []).includes(imei)) {
                     throw new AppError(
                         `IMEI ${imei} was not on this sales order.`,
+                        400
+                    );
+                }
+                if (returnedImeis.has(imei)) {
+                    throw new AppError(
+                        `IMEI ${imei} was already returned. Cannot return the same unit twice.`,
                         400
                     );
                 }
@@ -150,7 +234,51 @@ const receiveReturn = async (id, actorId = null) => {
     const ret = await SalesReturn.findOne({ _id: id, ...NOT_DELETED });
     if (!ret) throw new AppError("Sales return not found.", 404);
     if (["Received", "Refunded"].includes(ret.status)) {
-        throw new AppError("Return already received.", 400);
+        throw new AppError(
+            "This return was already received. Stock was restored once — cannot receive again.",
+            400
+        );
+    }
+
+    // Re-check remaining qty against other returns before posting stock
+    if (ret.salesOrderId) {
+        const { qtyByLine, returnedImeis } = await getPriorReturnUsage(
+            ret.salesOrderId,
+            ret._id
+        );
+        const order = await SalesOrder.findById(ret.salesOrderId);
+        if (order) {
+            for (const line of ret.items) {
+                const key = lineKey(line.productId, line.productVariantId);
+                const soLine = order.items.find(
+                    (l) =>
+                        String(l.productId) === String(line.productId) &&
+                        String(l.productVariantId || "") ===
+                            String(line.productVariantId || "")
+                );
+                const already = Math.max(
+                    Number(soLine?.returnedQuantity) || 0,
+                    qtyByLine.get(key) || 0
+                );
+                const sold = Number(soLine?.quantity) || 0;
+                const remaining = Math.max(sold - already, 0);
+                const qty = Number(line.returnQuantity) || 0;
+                if (qty > remaining) {
+                    throw new AppError(
+                        `"${line.productName}" has only ${remaining} unit(s) left to return. Another return may already cover this stock.`,
+                        400
+                    );
+                }
+                for (const imei of line.imeis || []) {
+                    if (returnedImeis.has(String(imei).trim())) {
+                        throw new AppError(
+                            `IMEI ${imei} was already returned on another return document.`,
+                            400
+                        );
+                    }
+                }
+            }
+        }
     }
 
     const session = await mongoose.startSession();
@@ -161,6 +289,32 @@ const receiveReturn = async (id, actorId = null) => {
         for (const line of ret.items) {
             const qty = Number(line.returnQuantity) || 0;
             if (qty <= 0) continue;
+
+            // IMEI: only restore units that are still marked sold
+            if (line.trackingType === "IMEI") {
+                for (const imei of line.imeis || []) {
+                    const track = await ItemTrack.findOne({ imei }).session(
+                        session
+                    );
+                    if (!track) {
+                        throw new AppError(`IMEI ${imei} not found.`, 404);
+                    }
+                    if (track.status !== "sold") {
+                        throw new AppError(
+                            `IMEI ${imei} is already "${track.status}". It cannot be returned to stock again.`,
+                            400
+                        );
+                    }
+                    track.status = "available";
+                    track.history = track.history || [];
+                    track.history.push({
+                        status: "available",
+                        date: new Date(),
+                        notes: `Returned via ${ret.returnNumber}`
+                    });
+                    await track.save({ session });
+                }
+            }
 
             const filter = {
                 warehouseId: ret.warehouseId,
@@ -230,29 +384,14 @@ const receiveReturn = async (id, actorId = null) => {
                         referenceType: "Sales Return",
                         salesReturnId: ret._id,
                         remarks: "Stock in from sales return",
-                        createdBy: actorId || ret.createdBy || new mongoose.Types.ObjectId()
+                        createdBy:
+                            actorId ||
+                            ret.createdBy ||
+                            new mongoose.Types.ObjectId()
                     }
                 ],
                 { session }
             );
-
-            if (line.trackingType === "IMEI") {
-                for (const imei of line.imeis || []) {
-                    const track = await ItemTrack.findOne({ imei }).session(
-                        session
-                    );
-                    if (track) {
-                        track.status = "available";
-                        track.history = track.history || [];
-                        track.history.push({
-                            status: "available",
-                            date: new Date(),
-                            notes: `Returned via ${ret.returnNumber}`
-                        });
-                        await track.save({ session });
-                    }
-                }
-            }
 
             productIds.add(String(line.productId));
         }
@@ -262,16 +401,41 @@ const receiveReturn = async (id, actorId = null) => {
         await ret.save({ session });
 
         if (ret.salesOrderId) {
-            await SalesOrder.updateOne(
-                { _id: ret.salesOrderId },
-                {
-                    $set: {
-                        hasReturn: true,
-                        returnId: ret._id
-                    }
-                },
-                { session }
+            const order = await SalesOrder.findById(ret.salesOrderId).session(
+                session
             );
+            if (order) {
+                for (const line of ret.items) {
+                    const soLine = order.items.find(
+                        (l) =>
+                            String(l.productId) === String(line.productId) &&
+                            String(l.productVariantId || "") ===
+                                String(line.productVariantId || "")
+                    );
+                    if (soLine) {
+                        soLine.returnedQuantity =
+                            (Number(soLine.returnedQuantity) || 0) +
+                            (Number(line.returnQuantity) || 0);
+                    }
+                }
+                const fullyReturned = order.items.every(
+                    (l) =>
+                        (Number(l.returnedQuantity) || 0) >=
+                        (Number(l.quantity) || 0)
+                );
+                order.hasReturn = true;
+                order.returnId = ret._id;
+                if (fullyReturned) {
+                    order.internalNote = [
+                        order.internalNote || "",
+                        `Fully returned via ${ret.returnNumber}`
+                    ]
+                        .filter(Boolean)
+                        .join("\n");
+                }
+                order.markModified("items");
+                await order.save({ session });
+            }
         }
 
         await session.commitTransaction();

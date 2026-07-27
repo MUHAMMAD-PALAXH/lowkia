@@ -64,6 +64,14 @@ const salesOrderItemSchema = new mongoose.Schema(
     },
 
 
+    returnedQuantity:{
+
+        type:Number,
+        default:0,
+        min:0
+    },
+
+
     unitId:{
 
         type:mongoose.Schema.Types.ObjectId,
