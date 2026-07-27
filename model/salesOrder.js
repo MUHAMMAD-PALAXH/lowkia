@@ -105,6 +105,21 @@ const salesOrderItemSchema = new mongoose.Schema(
 
         type:String,
         default:""
+    },
+
+
+    trackingType:{
+
+        type:String,
+        enum:["IMEI","Non-IMEI"],
+        default:"Non-IMEI"
+    },
+
+
+    imeis:{
+
+        type:[String],
+        default:[]
     }
 
 },
@@ -127,6 +142,15 @@ branchId:{
 
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
+    required:true,
+    index:true
+},
+
+
+warehouseId:{
+
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"Warehouse",
     required:true,
     index:true
 },
@@ -575,7 +599,7 @@ createdBy:{
 
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
-    required:true
+    default:null
 },
 
 

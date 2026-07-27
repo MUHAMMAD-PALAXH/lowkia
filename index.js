@@ -102,6 +102,8 @@ app.use('/api/products', require('./routes/productMaster'));
 app.use('/api/purchase-orders', require('./routes/purchaseOrder'));
 app.use('/api/grn', require('./routes/grn'));
 app.use('/api/inventory', require('./routes/inventory'));
+app.use('/api/customers', require('./routes/customer'));
+app.use('/api/sales-orders', require('./routes/salesOrder'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');
