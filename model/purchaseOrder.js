@@ -22,6 +22,12 @@ const purchaseItemSchema = new mongoose.Schema(
             default: null
         },
 
+        trackingType: {
+            type: String,
+            enum: ["IMEI", "Non-IMEI"],
+            default: "Non-IMEI"
+        },
+
         sku: {
 
             type: String,

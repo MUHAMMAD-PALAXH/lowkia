@@ -24,6 +24,10 @@ const createPurchaseOrderValidator = [
         .optional({ checkFalsy: true })
         .isString()
         .trim(),
+    body("items.*.trackingType")
+        .optional({ checkFalsy: true })
+        .isIn(["IMEI", "Non-IMEI"])
+        .withMessage("Line trackingType must be IMEI or Non-IMEI."),
     body("items.*.quantity")
         .notEmpty()
         .withMessage("Line quantity is required.")
@@ -53,6 +57,10 @@ const updatePurchaseOrderValidator = [
     body("branchId").optional({ checkFalsy: true }).isMongoId(),
     body("purchaseType").optional().isIn(["Existing", "New"]),
     body("items").optional().isArray({ min: 1 }),
+    body("items.*.trackingType")
+        .optional({ checkFalsy: true })
+        .isIn(["IMEI", "Non-IMEI"])
+        .withMessage("Line trackingType must be IMEI or Non-IMEI."),
     body("discount").optional().isFloat({ min: 0 }),
     body("tax").optional().isFloat({ min: 0 }),
     body("shippingCost").optional().isFloat({ min: 0 }),

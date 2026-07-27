@@ -44,6 +44,12 @@ const chargeType = (value) =>
         ? "Percentage"
         : "Fixed";
 
+const resolveTrackingType = (value) =>
+    String(value || "").toUpperCase().includes("IMEI") &&
+    !String(value || "").toUpperCase().includes("NON")
+        ? "IMEI"
+        : "Non-IMEI";
+
 const resolveCharge = (value, type, base) => {
     const v = Math.max(Number(value) || 0, 0);
     if (type === "Percentage") {
@@ -237,10 +243,15 @@ const normalizeItems = async (itemsInput = [], purchaseType, supplierId) => {
             product?.sku ||
             "";
 
+        const trackingType = raw.trackingType
+            ? resolveTrackingType(raw.trackingType)
+            : resolveTrackingType(product?.trackingType);
+
         items.push({
             _id: toObjectId(raw._id || raw.id) || undefined,
             productId: product?._id || null,
             productVariantId: variant?._id || null,
+            trackingType,
             sku,
             productName:
                 product && variant

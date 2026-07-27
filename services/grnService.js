@@ -70,19 +70,17 @@ const populateGrn = (query) =>
         .populate("items.productId", "name productCode trackingType barcode sku")
         .populate("items.productVariantId", "sku combinationString barcode");
 
-/** After populate, sync line trackingType / barcode from product when stale */
+/** After populate, normalize line trackingType and hydrate snapshot fields */
 const enrichGrnDoc = (grn) => {
     if (!grn) return grn;
     const obj = typeof grn.toObject === "function" ? grn.toObject() : grn;
     for (const line of obj.items || []) {
+        line.trackingType = resolveTrackingType(line.trackingType);
         const product = line.productId;
         if (product && typeof product === "object") {
-            line.trackingType = resolveTrackingType(product.trackingType);
             if (!line.barcode && product.barcode) line.barcode = product.barcode;
             if (!line.sku && product.sku) line.sku = product.sku;
             if (!line.productName && product.name) line.productName = product.name;
-        } else if (line.trackingType) {
-            line.trackingType = resolveTrackingType(line.trackingType);
         }
         const variant = line.productVariantId;
         if (variant && typeof variant === "object") {
@@ -122,7 +120,9 @@ const buildLinesFromPo = async (po) => {
         if (pending <= 0) continue;
 
         const product = await loadProductMeta(item.productId);
-        const trackingType = resolveTrackingType(product?.trackingType);
+        const trackingType = item.trackingType
+            ? resolveTrackingType(item.trackingType)
+            : resolveTrackingType(product?.trackingType);
 
         lines.push({
             purchaseOrderItemId: item._id,
@@ -572,17 +572,17 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     }).sort({ createdAt: -1 });
 
     if (existingOpen) {
-        // Heal stale Non-IMEI flags if product is IMEI-tracked
+        // Normalize stale line flags on reused drafts
         let dirty = false;
         for (const line of existingOpen.items || []) {
-            if (!line.productId) continue;
-            const product = await loadProductMeta(line.productId);
-            if (!product) continue;
-            const tt = resolveTrackingType(product.trackingType);
+            const tt = resolveTrackingType(line.trackingType);
             if (line.trackingType !== tt) {
                 line.trackingType = tt;
                 dirty = true;
             }
+            if (!line.productId) continue;
+            const product = await loadProductMeta(line.productId);
+            if (!product) continue;
             if (!line.barcode && product.barcode) {
                 line.barcode = product.barcode;
                 dirty = true;
@@ -835,13 +835,11 @@ const findGrnLine = (grn, payload = {}) => {
 
 /** Ensure line trackingType matches product before IMEI ops */
 const ensureLineTracking = async (line) => {
+    if (!line) return line;
+    line.trackingType = resolveTrackingType(line.trackingType);
     if (!line?.productId) return line;
     const product = await loadProductMeta(line.productId);
     if (!product) return line;
-    const tt = resolveTrackingType(product.trackingType);
-    if (line.trackingType !== tt) {
-        line.trackingType = tt;
-    }
     if (!line.barcode && product.barcode) line.barcode = product.barcode;
     return line;
 };
