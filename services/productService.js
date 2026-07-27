@@ -413,7 +413,8 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
                 wholesalePrice: Number(raw.wholesalePrice) || 0,
                 price: sellingPrice,
                 offerPrice: Number(raw.offerPrice) || 0,
-                quantity: Number(raw.quantity) || 0,
+                // Live stock lives in Inventory — never overwrite quantity from form
+                // on edit. Opening qty only allowed when creating a brand-new variant.
                 minimumStock: Number(raw.minimumStock) || 0,
                 maximumStock: Number(raw.maximumStock) || 0,
                 reorderLevel: Number(raw.reorderLevel) || 0,
@@ -425,6 +426,9 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
                 deletedAt: null,
                 deletedBy: null
             };
+            if (!variantDoc) {
+                payload.quantity = 0;
+            }
 
             if (sku) payload.sku = sku;
             else if (!variantDoc?.sku) payload.sku = undefined;
@@ -763,8 +767,151 @@ const getProductById = async (id) => {
         .lean();
 
     const result = product.toObject();
-    result.productVariants = variants;
+    result.productVariants = await attachLiveStockToVariants(
+        product._id,
+        variants,
+        product.trackingType
+    );
+
+    // Prefer live Inventory totals on details (even if summary is stale)
+    const live = await getLiveProductStock(product._id);
+    if (live) {
+        result.totalStock = live.totalStock;
+        result.availableStock = live.availableStock;
+        result.reservedStock = live.reservedStock;
+        result.stockValue = live.stockValue;
+        result.warehouseStock = live.warehouseStock;
+        result.totalImeiCount = live.totalImeiCount;
+    }
+
     return result;
+};
+
+/** Aggregate Inventory + IMEI counts onto each variant for product details */
+const attachLiveStockToVariants = async (
+    productId,
+    variants = [],
+    trackingType = "Non-IMEI"
+) => {
+    const pid = toObjectId(productId) || productId;
+    const invRows = await Inventory.aggregate([
+        {
+            $match: {
+                productId: pid,
+                isDeleted: { $ne: true }
+            }
+        },
+        {
+            $group: {
+                _id: "$productVariantId",
+                currentStock: { $sum: "$currentStock" },
+                availableStock: { $sum: "$availableStock" },
+                reservedStock: { $sum: "$reservedStock" }
+            }
+        }
+    ]);
+
+    const invByVariant = new Map(
+        invRows.map((r) => [r._id ? String(r._id) : "null", r])
+    );
+
+    const imeiRows = await ItemTrack.aggregate([
+        { $match: { productId: pid, status: "available" } },
+        { $group: { _id: "$variantId", count: { $sum: 1 } } }
+    ]);
+    const imeiByVariant = new Map(
+        imeiRows.map((r) => [r._id ? String(r._id) : "null", r.count || 0])
+    );
+
+    const isImei =
+        String(trackingType || "")
+            .toUpperCase()
+            .includes("IMEI") &&
+        !String(trackingType || "")
+            .toUpperCase()
+            .includes("NON");
+
+    return variants.map((v) => {
+        const key = v._id ? String(v._id) : "null";
+        const inv = invByVariant.get(key) || {
+            currentStock: 0,
+            availableStock: 0,
+            reservedStock: 0
+        };
+        const imeiCount = imeiByVariant.get(key) || 0;
+        const liveQty = isImei
+            ? imeiCount
+            : Number(inv.availableStock) || Number(inv.currentStock) || 0;
+
+        return {
+            ...v,
+            // Keep catalog field, but expose live stock for UI
+            stockCurrent: Number(inv.currentStock) || 0,
+            stockAvailable: Number(inv.availableStock) || 0,
+            stockReserved: Number(inv.reservedStock) || 0,
+            imeiAvailableCount: imeiCount,
+            // quantity = live warehouse stock (old + new from Inventory / IMEI)
+            quantity: liveQty
+        };
+    });
+};
+
+const getLiveProductStock = async (productId) => {
+    const pid = toObjectId(productId) || productId;
+    const rows = await Inventory.aggregate([
+        {
+            $match: {
+                productId: pid,
+                isDeleted: { $ne: true }
+            }
+        },
+        {
+            $group: {
+                _id: "$warehouseId",
+                quantity: { $sum: "$currentStock" },
+                availableQuantity: { $sum: "$availableStock" },
+                reservedQuantity: { $sum: "$reservedStock" },
+                inventoryValue: {
+                    $sum: {
+                        $multiply: [
+                            { $ifNull: ["$currentStock", 0] },
+                            { $ifNull: ["$averageCost", 0] }
+                        ]
+                    }
+                }
+            }
+        }
+    ]);
+
+    const totalImeiCount = await ItemTrack.countDocuments({
+        productId: pid,
+        status: "available"
+    });
+
+    return {
+        totalStock: rows.reduce((s, r) => s + (r.quantity || 0), 0),
+        availableStock: rows.reduce(
+            (s, r) => s + (r.availableQuantity || 0),
+            0
+        ),
+        reservedStock: rows.reduce(
+            (s, r) => s + (r.reservedQuantity || 0),
+            0
+        ),
+        stockValue: Number(
+            rows
+                .reduce((s, r) => s + (r.inventoryValue || 0), 0)
+                .toFixed(2)
+        ),
+        warehouseStock: rows.map((row) => ({
+            warehouseId: row._id,
+            quantity: row.quantity || 0,
+            availableQuantity: row.availableQuantity || 0,
+            reservedQuantity: row.reservedQuantity || 0,
+            updatedAt: new Date()
+        })),
+        totalImeiCount
+    };
 };
 
 const getApprovedProducts = () => populateProduct(Product.getApprovedProducts());
@@ -1137,7 +1284,14 @@ const refreshStockSummary = async (id) => {
                 availableQuantity: { $sum: "$availableStock" },
                 reservedQuantity: { $sum: "$reservedStock" },
                 lastPurchasePrice: { $max: "$lastPurchasePrice" },
-                averageCost: { $avg: "$averageCost" }
+                inventoryValue: {
+                    $sum: {
+                        $multiply: [
+                            { $ifNull: ["$currentStock", 0] },
+                            { $ifNull: ["$averageCost", 0] }
+                        ]
+                    }
+                }
             }
         }
     ]);
@@ -1165,36 +1319,83 @@ const refreshStockSummary = async (id) => {
         status: "available"
     });
 
-    // Prefer inventory costing, then product prices
-    const invAvg =
-        rows.length > 0
-            ? rows.reduce((s, r) => s + (Number(r.averageCost) || 0), 0) /
-              rows.length
-            : 0;
     const invLast = rows.reduce(
         (max, r) => Math.max(max, Number(r.lastPurchasePrice) || 0),
         0
     );
-
-    if (invAvg > 0) product.averagePurchasePrice = Number(invAvg.toFixed(2));
     if (invLast > 0 && !(Number(product.purchasePrice) > 0)) {
         product.purchasePrice = invLast;
     }
 
-    const unitCost =
-        Number(product.averagePurchasePrice) ||
-        Number(product.purchasePrice) ||
-        Number(product.costPrice) ||
-        invLast ||
-        0;
+    // True stock value from Inventory costing (qty × averageCost per row)
+    const inventoryValueSum = rows.reduce(
+        (s, r) => s + (Number(r.inventoryValue) || 0),
+        0
+    );
+    if (inventoryValueSum > 0) {
+        product.stockValue = Number(inventoryValueSum.toFixed(2));
+        if (product.totalStock > 0) {
+            product.averagePurchasePrice = Number(
+                (inventoryValueSum / product.totalStock).toFixed(2)
+            );
+        }
+    } else {
+        const unitCost =
+            Number(product.averagePurchasePrice) ||
+            Number(product.purchasePrice) ||
+            Number(product.costPrice) ||
+            invLast ||
+            0;
+        product.stockValue = Number((product.totalStock * unitCost).toFixed(2));
+    }
 
-    product.stockValue = Number((product.totalStock * unitCost).toFixed(2));
     product.lastStockUpdatedAt = new Date();
 
     if (typeof product.recomputeLowStock === "function") {
         product.recomputeLowStock();
     }
     await product.save();
+
+    // Keep ProductVariant.quantity in sync with live Inventory / IMEI stock
+    const isImei =
+        String(product.trackingType || "")
+            .toUpperCase()
+            .includes("IMEI") &&
+        !String(product.trackingType || "")
+            .toUpperCase()
+            .includes("NON");
+
+    const byVariant = await Inventory.aggregate([
+        {
+            $match: {
+                productId: productObjectId,
+                isDeleted: { $ne: true }
+            }
+        },
+        {
+            $group: {
+                _id: "$productVariantId",
+                qty: { $sum: "$currentStock" },
+                avail: { $sum: "$availableStock" }
+            }
+        }
+    ]);
+
+    for (const row of byVariant) {
+        if (!row._id) continue;
+        let qty = Number(row.avail) || Number(row.qty) || 0;
+        if (isImei) {
+            qty = await ItemTrack.countDocuments({
+                productId: productObjectId,
+                variantId: row._id,
+                status: "available"
+            });
+        }
+        await ProductVariant.updateOne(
+            { _id: row._id, isDeleted: { $ne: true } },
+            { $set: { quantity: qty } }
+        );
+    }
 
     return populateProduct(Product.findById(product._id));
 };

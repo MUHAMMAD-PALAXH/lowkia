@@ -264,8 +264,6 @@ const upsertInventory = async ({
     inv.lastPurchasePrice = purchasePrice;
     inv.lastStockInDate = new Date();
     inv.lastGRN = grnId;
-    inv.inventoryValue =
-        (Number(inv.averageCost) || purchasePrice) * inv.currentStock;
     if (!inv.averageCost || previous <= 0) {
         inv.averageCost = purchasePrice;
     } else {
@@ -273,6 +271,9 @@ const upsertInventory = async ({
             (inv.averageCost * previous + purchasePrice * qty) /
             (previous + qty);
     }
+    // Value after averageCost is updated
+    inv.inventoryValue =
+        (Number(inv.averageCost) || purchasePrice) * inv.currentStock;
 
     const avail = Number(inv.availableStock) || 0;
     const reorder = Number(inv.reorderLevel) || 0;
