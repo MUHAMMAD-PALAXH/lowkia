@@ -9,11 +9,28 @@ const grnItemSchema = new mongoose.Schema(
 {
 
 
+    purchaseOrderItemId: {
+        type: mongoose.Schema.Types.ObjectId,
+        default: null
+    },
+
     productId:{
 
         type:mongoose.Schema.Types.ObjectId,
         ref:"Product",
-        required:true
+        default: null
+    },
+
+    productVariantId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "ProductVariant",
+        default: null
+    },
+
+    trackingType: {
+        type: String,
+        enum: ["IMEI", "Non-IMEI"],
+        default: "Non-IMEI"
     },
 
 
@@ -21,6 +38,11 @@ const grnItemSchema = new mongoose.Schema(
 
         type:String,
         default:""
+    },
+
+    barcode: {
+        type: String,
+        default: ""
     },
 
 
@@ -41,7 +63,8 @@ const grnItemSchema = new mongoose.Schema(
     receivedQuantity:{
 
         type:Number,
-        required:true
+        required:true,
+        min: 0
     },
 
 
@@ -79,6 +102,12 @@ const grnItemSchema = new mongoose.Schema(
         default:0
     },
 
+    // IMEI list for this receive line (scanned or bulk)
+    imeis: {
+        type: [String],
+        default: []
+    },
+
 
     remarks:{
 
@@ -89,7 +118,7 @@ const grnItemSchema = new mongoose.Schema(
 },
 {
 
-    _id:false
+    _id:true
 });
 
 
@@ -105,7 +134,8 @@ branchId:{
 
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
-    required:true
+    default: null,
+    index: true
 },
 
 
@@ -144,7 +174,8 @@ supplierId:{
 
     type:mongoose.Schema.Types.ObjectId,
     ref:"Supplier",
-    required:true
+    default: null,
+    index: true
 },
 
 
@@ -320,12 +351,41 @@ status:{
     type:String,
     enum:[
         "Draft",
-        "Received",
-        "Verified",
+        "Pending Approval",
         "Completed",
-        "Cancelled"
+        "Cancelled",
+        // legacy values kept for old docs
+        "Received",
+        "Verified"
     ],
-    default:"Draft"
+    default:"Draft",
+    index: true
+},
+
+requiresApproval: {
+    type: Boolean,
+    default: false
+},
+
+approvedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "AdminUser",
+    default: null
+},
+
+approvedAt: {
+    type: Date,
+    default: null
+},
+
+submittedAt: {
+    type: Date,
+    default: null
+},
+
+rejectionReason: {
+    type: String,
+    default: ""
 },
 
 

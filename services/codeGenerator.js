@@ -36,6 +36,7 @@ const MODULE_CONFIG = {
     stock_transfer: { prefix: "ST", padding: 6 },
     stock_adjustment: { prefix: "SA", padding: 6 },
     stock_count: { prefix: "SC", padding: 6 },
+    stock_movement: { prefix: "SM", padding: 6 },
     damage_stock: { prefix: "DST", padding: 6 },
 
     sales_quotation: { prefix: "QT", padding: 6 },
@@ -175,6 +176,7 @@ const generatePurchaseReturnCode = () => generateCode("purchase_return");
 const generateStockTransferCode = () => generateCode("stock_transfer");
 const generateStockAdjustmentCode = () => generateCode("stock_adjustment");
 const generateStockCountCode = () => generateCode("stock_count");
+const generateStockMovementCode = () => generateCode("stock_movement");
 const generateDamageStockCode = () => generateCode("damage_stock");
 
 // =====================================================
@@ -243,6 +245,7 @@ module.exports = {
     generateStockTransferCode,
     generateStockAdjustmentCode,
     generateStockCountCode,
+    generateStockMovementCode,
     generateDamageStockCode,
 
     generateSalesQuotationCode,

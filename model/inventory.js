@@ -14,7 +14,7 @@ const inventorySchema = new mongoose.Schema(
 
             type: mongoose.Schema.Types.ObjectId,
             ref: "Branch",
-            required: true,
+            default: null,
             index: true
         },
 
