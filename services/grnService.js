@@ -51,6 +51,14 @@ const normalizeImei = (value) =>
         .toUpperCase()
         .replace(/\s+/g, "");
 
+const resolveTrackingType = (raw) => {
+    const tt = String(raw || "")
+        .trim()
+        .toUpperCase();
+    if (tt.includes("IMEI") && !tt.includes("NON")) return "IMEI";
+    return "Non-IMEI";
+};
+
 const populateGrn = (query) =>
     query
         .populate("purchaseOrderId", "purchaseOrderNo status purchaseType items")
@@ -60,7 +68,30 @@ const populateGrn = (query) =>
         .populate("createdBy", "name email")
         .populate("approvedBy", "name email")
         .populate("items.productId", "name productCode trackingType barcode sku")
-        .populate("items.productVariantId", "sku combinationString");
+        .populate("items.productVariantId", "sku combinationString barcode");
+
+/** After populate, sync line trackingType / barcode from product when stale */
+const enrichGrnDoc = (grn) => {
+    if (!grn) return grn;
+    const obj = typeof grn.toObject === "function" ? grn.toObject() : grn;
+    for (const line of obj.items || []) {
+        const product = line.productId;
+        if (product && typeof product === "object") {
+            line.trackingType = resolveTrackingType(product.trackingType);
+            if (!line.barcode && product.barcode) line.barcode = product.barcode;
+            if (!line.sku && product.sku) line.sku = product.sku;
+            if (!line.productName && product.name) line.productName = product.name;
+        } else if (line.trackingType) {
+            line.trackingType = resolveTrackingType(line.trackingType);
+        }
+        const variant = line.productVariantId;
+        if (variant && typeof variant === "object") {
+            if (!line.barcode && variant.barcode) line.barcode = variant.barcode;
+            if (!line.sku && variant.sku) line.sku = variant.sku;
+        }
+    }
+    return obj;
+};
 
 const findGrnOrFail = async (id, session = null) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -91,8 +122,7 @@ const buildLinesFromPo = async (po) => {
         if (pending <= 0) continue;
 
         const product = await loadProductMeta(item.productId);
-        const trackingType =
-            product?.trackingType === "IMEI" ? "IMEI" : "Non-IMEI";
+        const trackingType = resolveTrackingType(product?.trackingType);
 
         lines.push({
             purchaseOrderItemId: item._id,
@@ -100,9 +130,10 @@ const buildLinesFromPo = async (po) => {
             productVariantId: item.productVariantId || null,
             trackingType,
             sku: item.sku || product?.sku || "",
-            barcode: product?.barcode || "",
+            barcode: product?.barcode || item.barcode || "",
             productName: item.productName,
-            orderedQuantity: Number(item.quantity) || 0,
+            // Cap for THIS GRN = remaining pending on PO (supports partial receive)
+            orderedQuantity: pending,
             receivedQuantity: 0,
             damagedQuantity: 0,
             acceptedQuantity: 0,
@@ -482,14 +513,35 @@ const listReceivablePurchaseOrders = async (query = {}) => {
         .populate("warehouseId", "warehouseCode warehouseName")
         .lean();
 
+    const poIds = items.map((p) => p._id);
+    const openGrns = await GRN.find({
+        purchaseOrderId: { $in: poIds },
+        ...NOT_DELETED,
+        status: { $in: EDITABLE_GRN },
+        inventoryUpdated: { $ne: true }
+    })
+        .select("grnNumber purchaseOrderId status")
+        .lean();
+    const openByPo = new Map(
+        openGrns.map((g) => [String(g.purchaseOrderId), g])
+    );
+
     return {
-        items: items.map((po) => ({
-            ...po,
-            pendingLines: (po.items || []).filter(
-                (i) =>
-                    Number(i.quantity || 0) - Number(i.receivedQuantity || 0) > 0
-            ).length
-        }))
+        items: items.map((po) => {
+            const open = openByPo.get(String(po._id));
+            return {
+                ...po,
+                pendingLines: (po.items || []).filter(
+                    (i) =>
+                        Number(i.quantity || 0) -
+                            Number(i.receivedQuantity || 0) >
+                        0
+                ).length,
+                openGrnId: open?._id || null,
+                openGrnNumber: open?.grnNumber || null,
+                hasOpenGrn: Boolean(open)
+            };
+        })
     };
 };
 
@@ -509,6 +561,38 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
             "GRN can only be created from Ordered or Partially Received purchase orders.",
             400
         );
+    }
+
+    // One open GRN per PO — reopen Draft / Pending instead of creating duplicates
+    const existingOpen = await GRN.findOne({
+        purchaseOrderId: poId,
+        ...NOT_DELETED,
+        status: { $in: EDITABLE_GRN },
+        inventoryUpdated: { $ne: true }
+    }).sort({ createdAt: -1 });
+
+    if (existingOpen) {
+        // Heal stale Non-IMEI flags if product is IMEI-tracked
+        let dirty = false;
+        for (const line of existingOpen.items || []) {
+            if (!line.productId) continue;
+            const product = await loadProductMeta(line.productId);
+            if (!product) continue;
+            const tt = resolveTrackingType(product.trackingType);
+            if (line.trackingType !== tt) {
+                line.trackingType = tt;
+                dirty = true;
+            }
+            if (!line.barcode && product.barcode) {
+                line.barcode = product.barcode;
+                dirty = true;
+            }
+        }
+        if (dirty) await existingOpen.save();
+        const reused = await populateGrn(GRN.findById(existingOpen._id));
+        const plain = enrichGrnDoc(reused);
+        plain.reusedExisting = true;
+        return plain;
     }
 
     const warehouseId =
@@ -550,7 +634,7 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
 
     recalculateGrn(grn);
     await grn.save();
-    return populateGrn(GRN.findById(grn._id));
+    return enrichGrnDoc(await populateGrn(GRN.findById(grn._id)));
 };
 
 const getGrns = async (query = {}) => {
@@ -598,7 +682,7 @@ const getGrnById = async (id) => {
         GRN.findOne({ _id: id, ...NOT_DELETED })
     );
     if (!grn) throw new AppError("GRN not found.", 404);
-    return grn;
+    return enrichGrnDoc(grn);
 };
 
 const getGrnStats = async () => {
@@ -654,6 +738,9 @@ const updateGrn = async (id, payload = {}, actorId = null) => {
     if (payload.internalNote !== undefined) {
         grn.internalNote = String(payload.internalNote).trim();
     }
+    if (payload.remarks !== undefined) {
+        grn.internalNote = String(payload.remarks).trim();
+    }
     if (payload.receivedDate) grn.receivedDate = new Date(payload.receivedDate);
     if (payload.invoiceDate !== undefined) {
         grn.invoiceDate = payload.invoiceDate
@@ -706,7 +793,57 @@ const updateGrn = async (id, payload = {}, actorId = null) => {
     recalculateGrn(grn);
     grn.updatedBy = toObjectId(actorId) || grn.updatedBy;
     await grn.save();
-    return populateGrn(GRN.findById(grn._id));
+    return enrichGrnDoc(await populateGrn(GRN.findById(grn._id)));
+};
+
+const findGrnLine = (grn, payload = {}) => {
+    const itemId = payload.itemId || payload.lineId || payload._id;
+    const poItemId = payload.purchaseOrderItemId;
+    const productId = payload.productId;
+    const variantId = payload.productVariantId;
+
+    // Prefer PO line id — most stable across create/reuse
+    if (poItemId) {
+        const byPo = (grn.items || []).find(
+            (i) => String(i.purchaseOrderItemId) === String(poItemId)
+        );
+        if (byPo) return byPo;
+    }
+
+    if (itemId && mongoose.Types.ObjectId.isValid(String(itemId))) {
+        try {
+            const bySubId = grn.items.id(itemId);
+            if (bySubId) return bySubId;
+        } catch (_) {}
+        const byId = (grn.items || []).find(
+            (i) => String(i._id) === String(itemId)
+        );
+        if (byId) return byId;
+    }
+
+    if (productId) {
+        return (grn.items || []).find((i) => {
+            if (String(i.productId) !== String(productId)) return false;
+            if (variantId) {
+                return String(i.productVariantId || "") === String(variantId);
+            }
+            return true;
+        });
+    }
+    return null;
+};
+
+/** Ensure line trackingType matches product before IMEI ops */
+const ensureLineTracking = async (line) => {
+    if (!line?.productId) return line;
+    const product = await loadProductMeta(line.productId);
+    if (!product) return line;
+    const tt = resolveTrackingType(product.trackingType);
+    if (line.trackingType !== tt) {
+        line.trackingType = tt;
+    }
+    if (!line.barcode && product.barcode) line.barcode = product.barcode;
+    return line;
 };
 
 /** Add one IMEI to a GRN line (scan) */
@@ -717,14 +854,20 @@ const scanImei = async (id, payload = {}, actorId = null) => {
     }
 
     const imei = normalizeImei(payload.imei);
-    if (!imei || imei.length < 8) {
-        throw new AppError("Invalid IMEI.", 400);
+    if (!imei || imei.length < 5) {
+        throw new AppError("Invalid IMEI (min 5 characters).", 400);
     }
 
     const exists = await ItemTrack.findOne({ imei }).select("_id").lean();
     if (exists) throw new AppError(`Duplicate IMEI: ${imei}`, 400);
 
-    // Also reject if already on this or another draft GRN
+    const onThis = (grn.items || []).some((i) =>
+        (i.imeis || []).map(normalizeImei).includes(imei)
+    );
+    if (onThis) {
+        throw new AppError("IMEI already scanned on this GRN.", 400);
+    }
+
     const onOther = await GRN.findOne({
         ...NOT_DELETED,
         status: { $in: EDITABLE_GRN },
@@ -740,31 +883,24 @@ const scanImei = async (id, payload = {}, actorId = null) => {
         );
     }
 
-    const line =
-        grn.items.id(payload.itemId || payload.lineId) ||
-        grn.items.find(
-            (i) =>
-                String(i.purchaseOrderItemId) ===
-                    String(payload.purchaseOrderItemId) ||
-                String(i._id) === String(payload.itemId)
+    const line = findGrnLine(grn, payload);
+    if (!line) {
+        throw new AppError(
+            "GRN line not found. Refresh the GRN and try again.",
+            404
         );
-    if (!line) throw new AppError("GRN line not found.", 404);
+    }
+    await ensureLineTracking(line);
     if (line.trackingType !== "IMEI") {
-        throw new AppError("This line is not an IMEI product.", 400);
+        throw new AppError(
+            "This product is Non-IMEI — enter received quantity instead.",
+            400
+        );
     }
 
-    const pendingMax =
-        Number(line.orderedQuantity || 0) -
-        // already received on PO is reflected in ordered remaining at create time;
-        // use orderedQuantity as cap for this GRN line's pending at create
-        0;
-    // Cap by orderedQuantity on this GRN line (pending at create)
-    if ((line.imeis || []).includes(imei)) {
-        throw new AppError("IMEI already scanned on this line.", 400);
-    }
     if ((line.imeis || []).length >= Number(line.orderedQuantity || 0)) {
         throw new AppError(
-            `Cannot scan more than pending qty (${line.orderedQuantity}) for this line.`,
+            `Cannot scan more than qty (${line.orderedQuantity}) for this line.`,
             400
         );
     }
@@ -774,7 +910,7 @@ const scanImei = async (id, payload = {}, actorId = null) => {
     recalculateGrn(grn);
     grn.updatedBy = toObjectId(actorId) || grn.updatedBy;
     await grn.save();
-    return populateGrn(GRN.findById(grn._id));
+    return enrichGrnDoc(await populateGrn(GRN.findById(grn._id)));
 };
 
 /** Bulk add IMEIs to a line */
@@ -785,33 +921,52 @@ const bulkAddImeis = async (id, payload = {}, actorId = null) => {
               .split(/[\n,;\s]+/)
               .filter(Boolean);
     const normalized = [
-        ...new Set(list.map(normalizeImei).filter((e) => e.length >= 8))
+        ...new Set(list.map(normalizeImei).filter((e) => e.length >= 5))
     ];
-    if (!normalized.length) throw new AppError("No valid IMEIs provided.", 400);
+    if (!normalized.length) {
+        throw new AppError(
+            "No valid IMEIs provided (min 5 characters each).",
+            400
+        );
+    }
 
     const grn = await findGrnOrFail(id);
     if (!EDITABLE_GRN.includes(grn.status) || grn.inventoryUpdated) {
         throw new AppError("Cannot add IMEIs on this GRN.", 400);
     }
 
-    const line =
-        grn.items.id(payload.itemId || payload.lineId) ||
-        grn.items.find(
-            (i) =>
-                String(i.purchaseOrderItemId) ===
-                String(payload.purchaseOrderItemId)
+    const line = findGrnLine(grn, payload);
+    if (!line) {
+        throw new AppError(
+            "GRN line not found. Refresh the GRN and try again.",
+            404
         );
-    if (!line) throw new AppError("GRN line not found.", 404);
+    }
+    await ensureLineTracking(line);
     if (line.trackingType !== "IMEI") {
-        throw new AppError("This line is not an IMEI product.", 400);
+        throw new AppError(
+            "This product is Non-IMEI — enter received quantity instead.",
+            400
+        );
     }
 
     await assertImeiUnique(normalized, null);
 
-    const merged = [...new Set([...(line.imeis || []), ...normalized])];
+    const alreadyOnGrn = new Set();
+    for (const item of grn.items || []) {
+        for (const e of item.imeis || []) {
+            alreadyOnGrn.add(normalizeImei(e));
+        }
+    }
+    const fresh = normalized.filter((e) => !alreadyOnGrn.has(e));
+    if (!fresh.length) {
+        throw new AppError("All provided IMEIs are already on this GRN.", 400);
+    }
+
+    const merged = [...new Set([...(line.imeis || []), ...fresh])];
     if (merged.length > Number(line.orderedQuantity || 0)) {
         throw new AppError(
-            `Too many IMEIs (${merged.length}) for pending qty ${line.orderedQuantity}.`,
+            `Too many IMEIs (${merged.length}) for qty ${line.orderedQuantity}.`,
             400
         );
     }
@@ -821,7 +976,7 @@ const bulkAddImeis = async (id, payload = {}, actorId = null) => {
     recalculateGrn(grn);
     grn.updatedBy = toObjectId(actorId) || grn.updatedBy;
     await grn.save();
-    return populateGrn(GRN.findById(grn._id));
+    return enrichGrnDoc(await populateGrn(GRN.findById(grn._id)));
 };
 
 const removeImei = async (id, payload = {}, actorId = null) => {
@@ -830,20 +985,14 @@ const removeImei = async (id, payload = {}, actorId = null) => {
         throw new AppError("Cannot remove IMEI on this GRN.", 400);
     }
     const imei = normalizeImei(payload.imei);
-    const line =
-        grn.items.id(payload.itemId || payload.lineId) ||
-        grn.items.find(
-            (i) =>
-                String(i.purchaseOrderItemId) ===
-                String(payload.purchaseOrderItemId)
-        );
+    const line = findGrnLine(grn, payload);
     if (!line) throw new AppError("GRN line not found.", 404);
-    line.imeis = (line.imeis || []).filter((e) => e !== imei);
+    line.imeis = (line.imeis || []).filter((e) => normalizeImei(e) !== imei);
     line.receivedQuantity = line.imeis.length;
     recalculateGrn(grn);
     grn.updatedBy = toObjectId(actorId) || grn.updatedBy;
     await grn.save();
-    return populateGrn(GRN.findById(grn._id));
+    return enrichGrnDoc(await populateGrn(GRN.findById(grn._id)));
 };
 
 const submitGrn = async (id, actorId = null, opts = {}) => {
