@@ -74,12 +74,58 @@ exports.confirmSalesOrder = asyncHandler(async (req, res) => {
     );
 });
 
+exports.completeSale = asyncHandler(async (req, res) => {
+    const order = await salesOrderService.completeSale(
+        req.params.id,
+        req.body || {},
+        getActorId(req)
+    );
+    return success(
+        res,
+        "Sale completed. Stock / IMEI updated when paid or delivered.",
+        order
+    );
+});
+
+exports.markPaid = asyncHandler(async (req, res) => {
+    const order = await salesOrderService.markPaid(
+        req.params.id,
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Payment recorded.", order);
+});
+
+exports.deliverSalesOrder = asyncHandler(async (req, res) => {
+    const order = await salesOrderService.deliverSalesOrder(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Order delivered. Stock updated if needed.", order);
+});
+
 exports.completeSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.completeSalesOrder(
         req.params.id,
         getActorId(req)
     );
     return success(res, "Sales order completed successfully.", order);
+});
+
+exports.lookupByBarcode = asyncHandler(async (req, res) => {
+    const data = await salesOrderService.lookupByBarcode(
+        req.params.code,
+        req.query.warehouseId
+    );
+    return success(res, "Product found for barcode.", data);
+});
+
+exports.lookupByImei = asyncHandler(async (req, res) => {
+    const data = await salesOrderService.lookupByImei(
+        req.params.imei,
+        req.query.warehouseId
+    );
+    return success(res, "IMEI found.", data);
 });
 
 exports.cancelSalesOrder = asyncHandler(async (req, res) => {

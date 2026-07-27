@@ -10,7 +10,8 @@ const StockMovement = require("../model/StockMovement");
 const ItemTrack = require("../model/itemTrack");
 const {
     generateSalesOrderCode,
-    generateStockMovementCode
+    generateStockMovementCode,
+    generateCustomerCode
 } = require("./codeGenerator");
 const productService = require("./productService");
 const AppError = require("../utils/appError");
@@ -213,28 +214,93 @@ const normalizeItems = async (itemsInput = []) => {
 };
 
 const resolveHeaderRefs = async (payload) => {
-    const customerId = toObjectId(payload.customerId);
     const warehouseId = toObjectId(payload.warehouseId);
     const branchId = toObjectId(payload.branchId);
 
-    if (!customerId) throw new AppError("Customer is required.", 400);
     if (!warehouseId) throw new AppError("Warehouse is required.", 400);
     if (!branchId) throw new AppError("Branch is required.", 400);
 
-    const [customer, warehouse, branch] = await Promise.all([
-        Customer.findOne({ _id: customerId, isDeleted: false }),
+    let customerId = toObjectId(payload.customerId);
+    let customer = null;
+
+    const isWalkIn =
+        payload.walkIn === true ||
+        payload.isWalkIn === true ||
+        String(payload.customerMode || "").toLowerCase() === "walkin";
+
+    if (isWalkIn || !customerId) {
+        const name =
+            (payload.customerName || payload.walkInName || "Walk-in Customer")
+                .toString()
+                .trim() || "Walk-in Customer";
+        const phone = (payload.customerPhone || payload.walkInPhone || "")
+            .toString()
+            .trim();
+
+        if (phone) {
+            customer = await Customer.findOne({
+                phone,
+                isDeleted: false
+            });
+        }
+        if (!customer) {
+            const customerCode = await generateCustomerCode();
+            customer = await Customer.create({
+                name,
+                phone,
+                customerCode,
+                customerId: customerCode,
+                customerType: "Retail",
+                paymentTerms: "Cash",
+                status: "Active",
+                isApproved: true,
+                approvedAt: new Date(),
+                note: "Walk-in / showroom customer"
+            });
+        }
+        customerId = customer._id;
+    } else {
+        customer = await Customer.findOne({ _id: customerId, isDeleted: false });
+        if (!customer) throw new AppError("Customer not found.", 404);
+    }
+
+    if (customer.status === "Blocked") {
+        throw new AppError("Cannot sell to a blocked customer.", 400);
+    }
+
+    const [warehouse, branch] = await Promise.all([
         Warehouse.findOne({ _id: warehouseId, ...NOT_DELETED }),
         Branch.findOne({ _id: branchId, ...NOT_DELETED })
     ]);
 
-    if (!customer) throw new AppError("Customer not found.", 404);
-    if (customer.status === "Blocked") {
-        throw new AppError("Cannot sell to a blocked customer.", 400);
-    }
     if (!warehouse) throw new AppError("Warehouse not found.", 404);
     if (!branch) throw new AppError("Branch not found.", 404);
 
-    return { customer, warehouse, branch, customerId, warehouseId, branchId };
+    const displayName =
+        (payload.customerName || payload.walkInName || customer.name || "")
+            .toString()
+            .trim() || customer.name;
+    const displayPhone =
+        (payload.customerPhone || payload.walkInPhone || customer.phone || "")
+            .toString()
+            .trim() ||
+        customer.phone ||
+        "";
+
+    return {
+        customer: {
+            _id: customer._id,
+            name: displayName,
+            phone: displayPhone,
+            email: customer.email || "",
+            address: customer.address || ""
+        },
+        warehouse,
+        branch,
+        customerId,
+        warehouseId,
+        branchId
+    };
 };
 
 const findOrderOrFail = async (id) => {
@@ -648,14 +714,14 @@ const confirmSalesOrder = async (id, actorId = null) => {
     if (order.stockUpdated) {
         throw new AppError("Stock already deducted for this order.", 400);
     }
-    if (["Completed", "Cancelled", "Confirmed", "Processing"].includes(order.status)) {
-        if (order.status === "Confirmed" || order.status === "Processing") {
-            throw new AppError("Sales order is already confirmed.", 400);
-        }
+    if (["Completed", "Cancelled"].includes(order.status)) {
         throw new AppError(
             `Cannot confirm a sales order in "${order.status}" status.`,
             400
         );
+    }
+    if (["Confirmed", "Processing"].includes(order.status) && order.stockUpdated) {
+        throw new AppError("Sales order is already confirmed.", 400);
     }
     if (!order.items?.length) {
         throw new AppError("Sales order has no lines.", 400);
@@ -664,9 +730,41 @@ const confirmSalesOrder = async (id, actorId = null) => {
         throw new AppError("Warehouse is required to confirm sale.", 400);
     }
 
+    await applyStockOut(order, actorId, {
+        setStatus: "Confirmed",
+        setDeliveryStatus: "Processing"
+    });
+
+    try {
+        const customer = await Customer.findById(order.customerId);
+        if (customer && typeof customer.updateBalance === "function") {
+            await customer.updateBalance(order.grandTotal, order.paidAmount || 0);
+        }
+    } catch (_) {
+        /* ignore */
+    }
+
+    return populateSo(SalesOrder.findById(order._id));
+};
+
+/**
+ * Shared stock OUT + IMEI sold. Idempotent via order.stockUpdated.
+ */
+const applyStockOut = async (
+    order,
+    actorId = null,
+    { setStatus, setDeliveryStatus } = {}
+) => {
+    if (order.stockUpdated) return order;
+    if (!order.items?.length) {
+        throw new AppError("Sales order has no lines.", 400);
+    }
+    if (!order.warehouseId) {
+        throw new AppError("Warehouse is required for stock out.", 400);
+    }
+
     const session = await mongoose.startSession();
     session.startTransaction();
-
     const movementIds = [];
     const productIds = new Set();
 
@@ -702,22 +800,21 @@ const confirmSalesOrder = async (id, actorId = null) => {
                 session
             });
 
-            if (result.movement?._id) {
-                movementIds.push(result.movement._id);
-            }
-            if (line.productId) {
-                productIds.add(String(line.productId));
-            }
+            if (result.movement?._id) movementIds.push(result.movement._id);
+            if (line.productId) productIds.add(String(line.productId));
 
             line.deliveredQuantity = qty;
             line.pendingQuantity = 0;
         }
 
-        order.status = "Confirmed";
-        order.deliveryStatus = "Processing";
+        if (setStatus) order.status = setStatus;
+        if (setDeliveryStatus) order.deliveryStatus = setDeliveryStatus;
         order.stockUpdated = true;
         order.stockUpdatedAt = new Date();
-        order.stockMovementIds = movementIds;
+        order.stockMovementIds = [
+            ...(order.stockMovementIds || []),
+            ...movementIds
+        ];
         order.updatedBy = actorId || null;
         if (!order.approvedAt) {
             order.approvedBy = actorId || null;
@@ -737,19 +834,82 @@ const confirmSalesOrder = async (id, actorId = null) => {
         try {
             await productService.refreshStockSummary(pid);
         } catch (e) {
-            console.warn(
-                "[SO] refreshStockSummary failed:",
-                pid,
-                e?.message || e
-            );
+            console.warn("[SO] refreshStockSummary failed:", pid, e?.message || e);
         }
     }
 
-    // Update customer sales totals (best effort)
+    return order;
+};
+
+/**
+ * Stock OUT when payment is successful (Paid) OR goods are delivered.
+ * Showroom one-shot: mark paid + delivered + stock out.
+ */
+const completeSale = async (id, payload = {}, actorId = null) => {
+    const order = await findOrderOrFail(id);
+    if (["Cancelled"].includes(order.status)) {
+        throw new AppError("Cannot complete a cancelled sales order.", 400);
+    }
+    if (!order.items?.length) {
+        throw new AppError("Sales order has no lines.", 400);
+    }
+
+    const method = payload.paymentMethod || order.paymentMethod || "Cash";
+    const isCredit = String(method).toLowerCase() === "credit";
+    let paidAmount =
+        payload.paidAmount !== undefined
+            ? Math.max(Number(payload.paidAmount) || 0, 0)
+            : Number(order.paidAmount) || 0;
+
+    if (!isCredit && payload.markFullyPaid !== false && paidAmount <= 0) {
+        paidAmount = Number(order.grandTotal) || 0;
+    }
+    if (!isCredit && payload.markFullyPaid === true) {
+        paidAmount = Number(order.grandTotal) || 0;
+    }
+
+    order.paymentMethod = method;
+    order.paidAmount = paidAmount;
+    order.dueAmount = Math.max((Number(order.grandTotal) || 0) - paidAmount, 0);
+    if (paidAmount <= 0) order.paymentStatus = isCredit ? "Pending" : "Pending";
+    else if (paidAmount < (Number(order.grandTotal) || 0)) {
+        order.paymentStatus = "Partial";
+    } else {
+        order.paymentStatus = "Paid";
+    }
+
+    const markDelivered = payload.markDelivered !== false;
+    if (markDelivered) {
+        order.deliveryStatus = "Delivered";
+        order.deliveryDate = new Date();
+        order.status = "Completed";
+    } else if (!["Confirmed", "Processing", "Completed"].includes(order.status)) {
+        order.status = "Confirmed";
+        order.deliveryStatus = order.deliveryStatus || "Processing";
+    }
+
+    const shouldStockOut =
+        order.paymentStatus === "Paid" ||
+        order.deliveryStatus === "Delivered" ||
+        isCredit; // credit: goods leave on complete-sale
+
+    if (shouldStockOut && !order.stockUpdated) {
+        await applyStockOut(order, actorId, {
+            setStatus: order.status,
+            setDeliveryStatus: order.deliveryStatus
+        });
+    } else {
+        order.updatedBy = actorId || null;
+        await order.save();
+    }
+
     try {
         const customer = await Customer.findById(order.customerId);
         if (customer && typeof customer.updateBalance === "function") {
-            await customer.updateBalance(order.grandTotal, order.paidAmount || 0);
+            await customer.updateBalance(
+                order.grandTotal,
+                order.paidAmount || 0
+            );
         }
     } catch (_) {
         /* ignore */
@@ -758,23 +918,170 @@ const confirmSalesOrder = async (id, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const completeSalesOrder = async (id, actorId = null) => {
+const markPaid = async (id, payload = {}, actorId = null) => {
     const order = await findOrderOrFail(id);
-    if (!["Confirmed", "Processing"].includes(order.status)) {
+    if (order.status === "Cancelled") {
+        throw new AppError("Cannot pay a cancelled order.", 400);
+    }
+    const paidAmount =
+        payload.paidAmount !== undefined
+            ? Math.max(Number(payload.paidAmount) || 0, 0)
+            : Number(order.grandTotal) || 0;
+    order.paidAmount = paidAmount;
+    order.dueAmount = Math.max((Number(order.grandTotal) || 0) - paidAmount, 0);
+    if (payload.paymentMethod) order.paymentMethod = payload.paymentMethod;
+    if (paidAmount <= 0) order.paymentStatus = "Pending";
+    else if (paidAmount < (Number(order.grandTotal) || 0)) {
+        order.paymentStatus = "Partial";
+    } else order.paymentStatus = "Paid";
+
+    order.updatedBy = actorId || null;
+
+    if (order.paymentStatus === "Paid" && !order.stockUpdated) {
+        await applyStockOut(order, actorId, {
+            setStatus: order.status === "Draft" ? "Confirmed" : order.status,
+            setDeliveryStatus:
+                order.deliveryStatus === "Pending"
+                    ? "Processing"
+                    : order.deliveryStatus
+        });
+    } else {
+        await order.save();
+    }
+
+    return populateSo(SalesOrder.findById(order._id));
+};
+
+const deliverSalesOrder = async (id, actorId = null) => {
+    const order = await findOrderOrFail(id);
+    if (order.status === "Cancelled") {
+        throw new AppError("Cannot deliver a cancelled order.", 400);
+    }
+
+    order.deliveryStatus = "Delivered";
+    order.deliveryDate = new Date();
+    order.status = "Completed";
+    order.updatedBy = actorId || null;
+
+    if (!order.stockUpdated) {
+        await applyStockOut(order, actorId, {
+            setStatus: "Completed",
+            setDeliveryStatus: "Delivered"
+        });
+    } else {
+        await order.save();
+    }
+
+    return populateSo(SalesOrder.findById(order._id));
+};
+
+const completeSalesOrder = async (id, actorId = null) => {
+    return deliverSalesOrder(id, actorId);
+};
+
+const lookupByBarcode = async (barcode, warehouseId = null) => {
+    const value = String(barcode || "").trim();
+    if (!value) throw new AppError("Barcode is required.", 400);
+
+    let matchedVariant = await ProductVariant.findOne({
+        barcode: value,
+        isDeleted: { $ne: true }
+    });
+
+    let product = null;
+    if (matchedVariant) {
+        product = await Product.findOne({
+            _id: matchedVariant.productId,
+            ...NOT_DELETED
+        });
+    } else {
+        product = await Product.findOne({ barcode: value, ...NOT_DELETED });
+        if (product) {
+            matchedVariant = await ProductVariant.findOne({
+                productId: product._id,
+                isDeleted: { $ne: true },
+                isDefaultVariant: true
+            });
+            if (!matchedVariant) {
+                matchedVariant = await ProductVariant.findOne({
+                    productId: product._id,
+                    isDeleted: { $ne: true }
+                });
+            }
+        }
+    }
+
+    if (!product) throw new AppError("No product found for this barcode.", 404);
+
+    const trackingType = resolveTrackingType(product.trackingType);
+    if (trackingType === "IMEI") {
         throw new AppError(
-            `Only Confirmed/Processing orders can be completed.`,
+            "This barcode belongs to an IMEI product. Scan IMEI instead.",
             400
         );
     }
-    if (!order.stockUpdated) {
-        throw new AppError("Confirm the order (stock out) before complete.", 400);
+
+    let availableStock = 0;
+    if (warehouseId && toObjectId(warehouseId)) {
+        const inv = await Inventory.findOne({
+            warehouseId: toObjectId(warehouseId),
+            productId: product._id,
+            ...(matchedVariant
+                ? { productVariantId: matchedVariant._id }
+                : {}),
+            isDeleted: { $ne: true }
+        });
+        availableStock = Number(inv?.availableStock) || 0;
     }
-    order.status = "Completed";
-    order.deliveryStatus = "Delivered";
-    order.deliveryDate = new Date();
-    order.updatedBy = actorId || null;
-    await order.save();
-    return populateSo(SalesOrder.findById(order._id));
+
+    return {
+        productId: product._id,
+        productVariantId: matchedVariant?._id || null,
+        productName: product.name,
+        sku: matchedVariant?.sku || product.sku || "",
+        barcode: value,
+        trackingType: "Non-IMEI",
+        unitPrice:
+            Number(matchedVariant?.sellingPrice) ||
+            Number(product.sellingPrice) ||
+            0,
+        availableStock
+    };
+};
+
+const lookupByImei = async (imei, warehouseId = null) => {
+    const value = String(imei || "").trim();
+    if (!value) throw new AppError("IMEI is required.", 400);
+
+    const track = await ItemTrack.findOne({ imei: value }).populate(
+        "productId",
+        "name productCode trackingType sellingPrice"
+    );
+    if (!track) throw new AppError("IMEI not found.", 404);
+    if (track.status !== "available") {
+        throw new AppError(
+            `IMEI is not available (status: ${track.status}).`,
+            400
+        );
+    }
+
+    const variant = await ProductVariant.findById(track.variantId);
+    const product = track.productId;
+
+    return {
+        productId: product?._id || track.productId,
+        productVariantId: track.variantId,
+        productName: product?.name || "",
+        sku: variant?.sku || "",
+        imei: value,
+        trackingType: "IMEI",
+        unitPrice:
+            Number(variant?.sellingPrice) ||
+            Number(product?.sellingPrice) ||
+            0,
+        status: track.status,
+        branchId: track.currentBranchId
+    };
 };
 
 const getSalesOrderStats = async () => {
@@ -835,6 +1142,11 @@ module.exports = {
     approveSalesOrder,
     confirmSalesOrder,
     completeSalesOrder,
+    completeSale,
+    markPaid,
+    deliverSalesOrder,
     cancelSalesOrder,
-    getSalesOrderStats
+    getSalesOrderStats,
+    lookupByBarcode,
+    lookupByImei
 };

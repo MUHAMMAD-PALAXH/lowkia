@@ -14,6 +14,8 @@ const {
 
 router.get("/", listValidator, validate, salesOrderController.getSalesOrders);
 router.get("/stats", salesOrderController.getSalesOrderStats);
+router.get("/lookup/barcode/:code", salesOrderController.lookupByBarcode);
+router.get("/lookup/imei/:imei", salesOrderController.lookupByImei);
 
 router.get(
     "/:id",
@@ -62,6 +64,27 @@ router.patch(
     idValidator,
     validate,
     salesOrderController.confirmSalesOrder
+);
+
+router.patch(
+    "/:id/complete-sale",
+    idValidator,
+    validate,
+    salesOrderController.completeSale
+);
+
+router.patch(
+    "/:id/mark-paid",
+    idValidator,
+    validate,
+    salesOrderController.markPaid
+);
+
+router.patch(
+    "/:id/deliver",
+    idValidator,
+    validate,
+    salesOrderController.deliverSalesOrder
 );
 
 router.patch(

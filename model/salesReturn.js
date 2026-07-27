@@ -114,6 +114,21 @@ const salesReturnItemSchema = new mongoose.Schema(
             "Defective"
         ],
         default:"Good"
+    },
+
+
+    trackingType:{
+
+        type:String,
+        enum:["IMEI","Non-IMEI"],
+        default:"Non-IMEI"
+    },
+
+
+    imeis:{
+
+        type:[String],
+        default:[]
     }
 
 
@@ -180,7 +195,7 @@ salesInvoiceId:{
 
     type:mongoose.Schema.Types.ObjectId,
     ref:"SalesInvoice",
-    required:true
+    default:null
 },
 
 
@@ -414,7 +429,7 @@ createdBy:{
 
     type:mongoose.Schema.Types.ObjectId,
     ref:"AdminUser",
-    required:true
+    default:null
 },
 
 

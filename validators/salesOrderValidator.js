@@ -43,9 +43,12 @@ const lineRules = [
 
 const createSalesOrderValidator = [
     body("customerId")
-        .notEmpty()
-        .withMessage("Customer is required.")
+        .optional({ checkFalsy: true })
         .isMongoId(),
+    body("walkIn").optional().isBoolean(),
+    body("isWalkIn").optional().isBoolean(),
+    body("customerName").optional().isString().trim(),
+    body("customerPhone").optional().isString().trim(),
     body("warehouseId")
         .notEmpty()
         .withMessage("Warehouse is required.")

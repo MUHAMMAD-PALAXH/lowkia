@@ -322,17 +322,88 @@ router.post('/', asyncHandler(async (req, res) => {
 }));
 
 router.put('/:id', asyncHandler(async (req, res) => {
-  const { orderStatus, trackingUrl } = req.body;
-  if (!orderStatus) return res.status(400).json({ success: false, message: 'orderStatus required' });
+  const { orderStatus, trackingUrl, items } = req.body;
+  if (!orderStatus) {
+    return res.status(400).json({ success: false, message: 'orderStatus required' });
+  }
 
-  const order = await Order.findByIdAndUpdate(
-    req.params.id,
-    { orderStatus, trackingUrl },
-    { new: true }
-  );
+  const ItemTrack = require('../model/itemTrack');
+  const order = await Order.findById(req.params.id);
+  if (!order) {
+    return res.status(404).json({ success: false, message: 'Order not found' });
+  }
 
-  if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+  const previousStatus = order.orderStatus;
+  order.orderStatus = orderStatus;
+  if (trackingUrl !== undefined) order.trackingUrl = trackingUrl;
 
+  // Persist per-line IMEIs when admin assigns them during fulfillment
+  if (Array.isArray(items) && items.length) {
+    for (const incoming of items) {
+      const key = String(incoming.sId || incoming.productID || '');
+      const line = order.items.find(
+        (it) =>
+          String(it.sId || '') === key ||
+          String(it.productID || '') === String(incoming.productID || '')
+      );
+      if (line && Array.isArray(incoming.imeis)) {
+        line.imeis = incoming.imeis.map((e) => String(e).trim()).filter(Boolean);
+      }
+    }
+    order.markModified('items');
+  }
+
+  // On deliver: validate IMEI count for lines that have IMEIs and mark ItemTrack sold
+  if (orderStatus === 'delivered' && previousStatus !== 'delivered') {
+    const allImeis = [];
+    for (const item of order.items || []) {
+      const imeis = Array.isArray(item.imeis) ? item.imeis : [];
+      const qty = Number(item.quantity) || 0;
+      if (imeis.length > 0 && imeis.length < qty) {
+        return res.status(400).json({
+          success: false,
+          message: `Assign ${qty} IMEI(s) for "${item.productName}" before marking delivered.`
+        });
+      }
+      allImeis.push(...imeis.map((i) => String(i).trim()).filter(Boolean));
+    }
+
+    if (allImeis.length) {
+      const unique = [...new Set(allImeis)];
+      const available = await ItemTrack.find({
+        imei: { $in: unique },
+        status: 'available'
+      });
+      if (available.length !== unique.length) {
+        const found = available.map((t) => t.imei);
+        const missing = unique.filter((i) => !found.includes(i));
+        return res.status(400).json({
+          success: false,
+          message: `These IMEIs are not available: ${missing.join(', ')}`
+        });
+      }
+
+      await ItemTrack.updateMany(
+        { imei: { $in: unique } },
+        {
+          $set: {
+            status: 'sold',
+            'saleInfo.orderId': order._id,
+            'saleInfo.soldDate': new Date()
+          },
+          $push: {
+            history: {
+              status: 'sold',
+              date: new Date(),
+              notes: `Delivered via online order ${order._id}`
+            }
+          }
+        }
+      );
+    }
+  }
+
+  await order.save();
   res.json({ success: true, message: 'Updated', data: order });
 }));
 
