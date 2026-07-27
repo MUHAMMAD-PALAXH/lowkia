@@ -13,13 +13,17 @@ const mongoose = require("mongoose");
 const GRN = require("../model/grn");
 const PurchaseOrder = require("../model/purchaseOrder");
 const Product = require("../model/product");
+const ProductVariant = require("../model/productVariant");
 const Inventory = require("../model/inventory");
 const ItemTrack = require("../model/itemTrack");
 const StockMovement = require("../model/StockMovement");
 const {
     generateGRNCode,
-    generateStockMovementCode
+    generateStockMovementCode,
+    generateProductCode,
+    generateProductVariantCode
 } = require("./codeGenerator");
+const { generateProductBarcode } = require("./barcodeGenerator");
 const productService = require("./productService");
 const AppError = require("../utils/appError");
 
@@ -326,9 +330,162 @@ const createStockMovement = async ({
     return doc;
 };
 
+/**
+ * New-product PO lines may arrive without productId.
+ * On GRN complete, create (or reuse by name) a catalog product and link it.
+ */
+const ensureProductForGrnLine = async (line, actorId, session) => {
+    if (line.productId) {
+        // If IMEI and variant missing, create a default variant under existing product
+        if (
+            resolveTrackingType(line.trackingType) === "IMEI" &&
+            !line.productVariantId
+        ) {
+            const variant = await createDefaultVariantForProduct(
+                line.productId,
+                line,
+                session
+            );
+            line.productVariantId = variant._id;
+            if (!line.sku && variant.sku) line.sku = variant.sku;
+        }
+        return line;
+    }
+
+    const name = String(line.productName || "").trim();
+    if (!name) {
+        throw new AppError(
+            "Cannot complete GRN: a line has no product name and no productId.",
+            400
+        );
+    }
+
+    const trackingType = resolveTrackingType(line.trackingType);
+    const purchasePrice = Math.max(Number(line.purchasePrice) || 0, 0);
+
+    // Reuse existing catalog product with same name when possible
+    let product = await Product.findOne({
+        name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
+        ...NOT_DELETED
+    }).session(session);
+
+    if (!product) {
+        const productCode = await generateProductCode();
+        let barcode = "";
+        let barcodeType = "None";
+        if (trackingType === "Non-IMEI") {
+            barcode = await generateProductBarcode();
+            barcodeType = "EAN13";
+        }
+
+        const [created] = await Product.create(
+            [
+                {
+                    name,
+                    productCode,
+                    sku: (line.sku || "").toString().trim().toUpperCase(),
+                    slug: name
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, "-")
+                        .replace(/(^-|-$)/g, ""),
+                    trackingType,
+                    productType: trackingType === "IMEI" ? "Variant" : "Simple",
+                    hasVariants: trackingType === "IMEI",
+                    barcode,
+                    barcodeType,
+                    barcodeGeneratedAt: barcode ? new Date() : null,
+                    purchasePrice,
+                    sellingPrice: purchasePrice,
+                    approvalStatus: "Approved",
+                    approvalRequired: false,
+                    approvedAt: new Date(),
+                    approvedBy: toObjectId(actorId),
+                    createdBy: toObjectId(actorId),
+                    vendorId: toObjectId(actorId),
+                    uploadedByType: "Owner",
+                    uploadedById: toObjectId(actorId),
+                    uploadedAt: new Date()
+                }
+            ],
+            { session }
+        );
+        product = created;
+    }
+
+    line.productId = product._id;
+    if (!line.sku && product.sku) line.sku = product.sku;
+    if (!line.barcode && product.barcode) line.barcode = product.barcode;
+    line.trackingType = trackingType;
+
+    if (trackingType === "IMEI" && !line.productVariantId) {
+        const variant = await createDefaultVariantForProduct(
+            product._id,
+            line,
+            session
+        );
+        line.productVariantId = variant._id;
+        if (!line.sku && variant.sku) line.sku = variant.sku;
+    }
+
+    return line;
+};
+
+const createDefaultVariantForProduct = async (productId, line, session) => {
+    // Prefer an existing default / only variant
+    const existing = await ProductVariant.findOne({
+        productId,
+        isDeleted: { $ne: true }
+    })
+        .sort({ createdAt: 1 })
+        .session(session);
+    if (existing) return existing;
+
+    const purchasePrice = Math.max(Number(line.purchasePrice) || 0, 0);
+    const sku =
+        (line.sku || "").toString().trim().toUpperCase() ||
+        (await generateProductVariantCode());
+
+    const [variant] = await ProductVariant.create(
+        [
+            {
+                productId,
+                attributes: [],
+                combinationString: "Default",
+                sku,
+                purchasePrice,
+                costPrice: purchasePrice,
+                sellingPrice: purchasePrice,
+                price: purchasePrice,
+                quantity: 0
+            }
+        ],
+        { session }
+    );
+
+    await Product.updateOne(
+        { _id: productId },
+        {
+            $set: {
+                hasVariants: true,
+                productType: "Variant"
+            }
+        },
+        { session }
+    );
+
+    return variant;
+};
+
 const applyInventoryForGrn = async (grn, actorId, session) => {
     const productIds = new Set();
     const allImeis = [];
+
+    // Link / create products for New-product lines before stock update
+    for (const item of grn.items || []) {
+        const accepted = Math.max(Number(item.acceptedQuantity) || 0, 0);
+        if (accepted <= 0) continue;
+        await ensureProductForGrnLine(item, actorId, session);
+    }
 
     for (const item of grn.items || []) {
         const accepted = Math.max(Number(item.acceptedQuantity) || 0, 0);
@@ -353,7 +510,7 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
         if (accepted <= 0) continue;
         if (!item.productId) {
             throw new AppError(
-                `Product link missing for ${item.productName}. Cannot update stock for New-product lines without productId.`,
+                `Product link missing for ${item.productName}. Create or link a product on this line, then complete again.`,
                 400
             );
         }
@@ -414,6 +571,38 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
         }
 
         productIds.add(String(item.productId));
+    }
+
+    // Persist any newly linked productIds on the GRN document
+    await grn.save({ session });
+
+    // Also back-fill PO lines so future GRNs inherit the product link
+    if (grn.purchaseOrderId) {
+        const po = await PurchaseOrder.findOne({
+            _id: grn.purchaseOrderId,
+            ...NOT_DELETED
+        }).session(session);
+        if (po) {
+            let poDirty = false;
+            for (const gItem of grn.items || []) {
+                if (!gItem.productId || !gItem.purchaseOrderItemId) continue;
+                const poItem = (po.items || []).id(gItem.purchaseOrderItemId);
+                if (!poItem) continue;
+                if (!poItem.productId) {
+                    poItem.productId = gItem.productId;
+                    poDirty = true;
+                }
+                if (!poItem.productVariantId && gItem.productVariantId) {
+                    poItem.productVariantId = gItem.productVariantId;
+                    poDirty = true;
+                }
+                if (gItem.trackingType && !poItem.trackingType) {
+                    poItem.trackingType = gItem.trackingType;
+                    poDirty = true;
+                }
+            }
+            if (poDirty) await po.save({ session });
+        }
     }
 
     return [...productIds];
