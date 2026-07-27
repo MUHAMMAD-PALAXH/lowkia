@@ -852,8 +852,11 @@ const scanImei = async (id, payload = {}, actorId = null) => {
     }
 
     const imei = normalizeImei(payload.imei);
-    if (!imei || imei.length < 5) {
-        throw new AppError("Invalid IMEI (min 5 characters).", 400);
+    if (!imei || imei.length < 14 || imei.length > 17) {
+        throw new AppError(
+            "Invalid IMEI (must be 14–17 characters, usually 15 digits).",
+            400
+        );
     }
 
     const exists = await ItemTrack.findOne({ imei }).select("_id").lean();
@@ -919,11 +922,15 @@ const bulkAddImeis = async (id, payload = {}, actorId = null) => {
               .split(/[\n,;\s]+/)
               .filter(Boolean);
     const normalized = [
-        ...new Set(list.map(normalizeImei).filter((e) => e.length >= 5))
+        ...new Set(
+            list
+                .map(normalizeImei)
+                .filter((e) => e.length >= 14 && e.length <= 17)
+        )
     ];
     if (!normalized.length) {
         throw new AppError(
-            "No valid IMEIs provided (min 5 characters each).",
+            "No valid IMEIs provided (each must be 14–17 characters).",
             400
         );
     }
