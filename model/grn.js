@@ -52,6 +52,11 @@ const grnItemSchema = new mongoose.Schema(
         required:true
     },
 
+    variantLabel: {
+        type: String,
+        default: ""
+    },
+
 
     orderedQuantity:{
 

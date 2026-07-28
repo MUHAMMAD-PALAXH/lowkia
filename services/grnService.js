@@ -147,6 +147,7 @@ const buildLinesFromPo = async (po) => {
             sku: item.sku || product?.sku || "",
             barcode: product?.barcode || item.barcode || "",
             productName: item.productName,
+            variantLabel: item.variantLabel || "",
             // Cap for THIS GRN = remaining pending on PO (supports partial receive)
             orderedQuantity: pending,
             receivedQuantity: 0,
