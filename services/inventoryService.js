@@ -7,7 +7,9 @@ const mongoose = require("mongoose");
 const Inventory = require("../model/inventory");
 const StockMovement = require("../model/StockMovement");
 const ItemTrack = require("../model/itemTrack");
+const Product = require("../model/product");
 const AppError = require("../utils/appError");
+const { generateStockMovementCode } = require("./codeGenerator");
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -329,6 +331,115 @@ const syncProductStockSummaries = async () => {
     return { updated, total: ids.length, errors };
 };
 
+const clearProductStock = async (productId, actorId = null) => {
+    const id = toObjectId(productId);
+    if (!id) throw new AppError("Invalid product id.", 400);
+
+    const product = await Product.findOne({
+        _id: id,
+        isDeleted: { $ne: true }
+    });
+    if (!product) throw new AppError("Product not found.", 404);
+
+    const rows = await Inventory.find({
+        productId: id,
+        isDeleted: { $ne: true },
+        currentStock: { $gt: 0 }
+    });
+
+    const reservedRow = rows.find((row) => Number(row.reservedStock) > 0);
+    if (reservedRow) {
+        throw new AppError(
+            "Cannot clear stock while reserved stock exists for this product.",
+            400
+        );
+    }
+
+    const blockedImeiCount = await ItemTrack.countDocuments({
+        productId: id,
+        status: { $in: ["sold", "repairing", "in-transit"] }
+    });
+    if (blockedImeiCount > 0) {
+        throw new AppError(
+            `Cannot clear stock while ${blockedImeiCount} IMEI record(s) are sold, repairing, or in transit.`,
+            400
+        );
+    }
+
+    let clearedQty = 0;
+    let clearedRows = 0;
+
+    for (const row of rows) {
+        const qty = Number(row.currentStock) || 0;
+        if (qty <= 0) continue;
+
+        const movementNumber = await generateStockMovementCode();
+        await StockMovement.create({
+            movementNumber,
+            movementDate: new Date(),
+            warehouseId: row.warehouseId,
+            branchId: row.branchId || null,
+            productId: row.productId,
+            productVariantId: row.productVariantId || null,
+            sku: "",
+            productName: product.name || product.productCode || "Product",
+            movementType: "Adjustment",
+            movementDirection: "OUT",
+            quantity: qty,
+            previousStock: qty,
+            currentStock: 0,
+            unitCost: Number(row.averageCost) || Number(row.lastPurchasePrice) || 0,
+            totalCost:
+                (Number(row.averageCost) || Number(row.lastPurchasePrice) || 0) * qty,
+            referenceType: "Manual",
+            remarks: "Manual clear stock before product delete",
+            adjustmentReason: "Clear Product Stock",
+            createdBy: actorId || null
+        });
+
+        row.currentStock = 0;
+        row.availableStock = 0;
+        row.inventoryValue = 0;
+        row.stockStatus = "Out Of Stock";
+        await row.save();
+
+        clearedQty += qty;
+        clearedRows += 1;
+    }
+
+    const imeiResult = await ItemTrack.updateMany(
+        {
+            productId: id,
+            status: "available"
+        },
+        {
+            $set: {
+                status: "deleted",
+                currentBranchId: null
+            },
+            $push: {
+                history: {
+                    status: "deleted",
+                    updatedBy: actorId || null,
+                    date: new Date(),
+                    notes: "Manual clear stock before product delete"
+                }
+            }
+        }
+    );
+
+    const productService = require("./productService");
+    await productService.refreshStockSummary(id);
+
+    return {
+        productId: String(id),
+        productName: product.name || "",
+        clearedRows,
+        clearedQty,
+        clearedImeis: imeiResult.modifiedCount || 0
+    };
+};
+
 module.exports = {
     getInventoryList,
     getInventoryById,
@@ -336,5 +447,6 @@ module.exports = {
     getLowStock,
     getStockMovements,
     getImeiStock,
-    syncProductStockSummaries
+    syncProductStockSummaries,
+    clearProductStock
 };

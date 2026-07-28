@@ -1,4 +1,4 @@
-const { param, query } = require("express-validator");
+const { body, param, query } = require("express-validator");
 
 const listValidator = [
     query("page").optional().isInt({ min: 1 }),
@@ -15,4 +15,9 @@ const idValidator = [
     param("id").isMongoId().withMessage("Invalid inventory id.")
 ];
 
-module.exports = { listValidator, idValidator };
+const clearProductStockValidator = [
+    body("productId").isMongoId().withMessage("Invalid product id."),
+    body("actorId").optional({ checkFalsy: true }).isMongoId()
+];
+
+module.exports = { listValidator, idValidator, clearProductStockValidator };

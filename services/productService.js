@@ -1371,7 +1371,7 @@ const deleteProduct = async (id, actorId = null) => {
 
     if ((Number(product.totalStock) || 0) > 0) {
         throw new AppError(
-            "Cannot delete product while stock exists. Clear stock first.",
+            'Cannot delete product while stock exists. Go to Inventory -> Warehouse Stock and use "Clear Stock" for this product first.',
             400
         );
     }

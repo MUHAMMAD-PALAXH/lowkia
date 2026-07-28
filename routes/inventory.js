@@ -3,7 +3,11 @@ const router = express.Router();
 
 const inventoryController = require("../controllers/inventoryController");
 const validate = require("../middleware/validate");
-const { listValidator, idValidator } = require("../validators/inventoryValidator");
+const {
+    listValidator,
+    idValidator,
+    clearProductStockValidator
+} = require("../validators/inventoryValidator");
 
 // Base: /api/inventory
 
@@ -31,6 +35,12 @@ router.get(
 );
 
 router.post("/sync-product-stock", inventoryController.syncProductStock);
+router.post(
+    "/clear-product-stock",
+    clearProductStockValidator,
+    validate,
+    inventoryController.clearProductStock
+);
 
 router.get("/", listValidator, validate, inventoryController.getInventoryList);
 

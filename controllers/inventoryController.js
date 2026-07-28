@@ -32,6 +32,14 @@ exports.syncProductStock = asyncHandler(async (req, res) => {
     return success(res, "Product stock summaries synced from inventory.", data);
 });
 
+exports.clearProductStock = asyncHandler(async (req, res) => {
+    const data = await inventoryService.clearProductStock(
+        req.body.productId,
+        req.body.actorId || null
+    );
+    return success(res, "Product stock cleared successfully.", data);
+});
+
 exports.getInventoryById = asyncHandler(async (req, res) => {
     const data = await inventoryService.getInventoryById(req.params.id);
     return success(res, "Inventory record retrieved.", data);
