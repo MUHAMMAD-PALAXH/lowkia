@@ -1728,10 +1728,6 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
                       : ""
             };
 
-            if (line.duplicateBlocked) {
-                continue;
-            }
-
             if (search) {
                 const hay =
                     `${line.purchaseOrderNo} ${line.productName} ${line.sku} ${line.supplierName} ${line.productCode}`.toLowerCase();
