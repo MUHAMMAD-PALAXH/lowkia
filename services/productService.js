@@ -1744,10 +1744,6 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
                 if (!hay.includes(search)) continue;
             }
 
-            if (line.duplicateBlocked) {
-                continue;
-            }
-
             rows.push(line);
         }
     }
