@@ -220,6 +220,43 @@ const productSchema = new mongoose.Schema(
             min: 0
         },
 
+        offerPrice: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        discountType: {
+            type: String,
+            enum: ["Fixed", "Percentage"],
+            default: "Fixed"
+        },
+
+        discountValue: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        salesTaxType: {
+            type: String,
+            enum: ["Fixed", "Percentage"],
+            default: "Percentage"
+        },
+
+        salesTaxValue: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        branchIds: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "Branch"
+            }
+        ],
+
         // ======================================================
         // Tax Information
         // ======================================================

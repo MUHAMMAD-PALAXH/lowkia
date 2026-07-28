@@ -104,6 +104,10 @@ const sharedOptionalFields = [
     body("trackingType").optional({ checkFalsy: true }).isIn(TRACKING_TYPES),
     body("status").optional({ checkFalsy: true }).isIn(STATUSES),
     body("taxType").optional({ checkFalsy: true }).isIn(TAX_TYPES),
+    body("discountType").optional({ checkFalsy: true }).isIn(["Fixed", "Percentage"]),
+    body("salesTaxType").optional({ checkFalsy: true }).isIn(["Fixed", "Percentage"]),
+    body("branchIds").optional().isArray(),
+    body("branchIds.*").optional({ checkFalsy: true }).isMongoId(),
     body("warrantyType").optional({ checkFalsy: true }).isIn(WARRANTY_TYPES),
     body("productSourceType")
         .optional({ checkFalsy: true })
@@ -122,6 +126,9 @@ const sharedOptionalFields = [
     optionalMoney("wholesalePrice"),
     optionalMoney("minimumSellingPrice"),
     optionalMoney("maximumSellingPrice"),
+    optionalMoney("offerPrice"),
+    optionalMoney("discountValue"),
+    optionalMoney("salesTaxValue"),
     optionalMoney("taxPercentage"),
     optionalMoney("minimumStock"),
     optionalMoney("maximumStock"),
