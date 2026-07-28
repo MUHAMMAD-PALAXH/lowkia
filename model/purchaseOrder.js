@@ -105,6 +105,63 @@ const purchaseItemSchema = new mongoose.Schema(
         currentStock: {
             type: Number,
             default: 0
+        },
+
+        // Product-master snapshot for "New Product" purchase lines
+        proCategoryId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Category",
+            default: null
+        },
+
+        proSubCategoryId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "SubCategory",
+            default: null
+        },
+
+        proBrandId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Brand",
+            default: null
+        },
+
+        manufacturer: {
+            type: String,
+            default: ""
+        },
+
+        countryOfOrigin: {
+            type: String,
+            default: "Bangladesh"
+        },
+
+        hsnCode: {
+            type: String,
+            default: ""
+        },
+
+        warrantyType: {
+            type: String,
+            enum: ["No Warranty", "Days", "Months", "Years", "Lifetime"],
+            default: "No Warranty"
+        },
+
+        warrantyPeriod: {
+            type: Number,
+            default: 0
+        },
+
+        sellingPrice: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        wholesalePrice: {
+            type: Number,
+            default: 0,
+            min: 0
         }
     },
     {

@@ -15,7 +15,8 @@ const {
     rejectValidator,
     assignSuppliersValidator,
     idValidator,
-    listProductValidator
+    listProductValidator,
+    poSourceLinesValidator
 } = require("../validators/productValidator");
 
 // Base: /api/products
@@ -32,6 +33,13 @@ router.get("/approved", productController.getApprovedProducts);
 router.get("/pending-approval", productController.getPendingApprovals);
 
 router.get("/low-stock", productController.getLowStockProducts);
+
+router.get(
+    "/source/completed-po-lines",
+    poSourceLinesValidator,
+    validate,
+    productController.getCompletedPurchaseOrderSourceLines
+);
 
 router.get("/barcode/:barcode", productController.getProductByBarcode);
 

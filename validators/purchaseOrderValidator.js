@@ -28,6 +28,15 @@ const createPurchaseOrderValidator = [
         .optional({ checkFalsy: true })
         .isIn(["IMEI", "Non-IMEI"])
         .withMessage("Line trackingType must be IMEI or Non-IMEI."),
+    body("items.*.proCategoryId").optional({ checkFalsy: true }).isMongoId(),
+    body("items.*.proSubCategoryId").optional({ checkFalsy: true }).isMongoId(),
+    body("items.*.proBrandId").optional({ checkFalsy: true }).isMongoId(),
+    body("items.*.warrantyType")
+        .optional({ checkFalsy: true })
+        .isIn(["No Warranty", "Days", "Months", "Years", "Lifetime"]),
+    body("items.*.warrantyPeriod").optional().isFloat({ min: 0 }),
+    body("items.*.sellingPrice").optional().isFloat({ min: 0 }),
+    body("items.*.wholesalePrice").optional().isFloat({ min: 0 }),
     body("items.*.quantity")
         .notEmpty()
         .withMessage("Line quantity is required.")
@@ -61,6 +70,15 @@ const updatePurchaseOrderValidator = [
         .optional({ checkFalsy: true })
         .isIn(["IMEI", "Non-IMEI"])
         .withMessage("Line trackingType must be IMEI or Non-IMEI."),
+    body("items.*.proCategoryId").optional({ checkFalsy: true }).isMongoId(),
+    body("items.*.proSubCategoryId").optional({ checkFalsy: true }).isMongoId(),
+    body("items.*.proBrandId").optional({ checkFalsy: true }).isMongoId(),
+    body("items.*.warrantyType")
+        .optional({ checkFalsy: true })
+        .isIn(["No Warranty", "Days", "Months", "Years", "Lifetime"]),
+    body("items.*.warrantyPeriod").optional().isFloat({ min: 0 }),
+    body("items.*.sellingPrice").optional().isFloat({ min: 0 }),
+    body("items.*.wholesalePrice").optional().isFloat({ min: 0 }),
     body("discount").optional().isFloat({ min: 0 }),
     body("tax").optional().isFloat({ min: 0 }),
     body("shippingCost").optional().isFloat({ min: 0 }),

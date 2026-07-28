@@ -7,6 +7,8 @@ const PRODUCT_TYPES = ["Simple", "Variant", "Digital", "Service"];
 const UPLOADER_TYPES = ["Owner", "Employee", "Vendor"];
 const TAX_TYPES = ["Inclusive", "Exclusive", "No Tax"];
 const WARRANTY_TYPES = ["No Warranty", "Days", "Months", "Years", "Lifetime"];
+const PRODUCT_SOURCE_TYPES = ["Manual", "PurchaseOrder", "ThirdParty"];
+const OWNERSHIP_TYPES = ["Owned", "ThirdParty"];
 
 const mongoIdParam = param("id")
     .isMongoId()
@@ -103,8 +105,15 @@ const sharedOptionalFields = [
     body("status").optional({ checkFalsy: true }).isIn(STATUSES),
     body("taxType").optional({ checkFalsy: true }).isIn(TAX_TYPES),
     body("warrantyType").optional({ checkFalsy: true }).isIn(WARRANTY_TYPES),
+    body("productSourceType")
+        .optional({ checkFalsy: true })
+        .isIn(PRODUCT_SOURCE_TYPES),
+    body("ownershipType").optional({ checkFalsy: true }).isIn(OWNERSHIP_TYPES),
     body("uploadedByType").optional({ checkFalsy: true }).isIn(UPLOADER_TYPES),
     body("uploadedById").optional({ checkFalsy: true }).isMongoId(),
+    body("sourcePurchaseOrderId").optional({ checkFalsy: true }).isMongoId(),
+    body("sourcePurchaseOrderItemId").optional({ checkFalsy: true }).isMongoId(),
+    body("sourceSupplierId").optional({ checkFalsy: true }).isMongoId(),
     body("unitId").optional({ checkFalsy: true }).isMongoId(),
     body("proVariantTypeId").optional({ checkFalsy: true }).isMongoId(),
     optionalMoney("purchasePrice"),
@@ -212,6 +221,8 @@ const listProductValidator = [
     query("search").optional().isString().trim()
 ];
 
+const poSourceLinesValidator = [query("search").optional().isString().trim()];
+
 module.exports = {
     createProductValidator,
     updateProductValidator,
@@ -219,5 +230,6 @@ module.exports = {
     rejectValidator,
     assignSuppliersValidator,
     idValidator,
-    listProductValidator
+    listProductValidator,
+    poSourceLinesValidator
 };

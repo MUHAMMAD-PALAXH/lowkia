@@ -3,6 +3,7 @@ const Product = require("../model/product");
 const ProductVariant = require("../model/productVariant");
 const ItemTrack = require("../model/itemTrack");
 const Inventory = require("../model/inventory");
+const PurchaseOrder = require("../model/purchaseOrder");
 const Supplier = require("../model/supplier");
 const Category = require("../model/category");
 const SubCategory = require("../model/subCategory");
@@ -203,6 +204,33 @@ const normalizeUploader = (payload = {}) => {
     };
 };
 
+const PRODUCT_SOURCE_TYPES = ["Manual", "PurchaseOrder", "ThirdParty"];
+const OWNERSHIP_TYPES = ["Owned", "ThirdParty"];
+
+const normalizeProductSource = (payload = {}) => {
+    const source =
+        PRODUCT_SOURCE_TYPES.includes(payload.productSourceType)
+            ? payload.productSourceType
+            : "Manual";
+    const ownership =
+        OWNERSHIP_TYPES.includes(payload.ownershipType)
+            ? payload.ownershipType
+            : source === "ThirdParty"
+              ? "ThirdParty"
+              : "Owned";
+
+    return {
+        productSourceType: source,
+        ownershipType: ownership,
+        sourcePurchaseOrderId: toObjectId(payload.sourcePurchaseOrderId),
+        sourcePurchaseOrderItemId: toObjectId(payload.sourcePurchaseOrderItemId),
+        sourcePurchaseOrderNo: (payload.sourcePurchaseOrderNo || "")
+            .toString()
+            .trim(),
+        sourceSupplierId: toObjectId(payload.sourceSupplierId)
+    };
+};
+
 const populateProduct = (query) =>
     query
         .populate("proCategoryId", "name")
@@ -234,6 +262,46 @@ const pushApproval = (product, action, actor = {}, note = "") => {
         note,
         at: new Date()
     });
+};
+
+const getPoSourceLine = async (sourcePurchaseOrderId, sourcePurchaseOrderItemId) => {
+    if (!sourcePurchaseOrderId || !sourcePurchaseOrderItemId) {
+        throw new AppError(
+            "sourcePurchaseOrderId and sourcePurchaseOrderItemId are required for PO-linked products.",
+            400
+        );
+    }
+
+    const po = await PurchaseOrder.findOne({
+        _id: sourcePurchaseOrderId,
+        ...NOT_DELETED
+    })
+        .populate("supplierId", "supplierCode name phone email")
+        .populate(
+            "items.productId",
+            "name productCode sku trackingType productType purchasePrice costPrice sellingPrice wholesalePrice warrantyType warrantyPeriod proCategoryId proSubCategoryId proBrandId manufacturer countryOfOrigin hsnCode"
+        )
+        .populate(
+            "items.productVariantId",
+            "sku combinationString purchasePrice costPrice sellingPrice wholesalePrice"
+        );
+
+    if (!po) throw new AppError("Source purchase order not found.", 404);
+    if (!["Received", "Completed"].includes(po.status)) {
+        throw new AppError(
+            "Only Received / Completed purchase orders can be used as a product source.",
+            400
+        );
+    }
+
+    const line = (po.items || []).find(
+        (item) => String(item._id) === String(sourcePurchaseOrderItemId)
+    );
+    if (!line) {
+        throw new AppError("Source purchase order line not found.", 404);
+    }
+
+    return { po, line };
 };
 
 // ==========================================================
@@ -572,7 +640,51 @@ const createProduct = async (payload = {}, actorId = null) => {
     const trackingType =
         data.trackingType === "IMEI" ? "IMEI" : "Non-IMEI";
 
-    const suppliers = (await normalizeSuppliers(data.suppliers)) || [];
+    const source = normalizeProductSource(payload);
+    let poSource = null;
+    if (source.productSourceType === "PurchaseOrder") {
+        poSource = await getPoSourceLine(
+            source.sourcePurchaseOrderId,
+            source.sourcePurchaseOrderItemId
+        );
+
+        const duplicateSource = await Product.findOne({
+            sourcePurchaseOrderItemId: source.sourcePurchaseOrderItemId,
+            isDeleted: { $ne: true }
+        }).select("name productCode");
+        if (duplicateSource) {
+            throw new AppError(
+                `This purchase-order line is already linked to product "${duplicateSource.name}" (${duplicateSource.productCode}).`,
+                409
+            );
+        }
+
+        if (poSource.line.productId) {
+            const existingProduct = await Product.findOne({
+                _id: poSource.line.productId,
+                isDeleted: { $ne: true }
+            }).select("name productCode");
+            if (existingProduct) {
+                throw new AppError(
+                    `This PO line already points to existing product "${existingProduct.name}" (${existingProduct.productCode}). Open that product instead of creating a duplicate.`,
+                    409
+                );
+            }
+        }
+    }
+
+    const suppliers =
+        (await normalizeSuppliers(data.suppliers)) ||
+        (poSource?.po?.supplierId
+            ? [
+                  {
+                      supplierId: poSource.po.supplierId._id || poSource.po.supplierId,
+                      isPrimary: true,
+                      lastPurchasePrice: Number(poSource.line.purchasePrice) || 0,
+                      supplierSku: poSource.line.sku || ""
+                  }
+              ]
+            : []);
     const uploader = normalizeUploader(payload);
 
     const productCode = await generateProductCode();
@@ -595,6 +707,9 @@ const createProduct = async (payload = {}, actorId = null) => {
         uploader.uploadedById ||
         toObjectId(actorId);
 
+    const sourceProduct = poSource?.line?.productId || null;
+    const sourceVariant = poSource?.line?.productVariantId || null;
+
     const product = new Product({
         ...data,
         name,
@@ -603,16 +718,71 @@ const createProduct = async (payload = {}, actorId = null) => {
         barcodeType,
         barcodeGeneratedAt: barcode ? new Date() : null,
         slug: data.slug ? slugify(data.slug) : slugify(name),
-        sku: (data.sku || "").toString().trim().toUpperCase(),
-        proCategoryId: categoryId,
-        proSubCategoryId: subCategoryId,
-        proBrandId: brandId,
+        sku:
+            (data.sku || sourceVariant?.sku || sourceProduct?.sku || "")
+                .toString()
+                .trim()
+                .toUpperCase(),
+        proCategoryId: categoryId || sourceProduct?.proCategoryId || null,
+        proSubCategoryId: subCategoryId || sourceProduct?.proSubCategoryId || null,
+        proBrandId: brandId || sourceProduct?.proBrandId || null,
         unitId: toObjectId(data.unitId),
         proVariantTypeId: toObjectId(data.proVariantTypeId),
         trackingType,
         vendorId,
         suppliers,
         primarySupplierId: resolvePrimarySupplier(suppliers),
+        productSourceType: source.productSourceType,
+        ownershipType: source.ownershipType,
+        sourcePurchaseOrderId: source.sourcePurchaseOrderId,
+        sourcePurchaseOrderItemId: source.sourcePurchaseOrderItemId,
+        sourcePurchaseOrderNo:
+            source.sourcePurchaseOrderNo || poSource?.po?.purchaseOrderNo || "",
+        sourceSupplierId:
+            source.sourceSupplierId ||
+            poSource?.po?.supplierId?._id ||
+            poSource?.po?.supplierId ||
+            null,
+        purchasePrice:
+            Number(data.purchasePrice) ||
+            Number(poSource?.line?.purchasePrice) ||
+            Number(sourceVariant?.purchasePrice) ||
+            Number(sourceProduct?.purchasePrice) ||
+            0,
+        costPrice:
+            Number(data.costPrice) ||
+            Number(sourceVariant?.costPrice) ||
+            Number(sourceProduct?.costPrice) ||
+            Number(poSource?.line?.purchasePrice) ||
+            0,
+        sellingPrice:
+            Number(data.sellingPrice) ||
+            Number(sourceVariant?.sellingPrice) ||
+            Number(sourceProduct?.sellingPrice) ||
+            0,
+        wholesalePrice:
+            Number(data.wholesalePrice) ||
+            Number(sourceVariant?.wholesalePrice) ||
+            Number(sourceProduct?.wholesalePrice) ||
+            0,
+        warrantyType:
+            data.warrantyType ||
+            sourceProduct?.warrantyType ||
+            "No Warranty",
+        warrantyPeriod:
+            Number(data.warrantyPeriod) ||
+            Number(sourceProduct?.warrantyPeriod) ||
+            0,
+        manufacturer:
+            (data.manufacturer || sourceProduct?.manufacturer || "")
+                .toString()
+                .trim(),
+        countryOfOrigin:
+            (data.countryOfOrigin || sourceProduct?.countryOfOrigin || "Bangladesh")
+                .toString()
+                .trim(),
+        hsnCode:
+            (data.hsnCode || sourceProduct?.hsnCode || "").toString().trim(),
         ...uploader,
         uploadedAt: new Date(),
         approvalRequired: !isOwnerUpload,
@@ -1454,6 +1624,103 @@ const getProductStats = async () => {
     );
 };
 
+const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
+    const search = String(query.search || "").trim().toLowerCase();
+
+    const pos = await PurchaseOrder.find({
+        ...NOT_DELETED,
+        status: { $in: ["Received", "Completed"] }
+    })
+        .populate("supplierId", "supplierCode name phone email")
+        .populate(
+            "items.productId",
+            "name productCode sku trackingType productType purchasePrice costPrice sellingPrice wholesalePrice warrantyType warrantyPeriod proCategoryId proSubCategoryId proBrandId manufacturer countryOfOrigin hsnCode"
+        )
+        .populate(
+            "items.productVariantId",
+            "sku combinationString purchasePrice costPrice sellingPrice wholesalePrice"
+        )
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean();
+
+    const usedSourceIds = new Set(
+        (
+            await Product.find({
+                sourcePurchaseOrderItemId: { $ne: null },
+                isDeleted: { $ne: true }
+            }).select("sourcePurchaseOrderItemId")
+        ).map((p) => String(p.sourcePurchaseOrderItemId))
+    );
+
+    const rows = [];
+    for (const po of pos) {
+        for (const item of po.items || []) {
+            const itemId = String(item._id || "");
+            const existingProduct = item.productId || null;
+            const blockedByExistingProduct = !!existingProduct;
+            const alreadyUsedAsSource = itemId && usedSourceIds.has(itemId);
+
+            const line = {
+                purchaseOrderId: po._id,
+                purchaseOrderNo: po.purchaseOrderNo,
+                purchaseOrderItemId: item._id,
+                supplierId: po.supplierId?._id || po.supplierId || null,
+                supplierName: po.supplierId?.name || "",
+                supplierCode: po.supplierId?.supplierCode || "",
+                productName: item.productName || existingProduct?.name || "",
+                sku: item.sku || item.productVariantId?.sku || existingProduct?.sku || "",
+                trackingType: item.trackingType || existingProduct?.trackingType || "Non-IMEI",
+                quantity: Number(item.quantity) || 0,
+                purchasePrice: Number(item.purchasePrice) || 0,
+                receivedQuantity: Number(item.receivedQuantity) || 0,
+                productId: existingProduct?._id || null,
+                productCode: existingProduct?.productCode || "",
+                categoryId: existingProduct?.proCategoryId || item.proCategoryId || null,
+                subCategoryId:
+                    existingProduct?.proSubCategoryId || item.proSubCategoryId || null,
+                brandId: existingProduct?.proBrandId || item.proBrandId || null,
+                manufacturer: existingProduct?.manufacturer || item.manufacturer || "",
+                countryOfOrigin:
+                    existingProduct?.countryOfOrigin || item.countryOfOrigin || "",
+                hsnCode: existingProduct?.hsnCode || item.hsnCode || "",
+                warrantyType:
+                    existingProduct?.warrantyType || item.warrantyType || "No Warranty",
+                warrantyPeriod:
+                    Number(existingProduct?.warrantyPeriod) ||
+                    Number(item.warrantyPeriod) ||
+                    0,
+                sellingPrice:
+                    Number(item.sellingPrice) ||
+                    Number(item.productVariantId?.sellingPrice) ||
+                    Number(existingProduct?.sellingPrice) ||
+                    0,
+                wholesalePrice:
+                    Number(item.wholesalePrice) ||
+                    Number(item.productVariantId?.wholesalePrice) ||
+                    Number(existingProduct?.wholesalePrice) ||
+                    0,
+                duplicateBlocked: blockedByExistingProduct || alreadyUsedAsSource,
+                duplicateReason: blockedByExistingProduct
+                    ? `Already linked to existing product ${existingProduct.name || existingProduct.productCode || ""}`.trim()
+                    : alreadyUsedAsSource
+                      ? "Already converted into a product"
+                      : ""
+            };
+
+            if (search) {
+                const hay =
+                    `${line.purchaseOrderNo} ${line.productName} ${line.sku} ${line.supplierName} ${line.productCode}`.toLowerCase();
+                if (!hay.includes(search)) continue;
+            }
+
+            rows.push(line);
+        }
+    }
+
+    return rows;
+};
+
 module.exports = {
     createProduct,
     getProducts,
@@ -1472,5 +1739,6 @@ module.exports = {
     deleteProduct,
     restoreProduct,
     refreshStockSummary,
-    getProductStats
+    getProductStats,
+    getCompletedPurchaseOrderSourceLines
 };

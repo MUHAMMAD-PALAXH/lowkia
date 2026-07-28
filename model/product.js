@@ -374,6 +374,49 @@ const productSchema = new mongoose.Schema(
         ],
 
         // ======================================================
+        // Product Source / Ownership
+        // ======================================================
+
+        productSourceType: {
+            type: String,
+            enum: ["Manual", "PurchaseOrder", "ThirdParty"],
+            default: "Manual",
+            index: true
+        },
+
+        ownershipType: {
+            type: String,
+            enum: ["Owned", "ThirdParty"],
+            default: "Owned",
+            index: true
+        },
+
+        sourcePurchaseOrderId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "PurchaseOrder",
+            default: null,
+            index: true
+        },
+
+        sourcePurchaseOrderItemId: {
+            type: mongoose.Schema.Types.ObjectId,
+            default: null,
+            index: true
+        },
+
+        sourcePurchaseOrderNo: {
+            type: String,
+            default: "",
+            trim: true
+        },
+
+        sourceSupplierId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Supplier",
+            default: null
+        },
+
+        // ======================================================
         // SEO
         // ======================================================
 
@@ -1001,6 +1044,18 @@ productSchema.index({ trackingType: 1, isDeleted: 1 });
 
 // Supplier wise products (for restock contact)
 productSchema.index({ "suppliers.supplierId": 1, isDeleted: 1 });
+
+// One active product per completed PO line
+productSchema.index(
+    { sourcePurchaseOrderItemId: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            isDeleted: false,
+            sourcePurchaseOrderItemId: { $type: "objectId" }
+        }
+    }
+);
 
 // Low stock alerts
 productSchema.index({ isLowStock: 1, isDeleted: 1 });

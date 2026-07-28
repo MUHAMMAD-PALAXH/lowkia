@@ -27,6 +27,13 @@ exports.getProductStats = asyncHandler(async (req, res) => {
     return success(res, "Product stats retrieved successfully.", stats);
 });
 
+exports.getCompletedPurchaseOrderSourceLines = asyncHandler(async (req, res) => {
+    const rows = await productService.getCompletedPurchaseOrderSourceLines(
+        req.query
+    );
+    return success(res, "Completed purchase-order source lines retrieved.", rows);
+});
+
 exports.getApprovedProducts = asyncHandler(async (req, res) => {
     const products = await productService.getApprovedProducts();
     return success(res, "Approved products retrieved successfully.", products);

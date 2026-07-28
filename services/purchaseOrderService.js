@@ -247,6 +247,16 @@ const normalizeItems = async (itemsInput = [], purchaseType, supplierId) => {
             ? resolveTrackingType(raw.trackingType)
             : resolveTrackingType(product?.trackingType);
 
+        const warrantyType = [
+            "No Warranty",
+            "Days",
+            "Months",
+            "Years",
+            "Lifetime"
+        ].includes(raw.warrantyType)
+            ? raw.warrantyType
+            : product?.warrantyType || "No Warranty";
+
         items.push({
             _id: toObjectId(raw._id || raw.id) || undefined,
             productId: product?._id || null,
@@ -267,6 +277,32 @@ const normalizeItems = async (itemsInput = [], purchaseType, supplierId) => {
                 Number(raw.currentStock) ||
                 Number(product?.availableStock) ||
                 Number(product?.totalStock) ||
+                0,
+            proCategoryId: toObjectId(raw.proCategoryId) || product?.proCategoryId || null,
+            proSubCategoryId:
+                toObjectId(raw.proSubCategoryId) || product?.proSubCategoryId || null,
+            proBrandId: toObjectId(raw.proBrandId) || product?.proBrandId || null,
+            manufacturer:
+                (raw.manufacturer || product?.manufacturer || "").toString().trim(),
+            countryOfOrigin:
+                (raw.countryOfOrigin || product?.countryOfOrigin || "Bangladesh")
+                    .toString()
+                    .trim(),
+            hsnCode: (raw.hsnCode || product?.hsnCode || "").toString().trim(),
+            warrantyType,
+            warrantyPeriod:
+                Number(raw.warrantyPeriod) ||
+                Number(product?.warrantyPeriod) ||
+                0,
+            sellingPrice:
+                Number(raw.sellingPrice) ||
+                Number(variant?.sellingPrice) ||
+                Number(product?.sellingPrice) ||
+                0,
+            wholesalePrice:
+                Number(raw.wholesalePrice) ||
+                Number(variant?.wholesalePrice) ||
+                Number(product?.wholesalePrice) ||
                 0
         });
     }
