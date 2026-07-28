@@ -61,3 +61,8 @@ exports.deleteRepairTicket = asyncHandler(async (req, res) => {
     );
     return success(res, "Repair ticket deleted.", result);
 });
+
+exports.lookupImeiWarranty = asyncHandler(async (req, res) => {
+    const data = await repairTicketService.lookupImeiWarranty(req.params.imei);
+    return success(res, "IMEI warranty lookup completed.", data);
+});

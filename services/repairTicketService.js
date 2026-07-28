@@ -490,6 +490,94 @@ const getRepairTicketStats = async (query = {}) => {
     );
 };
 
+/**
+ * Warranty / lifecycle lookup for repair tickets (existing sold products).
+ * Same auth pattern as other repair-ticket routes (no JWT protect).
+ */
+const lookupImeiWarranty = async (imei) => {
+    const raw = String(imei || "").trim();
+    if (!raw) {
+        const err = new Error("IMEI is required.");
+        err.status = 400;
+        throw err;
+    }
+
+    const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const item = await ItemTrack.findOne({
+        imei: { $regex: `^${escaped}$`, $options: "i" },
+        isDeleted: { $ne: true }
+    })
+        .populate("productId", "name description warrantyType warrantyPeriod")
+        .populate("variantId", "sku combinationString attributes barcode")
+        .lean();
+
+    if (!item) {
+        const err = new Error("IMEI record not found.");
+        err.status = 404;
+        throw err;
+    }
+
+    const product = item.productId || {};
+    const productWarrantyType = product.warrantyType || "No Warranty";
+    const productWarrantyPeriod = Number(product.warrantyPeriod) || 0;
+    const now = new Date();
+    const isLifetime =
+        productWarrantyType === "Lifetime" ||
+        (item.warrantyExpiry &&
+            new Date(item.warrantyExpiry).getFullYear() >= 9999);
+
+    let isWarrantyValid = false;
+    let daysRemaining = 0;
+    let warrantyStatus = "None";
+
+    if (isLifetime) {
+        isWarrantyValid =
+            item.status === "sold" ||
+            item.status === "repairing" ||
+            !!item.saleInfo?.soldDate;
+        daysRemaining = null;
+        warrantyStatus = "Lifetime";
+    } else if (item.warrantyExpiry) {
+        const expiry = new Date(item.warrantyExpiry);
+        isWarrantyValid = expiry > now;
+        daysRemaining = Math.max(
+            0,
+            Math.ceil((expiry - now) / (1000 * 60 * 60 * 24))
+        );
+        warrantyStatus = isWarrantyValid ? "Active" : "Expired";
+    } else if (productWarrantyType === "No Warranty") {
+        warrantyStatus = "None";
+    }
+
+    return {
+        itemTrackId: item._id,
+        imei: item.imei,
+        status: item.status,
+        productId: product._id || item.productId,
+        productName: product.name || "",
+        product: {
+            _id: product._id,
+            name: product.name || "",
+            warrantyType: productWarrantyType,
+            warrantyPeriod: productWarrantyPeriod
+        },
+        variantId: item.variantId?._id || item.variantId || null,
+        variantSpecs:
+            item.variantId?.combinationString ||
+            item.variantId?.attributes ||
+            "",
+        customerPhone: item.saleInfo?.customerPhone || "",
+        soldDate: item.saleInfo?.soldDate || null,
+        salesOrderId: item.saleInfo?.orderId || null,
+        warrantyType: productWarrantyType,
+        warrantyPeriod: productWarrantyPeriod,
+        warrantyExpiry: isLifetime ? null : item.warrantyExpiry || null,
+        isWarrantyValid,
+        daysRemaining,
+        warrantyStatus
+    };
+};
+
 module.exports = {
     createRepairTicket,
     getRepairTickets,
@@ -498,5 +586,6 @@ module.exports = {
     updateRepairTicketStatus,
     completeRepairTicket,
     deleteRepairTicket,
-    getRepairTicketStats
+    getRepairTicketStats,
+    lookupImeiWarranty
 };

@@ -5,6 +5,10 @@ const repairTicketController = require("../controllers/repairTicketController");
 // Base: /api/repair-tickets
 router.get("/", repairTicketController.getRepairTickets);
 router.get("/stats", repairTicketController.getRepairTicketStats);
+router.get(
+    "/lookup-imei/:imei",
+    repairTicketController.lookupImeiWarranty
+);
 router.get("/:id", repairTicketController.getRepairTicketById);
 router.post("/", repairTicketController.createRepairTicket);
 router.put("/:id", repairTicketController.updateRepairTicket);
