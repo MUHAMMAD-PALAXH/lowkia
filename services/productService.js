@@ -1649,7 +1649,17 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
 
     const pos = await PurchaseOrder.find({
         ...NOT_DELETED,
-        status: { $in: ["Received", "Completed"] },
+        status: {
+            $in: [
+                "Draft",
+                "Pending Approval",
+                "Approved",
+                "Ordered",
+                "Partially Received",
+                "Received",
+                "Completed"
+            ]
+        },
         purchaseType: "New"
     })
         .populate("supplierId", "supplierCode name phone email")
@@ -1732,6 +1742,10 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
                 const hay =
                     `${line.purchaseOrderNo} ${line.productName} ${line.sku} ${line.supplierName} ${line.productCode}`.toLowerCase();
                 if (!hay.includes(search)) continue;
+            }
+
+            if (line.duplicateBlocked) {
+                continue;
             }
 
             rows.push(line);

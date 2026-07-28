@@ -362,7 +362,7 @@ const ensureProductForGrnLine = async (line, actorId, session) => {
     }
 
     throw new AppError(
-        `Cannot complete GRN for "${name}" because no product is linked yet. Create the product first from the Product screen using "Select completed PO product line".`,
+        `Cannot complete GRN for "${name}" because no product is linked yet. Create the product first from the Product screen using "Select PO product line".`,
         400
     );
 };
