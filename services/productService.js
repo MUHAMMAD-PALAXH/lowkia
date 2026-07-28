@@ -1690,6 +1690,14 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
                 supplierCode: po.supplierId?.supplierCode || "",
                 productName: item.productName || existingProduct?.name || "",
                 variantLabel: item.variantLabel || item.productVariantId?.combinationString || "",
+                variantAttributes: Array.isArray(item.variantAttributes)
+                    ? item.variantAttributes
+                          .map((attr) => ({
+                              variantTypeId: attr?.variantTypeId?._id || attr?.variantTypeId || null,
+                              variantId: attr?.variantId?._id || attr?.variantId || null
+                          }))
+                          .filter((attr) => attr.variantTypeId && attr.variantId)
+                    : [],
                 sku: item.sku || item.productVariantId?.sku || existingProduct?.sku || "",
                 trackingType: item.trackingType || existingProduct?.trackingType || "Non-IMEI",
                 quantity: Number(item.quantity) || 0,
@@ -1697,6 +1705,7 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
                 receivedQuantity: Number(item.receivedQuantity) || 0,
                 productId: existingProduct?._id || null,
                 productCode: existingProduct?.productCode || "",
+                barcode: existingProduct?.barcode || "",
                 categoryId: existingProduct?.proCategoryId || item.proCategoryId || null,
                 subCategoryId:
                     existingProduct?.proSubCategoryId || item.proSubCategoryId || null,

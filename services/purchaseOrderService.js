@@ -50,6 +50,14 @@ const resolveTrackingType = (value) =>
         ? "IMEI"
         : "Non-IMEI";
 
+const normalizeVariantAttributes = (attributes = []) =>
+    (Array.isArray(attributes) ? attributes : [])
+        .map((a) => ({
+            variantTypeId: toObjectId(a?.variantTypeId),
+            variantId: toObjectId(a?.variantId)
+        }))
+        .filter((a) => a.variantTypeId && a.variantId);
+
 const resolveCharge = (value, type, base) => {
     const v = Math.max(Number(value) || 0, 0);
     if (type === "Percentage") {
@@ -218,6 +226,7 @@ const normalizeItems = async (itemsInput = [], purchaseType, supplierId) => {
         const variantLabel =
             (raw.variantLabel || "").toString().trim() ||
             (variant?.combinationString || "").toString().trim();
+        const variantAttributes = normalizeVariantAttributes(raw.variantAttributes);
 
         if (!productName) {
             throw new AppError("Each line needs a product name.", 400);
@@ -271,6 +280,7 @@ const normalizeItems = async (itemsInput = [], purchaseType, supplierId) => {
                     ? `${product.name} (${variant.combinationString || variant.sku || "Variant"})`
                     : productName,
             variantLabel,
+            variantAttributes,
             quantity,
             purchasePrice,
             discount: Number(raw.discount) || 0,

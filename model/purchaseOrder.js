@@ -49,6 +49,21 @@ const purchaseItemSchema = new mongoose.Schema(
             trim: true
         },
 
+        variantAttributes: [
+            {
+                variantTypeId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "VariantType",
+                    default: null
+                },
+                variantId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "Variant",
+                    default: null
+                }
+            }
+        ],
+
         // Ordered Quantity
         quantity: {
 
