@@ -17,6 +17,7 @@ const ProductVariant = require("../model/productVariant");
 const Inventory = require("../model/inventory");
 const ItemTrack = require("../model/itemTrack");
 const StockMovement = require("../model/StockMovement");
+const Warehouse = require("../model/warehouse");
 const {
     generateGRNCode,
     generateStockMovementCode,
@@ -54,6 +55,16 @@ const normalizeImei = (value) =>
         .trim()
         .toUpperCase()
         .replace(/\s+/g, "");
+
+const resolveFallbackWarehouseId = async () => {
+    const warehouse = await Warehouse.findOne({
+        isDeleted: { $ne: true },
+        $or: [{ status: "Active" }, { status: { $exists: false } }, { status: "" }]
+    })
+        .sort({ createdAt: 1 })
+        .select("_id");
+    return warehouse?._id || null;
+};
 
 const resolveTrackingType = (raw) => {
     const tt = String(raw || "")
@@ -810,10 +821,12 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     }
 
     const warehouseId =
-        toObjectId(payload.warehouseId) || toObjectId(po.warehouseId);
+        toObjectId(payload.warehouseId) ||
+        toObjectId(po.warehouseId) ||
+        (await resolveFallbackWarehouseId());
     if (!warehouseId) {
         throw new AppError(
-            "Warehouse is required on the PO (or pass warehouseId) before creating GRN.",
+            "No active warehouse was available to assign this GRN.",
             400
         );
     }
