@@ -332,8 +332,8 @@ const createStockMovement = async ({
 };
 
 /**
- * New-product PO lines may arrive without productId.
- * On GRN complete, create (or reuse by name) a catalog product and link it.
+ * New-product PO lines must be linked manually from the Product screen.
+ * GRN completion should never auto-create catalog products.
  */
 const ensureProductForGrnLine = async (line, actorId, session) => {
     if (line.productId) {
@@ -361,74 +361,10 @@ const ensureProductForGrnLine = async (line, actorId, session) => {
         );
     }
 
-    const trackingType = resolveTrackingType(line.trackingType);
-    const purchasePrice = Math.max(Number(line.purchasePrice) || 0, 0);
-
-    // Reuse existing catalog product with same name when possible
-    let product = await Product.findOne({
-        name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
-        ...NOT_DELETED
-    }).session(session);
-
-    if (!product) {
-        const productCode = await generateProductCode();
-        let barcode = "";
-        let barcodeType = "None";
-        if (trackingType === "Non-IMEI") {
-            barcode = await generateProductBarcode();
-            barcodeType = "EAN13";
-        }
-
-        const [created] = await Product.create(
-            [
-                {
-                    name,
-                    productCode,
-                    sku: (line.sku || "").toString().trim().toUpperCase(),
-                    slug: name
-                        .toLowerCase()
-                        .replace(/[^a-z0-9]+/g, "-")
-                        .replace(/(^-|-$)/g, ""),
-                    trackingType,
-                    productType: trackingType === "IMEI" ? "Variant" : "Simple",
-                    hasVariants: trackingType === "IMEI",
-                    barcode,
-                    barcodeType,
-                    barcodeGeneratedAt: barcode ? new Date() : null,
-                    purchasePrice,
-                    sellingPrice: purchasePrice,
-                    approvalStatus: "Approved",
-                    approvalRequired: false,
-                    approvedAt: new Date(),
-                    approvedBy: toObjectId(actorId),
-                    createdBy: toObjectId(actorId),
-                    vendorId: toObjectId(actorId),
-                    uploadedByType: "Owner",
-                    uploadedById: toObjectId(actorId),
-                    uploadedAt: new Date()
-                }
-            ],
-            { session }
-        );
-        product = created;
-    }
-
-    line.productId = product._id;
-    if (!line.sku && product.sku) line.sku = product.sku;
-    if (!line.barcode && product.barcode) line.barcode = product.barcode;
-    line.trackingType = trackingType;
-
-    if (trackingType === "IMEI" && !line.productVariantId) {
-        const variant = await createDefaultVariantForProduct(
-            product._id,
-            line,
-            session
-        );
-        line.productVariantId = variant._id;
-        if (!line.sku && variant.sku) line.sku = variant.sku;
-    }
-
-    return line;
+    throw new AppError(
+        `Cannot complete GRN for "${name}" because no product is linked yet. Create the product first from the Product screen using "Select completed PO product line".`,
+        400
+    );
 };
 
 const createDefaultVariantForProduct = async (productId, line, session) => {

@@ -848,6 +848,26 @@ const createProduct = async (payload = {}, actorId = null) => {
         throw err;
     }
 
+    if (
+        source.productSourceType === "PurchaseOrder" &&
+        source.sourcePurchaseOrderId &&
+        source.sourcePurchaseOrderItemId
+    ) {
+        await PurchaseOrder.updateOne(
+            {
+                _id: source.sourcePurchaseOrderId,
+                "items._id": source.sourcePurchaseOrderItemId
+            },
+            {
+                $set: {
+                    "items.$.productId": product._id,
+                    "items.$.trackingType": product.trackingType,
+                    "items.$.sku": product.sku || poSource?.line?.sku || ""
+                }
+            }
+        );
+    }
+
     return populateProduct(Product.findById(product._id));
 };
 
