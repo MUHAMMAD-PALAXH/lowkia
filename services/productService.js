@@ -481,8 +481,8 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
                 wholesalePrice: Number(raw.wholesalePrice) || 0,
                 price: sellingPrice,
                 offerPrice: Number(raw.offerPrice) || 0,
-                // Live stock lives in Inventory — never overwrite quantity from form
-                // on edit. Opening qty only allowed when creating a brand-new variant.
+                // Opening qty: Manual / ThirdParty may set on create (and update if no live inventory).
+                // PO / GRN stock always comes from Inventory — never overwrite those from the form.
                 minimumStock: Number(raw.minimumStock) || 0,
                 maximumStock: Number(raw.maximumStock) || 0,
                 reorderLevel: Number(raw.reorderLevel) || 0,
@@ -495,7 +495,27 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
                 deletedBy: null
             };
             if (!variantDoc) {
-                payload.quantity = 0;
+                const sourceType = String(product.productSourceType || "");
+                if (sourceType === "Manual" || sourceType === "ThirdParty") {
+                    payload.quantity = Math.max(Number(raw.quantity) || 0, 0);
+                } else {
+                    payload.quantity = 0;
+                }
+            } else {
+                const sourceType = String(product.productSourceType || "");
+                if (sourceType === "Manual" || sourceType === "ThirdParty") {
+                    const hasInv = await Inventory.exists({
+                        productVariantId: variantDoc._id,
+                        isDeleted: { $ne: true },
+                        $or: [
+                            { availableStock: { $gt: 0 } },
+                            { currentStock: { $gt: 0 } }
+                        ]
+                    });
+                    if (!hasInv) {
+                        payload.quantity = Math.max(Number(raw.quantity) || 0, 0);
+                    }
+                }
             }
 
             if (sku) payload.sku = sku;
@@ -1029,18 +1049,23 @@ const attachLiveStockToVariants = async (
             reservedStock: 0
         };
         const imeiCount = imeiByVariant.get(key) || 0;
+        const catalogQty = Number(v.quantity) || 0;
+        const fromInv =
+            Number(inv.availableStock) || Number(inv.currentStock) || 0;
         const liveQty = isImei
             ? imeiCount
-            : Number(inv.availableStock) || Number(inv.currentStock) || 0;
+            : fromInv > 0
+              ? fromInv
+              : catalogQty;
 
         return {
             ...v,
             // Keep catalog field, but expose live stock for UI
-            stockCurrent: Number(inv.currentStock) || 0,
-            stockAvailable: Number(inv.availableStock) || 0,
+            stockCurrent: Number(inv.currentStock) || catalogQty || 0,
+            stockAvailable: fromInv > 0 ? fromInv : catalogQty,
             stockReserved: Number(inv.reservedStock) || 0,
             imeiAvailableCount: imeiCount,
-            // quantity = live warehouse stock (old + new from Inventory / IMEI)
+            // quantity = live warehouse stock, else Manual/ThirdParty catalog qty
             quantity: liveQty
         };
     });
