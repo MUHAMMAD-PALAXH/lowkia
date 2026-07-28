@@ -322,9 +322,7 @@ const normalizeItems = async (itemsInput = []) => {
 const resolveHeaderRefs = async (payload) => {
     const warehouseId = toObjectId(payload.warehouseId);
     const branchId = toObjectId(payload.branchId);
-
-    if (!warehouseId) throw new AppError("Warehouse is required.", 400);
-    if (!branchId) throw new AppError("Branch is required.", 400);
+    const supplierId = toObjectId(payload.supplierId);
 
     let customerId = toObjectId(payload.customerId);
     let customer = null;
@@ -374,13 +372,16 @@ const resolveHeaderRefs = async (payload) => {
         throw new AppError("Cannot sell to a blocked customer.", 400);
     }
 
-    const [warehouse, branch] = await Promise.all([
-        Warehouse.findOne({ _id: warehouseId, ...NOT_DELETED }),
-        Branch.findOne({ _id: branchId, ...NOT_DELETED })
-    ]);
-
-    if (!warehouse) throw new AppError("Warehouse not found.", 404);
-    if (!branch) throw new AppError("Branch not found.", 404);
+    let warehouse = null;
+    let branch = null;
+    if (warehouseId) {
+        warehouse = await Warehouse.findOne({ _id: warehouseId, ...NOT_DELETED });
+        if (!warehouse) throw new AppError("Warehouse not found.", 404);
+    }
+    if (branchId) {
+        branch = await Branch.findOne({ _id: branchId, ...NOT_DELETED });
+        if (!branch) throw new AppError("Branch not found.", 404);
+    }
 
     const displayName =
         (payload.customerName || payload.walkInName || customer.name || "")
@@ -393,6 +394,11 @@ const resolveHeaderRefs = async (payload) => {
         customer.phone ||
         "";
 
+    const salesType =
+        String(payload.salesType || "").trim() === "Wholesale"
+            ? "Wholesale"
+            : "Retail";
+
     return {
         customer: {
             _id: customer._id,
@@ -404,8 +410,10 @@ const resolveHeaderRefs = async (payload) => {
         warehouse,
         branch,
         customerId,
-        warehouseId,
-        branchId
+        warehouseId: warehouse?._id || null,
+        branchId: branch?._id || null,
+        supplierId: supplierId || null,
+        salesType
     };
 };
 
@@ -427,6 +435,8 @@ const createSalesOrder = async (payload, actorId = null) => {
     const order = await SalesOrder.create({
         branchId: refs.branchId,
         warehouseId: refs.warehouseId,
+        supplierId: refs.supplierId,
+        salesType: refs.salesType,
         orderNumber,
         referenceNumber: (payload.referenceNumber || "").toString().trim(),
         orderDate: payload.orderDate ? new Date(payload.orderDate) : new Date(),

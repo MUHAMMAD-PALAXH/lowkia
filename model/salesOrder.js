@@ -188,7 +188,7 @@ branchId:{
 
     type:mongoose.Schema.Types.ObjectId,
     ref:"Branch",
-    required:true,
+    required:false,
     index:true
 },
 
@@ -197,8 +197,21 @@ warehouseId:{
 
     type:mongoose.Schema.Types.ObjectId,
     ref:"Warehouse",
-    required:true,
+    required:false,
     index:true
+},
+
+supplierId:{
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"Supplier",
+    required:false,
+    index:true
+},
+
+salesType:{
+    type:String,
+    enum:["Retail","Wholesale"],
+    default:"Retail"
 },
 
 

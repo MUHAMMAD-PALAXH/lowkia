@@ -129,6 +129,7 @@ const sharedOptionalFields = [
     optionalMoney("offerPrice"),
     optionalMoney("discountValue"),
     optionalMoney("salesTaxValue"),
+    optionalMoney("otherCost"),
     optionalMoney("taxPercentage"),
     optionalMoney("minimumStock"),
     optionalMoney("maximumStock"),

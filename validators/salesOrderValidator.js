@@ -49,14 +49,10 @@ const createSalesOrderValidator = [
     body("isWalkIn").optional().isBoolean(),
     body("customerName").optional().isString().trim(),
     body("customerPhone").optional().isString().trim(),
-    body("warehouseId")
-        .notEmpty()
-        .withMessage("Warehouse is required.")
-        .isMongoId(),
-    body("branchId")
-        .notEmpty()
-        .withMessage("Branch is required.")
-        .isMongoId(),
+    body("warehouseId").optional({ checkFalsy: true }).isMongoId(),
+    body("branchId").optional({ checkFalsy: true }).isMongoId(),
+    body("supplierId").optional({ checkFalsy: true }).isMongoId(),
+    body("salesType").optional({ checkFalsy: true }).isIn(["Retail", "Wholesale"]),
     body("paymentMethod").optional().isIn(PAYMENT_METHODS),
     body("discount").optional().isFloat({ min: 0 }),
     body("tax").optional().isFloat({ min: 0 }),

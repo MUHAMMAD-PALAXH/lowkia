@@ -250,6 +250,12 @@ const productSchema = new mongoose.Schema(
             min: 0
         },
 
+        otherCost: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
         branchIds: [
             {
                 type: mongoose.Schema.Types.ObjectId,
