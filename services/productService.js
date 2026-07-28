@@ -1699,6 +1699,7 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
                 supplierName: po.supplierId?.name || "",
                 supplierCode: po.supplierId?.supplierCode || "",
                 productName: item.productName || existingProduct?.name || "",
+                variantLabel: item.variantLabel || item.productVariantId?.combinationString || "",
                 sku: item.sku || item.productVariantId?.sku || existingProduct?.sku || "",
                 trackingType: item.trackingType || existingProduct?.trackingType || "Non-IMEI",
                 quantity: Number(item.quantity) || 0,
@@ -1740,7 +1741,7 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
 
             if (search) {
                 const hay =
-                    `${line.purchaseOrderNo} ${line.productName} ${line.sku} ${line.supplierName} ${line.productCode}`.toLowerCase();
+                    `${line.purchaseOrderNo} ${line.productName} ${line.variantLabel} ${line.sku} ${line.supplierName} ${line.productCode}`.toLowerCase();
                 if (!hay.includes(search)) continue;
             }
 

@@ -42,6 +42,13 @@ const purchaseItemSchema = new mongoose.Schema(
             trim: true
         },
 
+        variantLabel: {
+
+            type: String,
+            default: "",
+            trim: true
+        },
+
         // Ordered Quantity
         quantity: {
 

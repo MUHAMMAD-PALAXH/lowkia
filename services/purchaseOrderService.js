@@ -215,6 +215,9 @@ const normalizeItems = async (itemsInput = [], purchaseType, supplierId) => {
             (variant && (variant.combinationString || variant.sku)) ||
             product?.name ||
             "";
+        const variantLabel =
+            (raw.variantLabel || "").toString().trim() ||
+            (variant?.combinationString || "").toString().trim();
 
         if (!productName) {
             throw new AppError("Each line needs a product name.", 400);
@@ -267,6 +270,7 @@ const normalizeItems = async (itemsInput = [], purchaseType, supplierId) => {
                 product && variant
                     ? `${product.name} (${variant.combinationString || variant.sku || "Variant"})`
                     : productName,
+            variantLabel,
             quantity,
             purchasePrice,
             discount: Number(raw.discount) || 0,
