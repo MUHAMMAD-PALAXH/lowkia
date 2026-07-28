@@ -649,13 +649,20 @@ const applyPoReceiving = async (grn, session) => {
         const accepted = Math.max(Number(gItem.acceptedQuantity) || 0, 0);
         if (accepted <= 0) continue;
 
-        const poItem = (po.items || []).find(
-            (i) =>
-                String(i._id) === String(gItem.purchaseOrderItemId) ||
-                (String(i.productId) === String(gItem.productId) &&
+        let poItem = null;
+        if (gItem.purchaseOrderItemId) {
+            poItem = (po.items || []).find(
+                (i) => String(i._id) === String(gItem.purchaseOrderItemId)
+            );
+        }
+        if (!poItem) {
+            poItem = (po.items || []).find(
+                (i) =>
+                    String(i.productId) === String(gItem.productId) &&
                     String(i.productVariantId || "") ===
-                        String(gItem.productVariantId || ""))
-        );
+                        String(gItem.productVariantId || "")
+            );
+        }
         if (!poItem) {
             throw new AppError(
                 `PO line not found for ${gItem.productName}.`,
