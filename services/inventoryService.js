@@ -341,6 +341,14 @@ const clearProductStock = async (productId, actorId = null) => {
     });
     if (!product) throw new AppError("Product not found.", 404);
 
+    const movementActorId = actorId || product.createdBy || product.vendorId || null;
+    if (!movementActorId) {
+        throw new AppError(
+            "Cannot clear stock because no valid stock-movement actor could be resolved.",
+            400
+        );
+    }
+
     const rows = await Inventory.find({
         productId: id,
         isDeleted: { $ne: true },
@@ -394,7 +402,7 @@ const clearProductStock = async (productId, actorId = null) => {
             referenceType: "Manual",
             remarks: "Manual clear stock before product delete",
             adjustmentReason: "Clear Product Stock",
-            createdBy: actorId || null
+            createdBy: movementActorId
         });
 
         row.currentStock = 0;
@@ -420,7 +428,7 @@ const clearProductStock = async (productId, actorId = null) => {
             $push: {
                 history: {
                     status: "deleted",
-                    updatedBy: actorId || null,
+                    updatedBy: movementActorId,
                     date: new Date(),
                     notes: "Manual clear stock before product delete"
                 }
