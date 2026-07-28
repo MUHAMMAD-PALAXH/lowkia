@@ -4,6 +4,10 @@ const salesReturnController = require("../controllers/salesReturnController");
 
 // Base: /api/sales-returns
 router.get("/", salesReturnController.getReturns);
+router.get(
+    "/returnable/:salesOrderId",
+    salesReturnController.getReturnableFromOrder
+);
 router.get("/:id", salesReturnController.getReturnById);
 router.post("/", salesReturnController.createReturn);
 router.patch("/:id/receive", salesReturnController.receiveReturn);

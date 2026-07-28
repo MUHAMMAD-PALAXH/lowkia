@@ -30,3 +30,10 @@ exports.receiveReturn = asyncHandler(async (req, res) => {
     );
     return success(res, "Return received. Stock restored.", doc);
 });
+
+exports.getReturnableFromOrder = asyncHandler(async (req, res) => {
+    const data = await salesReturnService.getReturnableFromOrder(
+        req.params.salesOrderId
+    );
+    return success(res, "Returnable lines retrieved.", data);
+});

@@ -488,9 +488,73 @@ const getReturnById = async (id) => {
     return doc;
 };
 
+/**
+ * Lines still returnable on a sales order (qty + IMEIs left).
+ */
+const getReturnableFromOrder = async (salesOrderId) => {
+    const id = toObjectId(salesOrderId);
+    if (!id) throw new AppError("salesOrderId is required.", 400);
+
+    const order = await SalesOrder.findOne({ _id: id, ...NOT_DELETED }).lean();
+    if (!order) throw new AppError("Sales order not found.", 404);
+    if (!order.stockUpdated) {
+        throw new AppError(
+            "Cannot return an order that never deducted stock.",
+            400
+        );
+    }
+
+    const { qtyByLine, returnedImeis } = await getPriorReturnUsage(id);
+
+    const lines = [];
+    for (const l of order.items || []) {
+        const key = lineKey(l.productId, l.productVariantId);
+        const already = Math.max(
+            Number(l.returnedQuantity) || 0,
+            qtyByLine.get(key) || 0
+        );
+        const remaining = Math.max(Number(l.quantity) - already, 0);
+        if (remaining <= 0) continue;
+
+        const trackingType =
+            String(l.trackingType || "").toUpperCase().includes("IMEI") &&
+            !String(l.trackingType || "").toUpperCase().includes("NON")
+                ? "IMEI"
+                : "Non-IMEI";
+
+        const availableImeis = (l.imeis || [])
+            .map((e) => String(e).trim())
+            .filter((e) => e && !returnedImeis.has(e));
+
+        lines.push({
+            productId: l.productId,
+            productVariantId: l.productVariantId || null,
+            sku: l.sku || "",
+            productName: l.productName,
+            trackingType,
+            soldQuantity: Number(l.quantity) || 0,
+            alreadyReturned: already,
+            returnableQuantity: remaining,
+            unitPrice: Number(l.unitPrice) || 0,
+            availableImeis:
+                trackingType === "IMEI" ? availableImeis.slice(0, remaining) : []
+        });
+    }
+
+    return {
+        salesOrderId: order._id,
+        orderNumber: order.orderNumber,
+        customerName: order.customerName || "",
+        stockUpdated: order.stockUpdated,
+        fullyReturned: lines.length === 0,
+        lines
+    };
+};
+
 module.exports = {
     createFromSalesOrder,
     receiveReturn,
     getReturns,
-    getReturnById
+    getReturnById,
+    getReturnableFromOrder
 };
