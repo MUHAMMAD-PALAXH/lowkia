@@ -1155,15 +1155,21 @@ productSchema.methods.unpublish = function () {
 // Recompute gross profit / margin from current prices
 productSchema.methods.recomputeProfit = function () {
     const selling = Number(this.sellingPrice) || 0;
-    const cost =
-        Number(this.purchasePrice) ||
-        Number(this.costPrice) ||
-        Number(this.lastPurchasePrice) ||
-        0;
+    // Prefer explicit cost (landed); else purchase / last purchase.
+    const unitCost =
+        Number(this.costPrice) > 0
+            ? Number(this.costPrice)
+            : Number(this.purchasePrice) > 0
+              ? Number(this.purchasePrice)
+              : Number(this.lastPurchasePrice) || 0;
+    const other = Number(this.otherCost) || 0;
+    const cost = unitCost + other;
 
     this.grossProfit = Number((selling - cost).toFixed(2));
     this.profitMarginPercent =
-        selling > 0 ? Number((((selling - cost) / selling) * 100).toFixed(2)) : 0;
+        selling > 0
+            ? Number((((selling - cost) / selling) * 100).toFixed(2))
+            : 0;
 
     return this;
 };

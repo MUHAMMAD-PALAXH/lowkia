@@ -842,6 +842,8 @@ const createProduct = async (payload = {}, actorId = null) => {
     try {
         await syncVariants(product, payload.productVariants, actorId);
         if (product.isModified()) await product.save();
+        // Persist stock/profit summary from Inventory or Manual opening qty.
+        await syncProductStockSummary(product);
     } catch (err) {
         // Product row was already persisted — soft-delete so the same name
         // can be retried instead of returning "already exists".
@@ -946,6 +948,9 @@ const getProducts = async (query = {}) => {
         Product.countDocuments(filter)
     ]);
 
+    // Manual / ThirdParty: fill zero stock from variant opening qty + unit profit.
+    await hydrateListStockFromVariants(items);
+
     return {
         items,
         pagination: {
@@ -993,6 +998,7 @@ const getProductById = async (id) => {
         result.warehouseStock = live.warehouseStock;
         result.totalImeiCount = live.totalImeiCount;
     }
+    applyUnitProfit(result);
 
     return result;
 };
@@ -1103,30 +1109,169 @@ const getLiveProductStock = async (productId) => {
         status: "available"
     });
 
+    const invTotal = rows.reduce((s, r) => s + (r.quantity || 0), 0);
+    const invAvailable = rows.reduce(
+        (s, r) => s + (r.availableQuantity || 0),
+        0
+    );
+    const invReserved = rows.reduce(
+        (s, r) => s + (r.reservedQuantity || 0),
+        0
+    );
+    const invValue = Number(
+        rows.reduce((s, r) => s + (r.inventoryValue || 0), 0).toFixed(2)
+    );
+
+    if (invTotal > 0 || invAvailable > 0 || totalImeiCount > 0) {
+        const product = await Product.findById(pid)
+            .select("trackingType")
+            .lean();
+        const isImei =
+            String(product?.trackingType || "")
+                .toUpperCase()
+                .includes("IMEI") &&
+            !String(product?.trackingType || "")
+                .toUpperCase()
+                .includes("NON");
+        return {
+            totalStock: isImei ? totalImeiCount : invTotal,
+            availableStock: isImei ? totalImeiCount : invAvailable,
+            reservedStock: invReserved,
+            stockValue: invValue,
+            warehouseStock: rows.map((row) => ({
+                warehouseId: row._id,
+                quantity: row.quantity || 0,
+                availableQuantity: row.availableQuantity || 0,
+                reservedQuantity: row.reservedQuantity || 0,
+                updatedAt: new Date()
+            })),
+            totalImeiCount,
+            fromCatalog: false
+        };
+    }
+
+    // Manual / ThirdParty (or any product with no Inventory yet):
+    // fall back to ProductVariant.quantity opening stock.
+    const product = await Product.findById(pid)
+        .select(
+            "trackingType costPrice purchasePrice averagePurchasePrice sellingPrice"
+        )
+        .lean();
+    const variants = await ProductVariant.find({
+        productId: pid,
+        isDeleted: { $ne: true }
+    })
+        .select("quantity costPrice purchasePrice sellingPrice")
+        .lean();
+
+    const catalogQty = variants.reduce(
+        (s, v) => s + (Math.max(Number(v.quantity) || 0, 0)),
+        0
+    );
+    const unitCost =
+        Number(product?.costPrice) ||
+        Number(product?.purchasePrice) ||
+        Number(product?.averagePurchasePrice) ||
+        0;
+
     return {
-        totalStock: rows.reduce((s, r) => s + (r.quantity || 0), 0),
-        availableStock: rows.reduce(
-            (s, r) => s + (r.availableQuantity || 0),
-            0
-        ),
-        reservedStock: rows.reduce(
-            (s, r) => s + (r.reservedQuantity || 0),
-            0
-        ),
-        stockValue: Number(
-            rows
-                .reduce((s, r) => s + (r.inventoryValue || 0), 0)
-                .toFixed(2)
-        ),
-        warehouseStock: rows.map((row) => ({
-            warehouseId: row._id,
-            quantity: row.quantity || 0,
-            availableQuantity: row.availableQuantity || 0,
-            reservedQuantity: row.reservedQuantity || 0,
-            updatedAt: new Date()
-        })),
-        totalImeiCount
+        totalStock: catalogQty,
+        availableStock: catalogQty,
+        reservedStock: 0,
+        stockValue: Number((catalogQty * unitCost).toFixed(2)),
+        warehouseStock: [],
+        totalImeiCount: 0,
+        fromCatalog: true
     };
+};
+
+/**
+ * Persist product stock summary from Inventory, or from variant opening qty
+ * when Inventory is empty (Manual / ThirdParty).
+ */
+const syncProductStockSummary = async (productDoc) => {
+    if (!productDoc?._id) return productDoc;
+    const live = await getLiveProductStock(productDoc._id);
+
+    productDoc.totalStock = Math.max(Number(live.totalStock) || 0, 0);
+    productDoc.availableStock = Math.max(Number(live.availableStock) || 0, 0);
+    productDoc.reservedStock = Math.max(Number(live.reservedStock) || 0, 0);
+    productDoc.stockValue = Number(live.stockValue) || 0;
+    productDoc.warehouseStock = live.warehouseStock || [];
+    productDoc.totalImeiCount = Math.max(Number(live.totalImeiCount) || 0, 0);
+    productDoc.lastStockUpdatedAt = new Date();
+    if (typeof productDoc.recomputeLowStock === "function") {
+        productDoc.recomputeLowStock();
+    }
+    if (typeof productDoc.recomputeProfit === "function") {
+        productDoc.recomputeProfit();
+    }
+    await productDoc.save();
+    return productDoc;
+};
+
+/** Align unit profit with current cost rules (cost > purchase + otherCost). */
+const applyUnitProfit = (p) => {
+    const selling = Number(p.sellingPrice) || 0;
+    const unitCost =
+        Number(p.costPrice) > 0
+            ? Number(p.costPrice)
+            : Number(p.purchasePrice) > 0
+              ? Number(p.purchasePrice)
+              : Number(p.lastPurchasePrice) || 0;
+    const cost = unitCost + (Number(p.otherCost) || 0);
+    p.grossProfit = Number((selling - cost).toFixed(2));
+    p.profitMarginPercent =
+        selling > 0
+            ? Number((((selling - cost) / selling) * 100).toFixed(2))
+            : 0;
+};
+
+/** List hydrate: fill zero stock from variant qty without rewriting every doc. */
+const hydrateListStockFromVariants = async (items = []) => {
+    const need = items.filter(
+        (p) =>
+            !(Number(p.availableStock) > 0) && !(Number(p.totalStock) > 0)
+    );
+
+    let qtyMap = new Map();
+    if (need.length) {
+        const ids = need.map((p) => p._id);
+        const rows = await ProductVariant.aggregate([
+            {
+                $match: {
+                    productId: { $in: ids },
+                    isDeleted: { $ne: true }
+                }
+            },
+            {
+                $group: {
+                    _id: "$productId",
+                    qty: { $sum: { $ifNull: ["$quantity", 0] } }
+                }
+            }
+        ]);
+        qtyMap = new Map(
+            rows.map((r) => [String(r._id), Number(r.qty) || 0])
+        );
+    }
+
+    for (const p of items) {
+        if (!(Number(p.availableStock) > 0) && !(Number(p.totalStock) > 0)) {
+            const q = qtyMap.get(String(p._id)) || 0;
+            if (q > 0) {
+                p.availableStock = q;
+                p.totalStock = q;
+                const unitCost =
+                    Number(p.costPrice) > 0
+                        ? Number(p.costPrice)
+                        : Number(p.purchasePrice) || 0;
+                p.stockValue = Number((q * unitCost).toFixed(2));
+            }
+        }
+        applyUnitProfit(p);
+    }
+    return items;
 };
 
 const getApprovedProducts = () => populateProduct(Product.getApprovedProducts());
@@ -1239,6 +1384,7 @@ const updateProduct = async (id, payload = {}, actorId = null) => {
 
     await syncVariants(product, payload.productVariants, actorId);
     if (product.isModified()) await product.save();
+    await syncProductStockSummary(product);
 
     return populateProduct(Product.findById(product._id));
 };
@@ -1485,93 +1631,8 @@ const refreshStockSummary = async (id) => {
     const product = await findProductOrFail(id);
     const productObjectId = product._id;
 
-    const rows = await Inventory.aggregate([
-        {
-            $match: {
-                productId: productObjectId,
-                isDeleted: { $ne: true }
-            }
-        },
-        {
-            $group: {
-                _id: "$warehouseId",
-                quantity: { $sum: "$currentStock" },
-                availableQuantity: { $sum: "$availableStock" },
-                reservedQuantity: { $sum: "$reservedStock" },
-                lastPurchasePrice: { $max: "$lastPurchasePrice" },
-                inventoryValue: {
-                    $sum: {
-                        $multiply: [
-                            { $ifNull: ["$currentStock", 0] },
-                            { $ifNull: ["$averageCost", 0] }
-                        ]
-                    }
-                }
-            }
-        }
-    ]);
-
-    product.warehouseStock = rows.map((row) => ({
-        warehouseId: row._id,
-        quantity: row.quantity || 0,
-        availableQuantity: row.availableQuantity || 0,
-        reservedQuantity: row.reservedQuantity || 0,
-        updatedAt: new Date()
-    }));
-
-    product.totalStock = rows.reduce((sum, r) => sum + (r.quantity || 0), 0);
-    product.availableStock = rows.reduce(
-        (sum, r) => sum + (r.availableQuantity || 0),
-        0
-    );
-    product.reservedStock = rows.reduce(
-        (sum, r) => sum + (r.reservedQuantity || 0),
-        0
-    );
-
-    product.totalImeiCount = await ItemTrack.countDocuments({
-        productId: productObjectId,
-        status: "available"
-    });
-
-    const invLast = rows.reduce(
-        (max, r) => Math.max(max, Number(r.lastPurchasePrice) || 0),
-        0
-    );
-    if (invLast > 0 && !(Number(product.purchasePrice) > 0)) {
-        product.purchasePrice = invLast;
-    }
-
-    // True stock value from Inventory costing (qty × averageCost per row)
-    const inventoryValueSum = rows.reduce(
-        (s, r) => s + (Number(r.inventoryValue) || 0),
-        0
-    );
-    if (inventoryValueSum > 0) {
-        product.stockValue = Number(inventoryValueSum.toFixed(2));
-        if (product.totalStock > 0) {
-            product.averagePurchasePrice = Number(
-                (inventoryValueSum / product.totalStock).toFixed(2)
-            );
-        }
-    } else {
-        const unitCost =
-            Number(product.averagePurchasePrice) ||
-            Number(product.purchasePrice) ||
-            Number(product.costPrice) ||
-            invLast ||
-            0;
-        product.stockValue = Number((product.totalStock * unitCost).toFixed(2));
-    }
-
-    product.lastStockUpdatedAt = new Date();
-
-    if (typeof product.recomputeLowStock === "function") {
-        product.recomputeLowStock();
-    }
-    await product.save();
-
     // Keep ProductVariant.quantity in sync with live Inventory / IMEI stock
+    // (only when Inventory rows exist — never wipe Manual opening qty).
     const isImei =
         String(product.trackingType || "")
             .toUpperCase()
@@ -1591,7 +1652,16 @@ const refreshStockSummary = async (id) => {
             $group: {
                 _id: "$productVariantId",
                 qty: { $sum: "$currentStock" },
-                avail: { $sum: "$availableStock" }
+                avail: { $sum: "$availableStock" },
+                lastPurchasePrice: { $max: "$lastPurchasePrice" },
+                inventoryValue: {
+                    $sum: {
+                        $multiply: [
+                            { $ifNull: ["$currentStock", 0] },
+                            { $ifNull: ["$averageCost", 0] }
+                        ]
+                    }
+                }
             }
         }
     ]);
@@ -1611,6 +1681,33 @@ const refreshStockSummary = async (id) => {
             { $set: { quantity: qty } }
         );
     }
+
+    const invLast = byVariant.reduce(
+        (max, r) => Math.max(max, Number(r.lastPurchasePrice) || 0),
+        0
+    );
+    if (invLast > 0 && !(Number(product.purchasePrice) > 0)) {
+        product.purchasePrice = invLast;
+    }
+
+    const inventoryValueSum = byVariant.reduce(
+        (s, r) => s + (Number(r.inventoryValue) || 0),
+        0
+    );
+    if (inventoryValueSum > 0) {
+        const invQty = byVariant.reduce(
+            (s, r) => s + (Number(r.qty) || 0),
+            0
+        );
+        if (invQty > 0) {
+            product.averagePurchasePrice = Number(
+                (inventoryValueSum / invQty).toFixed(2)
+            );
+        }
+    }
+
+    // Inventory totals when present; else Manual/ThirdParty variant opening qty.
+    await syncProductStockSummary(product);
 
     return populateProduct(Product.findById(product._id));
 };
