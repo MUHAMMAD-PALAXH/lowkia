@@ -1649,17 +1649,7 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
 
     const pos = await PurchaseOrder.find({
         ...NOT_DELETED,
-        status: {
-            $in: [
-                "Draft",
-                "Pending Approval",
-                "Approved",
-                "Ordered",
-                "Partially Received",
-                "Received",
-                "Completed"
-            ]
-        },
+        status: { $in: ["Received", "Completed"] },
         purchaseType: "New"
     })
         .populate("supplierId", "supplierCode name phone email")
