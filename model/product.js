@@ -263,6 +263,13 @@ const productSchema = new mongoose.Schema(
             }
         ],
 
+        warehouseIds: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "Warehouse"
+            }
+        ],
+
         // ======================================================
         // Tax Information
         // ======================================================

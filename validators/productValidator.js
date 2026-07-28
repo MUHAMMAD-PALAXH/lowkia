@@ -108,6 +108,8 @@ const sharedOptionalFields = [
     body("salesTaxType").optional({ checkFalsy: true }).isIn(["Fixed", "Percentage"]),
     body("branchIds").optional().isArray(),
     body("branchIds.*").optional({ checkFalsy: true }).isMongoId(),
+    body("warehouseIds").optional().isArray(),
+    body("warehouseIds.*").optional({ checkFalsy: true }).isMongoId(),
     body("warrantyType").optional({ checkFalsy: true }).isIn(WARRANTY_TYPES),
     body("productSourceType")
         .optional({ checkFalsy: true })
