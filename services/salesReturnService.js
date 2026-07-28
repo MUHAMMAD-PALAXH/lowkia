@@ -306,11 +306,18 @@ const receiveReturn = async (id, actorId = null) => {
                         );
                     }
                     track.status = "available";
+                    track.warrantyExpiry = undefined;
+                    track.saleInfo = {
+                        ...(track.saleInfo || {}),
+                        orderId: undefined,
+                        soldDate: undefined,
+                        customerPhone: undefined
+                    };
                     track.history = track.history || [];
                     track.history.push({
                         status: "available",
                         date: new Date(),
-                        notes: `Returned via ${ret.returnNumber}`
+                        notes: `Returned via ${ret.returnNumber} — warranty cleared until next sale`
                     });
                     await track.save({ session });
                 }

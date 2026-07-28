@@ -199,32 +199,44 @@ router.post('/pos/checkout', protect, vendorOrAdmin, asyncHandler(async (req, re
 
     const savedOrder = await order.save({ session });
 
-    // 4. Update IMEI Status Metadata (Bulk update)
-    const dynamicExpiry = new Date();
-    dynamicExpiry.setFullYear(dynamicExpiry.getFullYear() + 1);
+    // 4. Update IMEI Status Metadata (per unit — warranty from product)
+    const Product = require('../model/product');
+    const soldDate = new Date();
+    for (const track of targets) {
+      const product = await Product.findById(track.productId)
+        .select('warrantyType warrantyPeriod')
+        .session(session)
+        .lean();
+      const wType = product?.warrantyType || 'No Warranty';
+      const wPeriod = Number(product?.warrantyPeriod) || 0;
+      let warrantyExpiry = null;
+      if (wType === 'Lifetime') {
+        warrantyExpiry = new Date('9999-12-31T00:00:00.000Z');
+      } else if (wType !== 'No Warranty' && wPeriod > 0) {
+        warrantyExpiry = new Date(soldDate);
+        if (wType === 'Days') warrantyExpiry.setDate(warrantyExpiry.getDate() + wPeriod);
+        else if (wType === 'Months') warrantyExpiry.setMonth(warrantyExpiry.getMonth() + wPeriod);
+        else if (wType === 'Years') warrantyExpiry.setFullYear(warrantyExpiry.getFullYear() + wPeriod);
+      }
 
-    await ItemTrack.updateMany(
-      { imei: { $in: orderImeis } },
-      {
-        $set: {
-          status: 'sold',
-          currentBranchId: null, // Clear branch footprint upon sale
-          'saleInfo.orderId': savedOrder._id,
-          'saleInfo.customerPhone': shippingAddress?.phone || '',
-          'saleInfo.soldPrice': orderTotal.total / orderImeis.length,
-          'saleInfo.soldDate': new Date(),
-          warrantyExpiry: dynamicExpiry
-        },
-        $push: { 
-          history: { 
-            status: 'sold', 
-            updatedBy: req.user._id, 
-            notes: `Sold via POS Invoice: ${savedOrder._id}` 
-          } 
-        }
-      },
-      { session }
-    );
+      track.status = 'sold';
+      track.currentBranchId = null;
+      track.saleInfo = {
+        ...(track.saleInfo || {}),
+        orderId: savedOrder._id,
+        customerPhone: shippingAddress?.phone || '',
+        soldPrice: orderTotal.total / orderImeis.length,
+        soldDate
+      };
+      if (warrantyExpiry) track.warrantyExpiry = warrantyExpiry;
+      track.history = track.history || [];
+      track.history.push({
+        status: 'sold',
+        updatedBy: req.user._id,
+        notes: `Sold via POS Invoice: ${savedOrder._id} • Warranty: ${wType === 'Lifetime' ? 'Lifetime' : wType === 'No Warranty' ? 'No Warranty' : `${wPeriod} ${wType}`}`
+      });
+      await track.save({ session });
+    }
 
     // 5. Optimized Variant Decrement (Grouped bulk updates)
     // Map items to their variant counts to avoid O(N) database calls
@@ -302,7 +314,7 @@ router.delete('/delete-branch/:id', protect, vendorOrAdmin, asyncHandler(async (
 // =========================================================
 router.get('/search/:imei', protect, asyncHandler(async (req, res) => {
   const item = await ItemTrack.findOne({ imei: req.params.imei.trim() })
-    .populate('productId', 'name description')
+    .populate('productId', 'name description warrantyType warrantyPeriod')
     .populate('variantId')
     .lean();
 
@@ -311,24 +323,54 @@ router.get('/search/:imei', protect, asyncHandler(async (req, res) => {
   }
 
   const currentDate = new Date();
-  const hasWarranty = item.warrantyExpiry ? new Date(item.warrantyExpiry) > currentDate : false;
-  const daysLeft = item.warrantyExpiry 
-    ? Math.max(0, Math.ceil((new Date(item.warrantyExpiry) - currentDate) / (1000 * 60 * 60 * 24)))
-    : 0;
+  const productWarrantyType = item.productId?.warrantyType || 'No Warranty';
+  const productWarrantyPeriod = Number(item.productId?.warrantyPeriod) || 0;
+  const isLifetime =
+    productWarrantyType === 'Lifetime' ||
+    (item.warrantyExpiry && new Date(item.warrantyExpiry).getFullYear() >= 9999);
+
+  let isWarrantyValid = false;
+  let daysLeft = 0;
+  let warrantyStatus = 'None';
+
+  if (isLifetime) {
+    isWarrantyValid = item.status === 'sold' || !!item.saleInfo?.soldDate;
+    daysLeft = null;
+    warrantyStatus = 'Lifetime';
+  } else if (item.warrantyExpiry) {
+    const expiry = new Date(item.warrantyExpiry);
+    isWarrantyValid = expiry > currentDate;
+    daysLeft = Math.max(0, Math.ceil((expiry - currentDate) / (1000 * 60 * 60 * 24)));
+    warrantyStatus = isWarrantyValid ? 'Active' : 'Expired';
+  } else if (productWarrantyType === 'No Warranty') {
+    warrantyStatus = 'None';
+  }
+
+  const history = (item.history || []).map((h) => ({
+    status: h.status,
+    notes: h.notes,
+    branchId: h.branchId,
+    updatedAt: h.date || h.updatedAt || h.timestamp || null,
+    date: h.date || h.updatedAt || h.timestamp || null
+  }));
 
   res.json({
     success: true,
     data: {
       imei: item.imei,
       productName: item.productId?.name,
-      variantSpecs: item.variantId?.attributes,
+      variantSpecs: item.variantId?.attributes || item.variantId?.combinationString,
       status: item.status,
       customerPhone: item.saleInfo?.customerPhone || 'N/A',
       soldDate: item.saleInfo?.soldDate || null,
-      warrantyExpiry: item.warrantyExpiry || null,
-      isWarrantyValid: hasWarranty,
+      salesOrderId: item.saleInfo?.orderId || null,
+      warrantyType: productWarrantyType,
+      warrantyPeriod: productWarrantyPeriod,
+      warrantyExpiry: isLifetime ? null : (item.warrantyExpiry || null),
+      isWarrantyValid,
       daysRemaining: daysLeft,
-      lifecycleHistory: item.history
+      warrantyStatus,
+      lifecycleHistory: history
     }
   });
 }));

@@ -134,6 +134,39 @@ const calculateLines = (items = [], header = {}) => {
     };
 };
 
+const WARRANTY_TYPES = ["No Warranty", "Days", "Months", "Years", "Lifetime"];
+
+const resolveWarrantyType = (value) => {
+    const v = String(value || "No Warranty").trim();
+    return WARRANTY_TYPES.includes(v) ? v : "No Warranty";
+};
+
+/**
+ * Compute warranty end date from start + type/period.
+ * Returns null for No Warranty / Lifetime.
+ */
+const computeWarrantyEndDate = (startDate, warrantyType, warrantyPeriod) => {
+    const type = resolveWarrantyType(warrantyType);
+    if (type === "No Warranty" || type === "Lifetime") return null;
+    const period = Math.max(Number(warrantyPeriod) || 0, 0);
+    if (period <= 0) return null;
+    const start = startDate ? new Date(startDate) : new Date();
+    if (Number.isNaN(start.getTime())) return null;
+    const end = new Date(start);
+    if (type === "Days") end.setDate(end.getDate() + period);
+    else if (type === "Months") end.setMonth(end.getMonth() + period);
+    else if (type === "Years") end.setFullYear(end.getFullYear() + period);
+    return end;
+};
+
+const resolveWarrantyStatus = (warrantyType, warrantyEndDate, now = new Date()) => {
+    const type = resolveWarrantyType(warrantyType);
+    if (type === "No Warranty") return "None";
+    if (type === "Lifetime") return "Lifetime";
+    if (!warrantyEndDate) return "None";
+    return new Date(warrantyEndDate) > now ? "Active" : "Expired";
+};
+
 const normalizeItems = async (itemsInput = []) => {
     if (!Array.isArray(itemsInput) || itemsInput.length === 0) {
         throw new AppError("At least one sales line is required.", 400);
@@ -218,6 +251,45 @@ const normalizeItems = async (itemsInput = []) => {
             Number(product.sellingPrice) ||
             0;
 
+        const warrantyType = resolveWarrantyType(
+            raw.warrantyType != null && String(raw.warrantyType).trim() !== ""
+                ? raw.warrantyType
+                : product.warrantyType
+        );
+        let warrantyPeriod = Math.max(
+            Number(
+                raw.warrantyPeriod != null
+                    ? raw.warrantyPeriod
+                    : product.warrantyPeriod
+            ) || 0,
+            0
+        );
+        if (warrantyType === "No Warranty" || warrantyType === "Lifetime") {
+            warrantyPeriod = warrantyType === "Lifetime" ? warrantyPeriod : 0;
+        }
+
+        // Provisional dates (finalized on stock OUT / sale)
+        const provisionalStart = raw.warrantyStartDate
+            ? new Date(raw.warrantyStartDate)
+            : null;
+        let warrantyStartDate =
+            provisionalStart && !Number.isNaN(provisionalStart.getTime())
+                ? provisionalStart
+                : null;
+        let warrantyEndDate = raw.warrantyEndDate
+            ? new Date(raw.warrantyEndDate)
+            : null;
+        if (warrantyEndDate && Number.isNaN(warrantyEndDate.getTime())) {
+            warrantyEndDate = null;
+        }
+        if (!warrantyEndDate && warrantyStartDate) {
+            warrantyEndDate = computeWarrantyEndDate(
+                warrantyStartDate,
+                warrantyType,
+                warrantyPeriod
+            );
+        }
+
         items.push({
             productId,
             productVariantId: variant?._id || null,
@@ -235,7 +307,12 @@ const normalizeItems = async (itemsInput = []) => {
             total: 0,
             remarks: (raw.remarks || "").toString(),
             trackingType,
-            imeis: trackingType === "IMEI" ? imeis : []
+            imeis: trackingType === "IMEI" ? imeis : [],
+            warrantyType,
+            warrantyPeriod,
+            warrantyStartDate,
+            warrantyEndDate,
+            warrantyNote: (raw.warrantyNote || "").toString().trim()
         });
     }
 
@@ -718,6 +795,10 @@ const markImeisSold = async ({
     variantId,
     imeis,
     salesOrderId,
+    customerPhone,
+    warrantyExpiry,
+    warrantyType,
+    warrantyPeriod,
     session
 }) => {
     for (const imei of imeis) {
@@ -739,13 +820,28 @@ const markImeisSold = async ({
         track.saleInfo = {
             ...(track.saleInfo || {}),
             orderId: salesOrderId,
-            soldDate: new Date()
+            soldDate: new Date(),
+            customerPhone: customerPhone || track.saleInfo?.customerPhone || ""
         };
+        if (warrantyExpiry) {
+            track.warrantyExpiry = warrantyExpiry;
+        } else if (resolveWarrantyType(warrantyType) === "Lifetime") {
+            // Far-future sentinel so lookup treats Lifetime as active
+            track.warrantyExpiry = new Date("9999-12-31T00:00:00.000Z");
+        } else if (resolveWarrantyType(warrantyType) === "No Warranty") {
+            track.warrantyExpiry = undefined;
+        }
         track.history = track.history || [];
+        const periodLabel =
+            resolveWarrantyType(warrantyType) === "Lifetime"
+                ? "Lifetime"
+                : resolveWarrantyType(warrantyType) === "No Warranty"
+                  ? "No Warranty"
+                  : `${warrantyPeriod || 0} ${warrantyType}`;
         track.history.push({
             status: "sold",
             date: new Date(),
-            notes: "Sold via Sales Order"
+            notes: `Sold via Sales Order • Warranty: ${periodLabel}`
         });
         await track.save({ session });
     }
@@ -822,12 +918,33 @@ const applyStockOut = async (
 
             const trackingType = resolveTrackingType(line.trackingType);
 
+            // Finalize warranty dates at stock OUT (sale start)
+            const soldAt = new Date();
+            line.warrantyType = resolveWarrantyType(line.warrantyType);
+            line.warrantyPeriod = Math.max(Number(line.warrantyPeriod) || 0, 0);
+            line.warrantyStartDate = line.warrantyStartDate || soldAt;
+            if (
+                !line.warrantyEndDate &&
+                line.warrantyType !== "No Warranty" &&
+                line.warrantyType !== "Lifetime"
+            ) {
+                line.warrantyEndDate = computeWarrantyEndDate(
+                    line.warrantyStartDate,
+                    line.warrantyType,
+                    line.warrantyPeriod
+                );
+            }
+
             if (trackingType === "IMEI") {
                 await markImeisSold({
                     productId: line.productId,
                     variantId: line.productVariantId,
                     imeis: line.imeis || [],
                     salesOrderId: order._id,
+                    customerPhone: order.customerPhone || "",
+                    warrantyExpiry: line.warrantyEndDate || null,
+                    warrantyType: line.warrantyType,
+                    warrantyPeriod: line.warrantyPeriod,
                     session
                 });
             }
@@ -868,6 +985,7 @@ const applyStockOut = async (
             order.approvedAt = new Date();
         }
 
+        order.markModified("items");
         await order.save({ session });
         await session.commitTransaction();
     } catch (err) {
@@ -1092,7 +1210,9 @@ const lookupByBarcode = async (barcode, warehouseId = null) => {
             Number(matchedVariant?.sellingPrice) ||
             Number(product.sellingPrice) ||
             0,
-        availableStock
+        availableStock,
+        warrantyType: resolveWarrantyType(product.warrantyType),
+        warrantyPeriod: Math.max(Number(product.warrantyPeriod) || 0, 0)
     };
 };
 
@@ -1102,7 +1222,7 @@ const lookupByImei = async (imei, warehouseId = null) => {
 
     const track = await ItemTrack.findOne({ imei: value }).populate(
         "productId",
-        "name productCode trackingType sellingPrice"
+        "name productCode trackingType sellingPrice warrantyType warrantyPeriod"
     );
     if (!track) throw new AppError("IMEI not found.", 404);
     if (track.status !== "available") {
@@ -1127,7 +1247,9 @@ const lookupByImei = async (imei, warehouseId = null) => {
             Number(product?.sellingPrice) ||
             0,
         status: track.status,
-        branchId: track.currentBranchId
+        branchId: track.currentBranchId,
+        warrantyType: resolveWarrantyType(product?.warrantyType),
+        warrantyPeriod: Math.max(Number(product?.warrantyPeriod) || 0, 0)
     };
 };
 
@@ -1174,7 +1296,7 @@ const getBranchCatalog = async (query = {}) => {
     const invRows = await Inventory.find(invFilter)
         .populate(
             "productId",
-            "name productCode sku barcode trackingType productType sellingPrice proCategoryId proSubCategoryId proBrandId status approvalStatus hasVariants"
+            "name productCode sku barcode trackingType productType sellingPrice warrantyType warrantyPeriod proCategoryId proSubCategoryId proBrandId status approvalStatus hasVariants"
         )
         .populate(
             "productVariantId",
@@ -1247,6 +1369,8 @@ const getBranchCatalog = async (query = {}) => {
                 productType: product.productType || "Simple",
                 hasVariants: !!product.hasVariants,
                 sellingPrice: Number(product.sellingPrice) || 0,
+                warrantyType: resolveWarrantyType(product.warrantyType),
+                warrantyPeriod: Math.max(Number(product.warrantyPeriod) || 0, 0),
                 categoryId: product.proCategoryId || null,
                 subCategoryId: product.proSubCategoryId || null,
                 brandId: product.proBrandId || null,

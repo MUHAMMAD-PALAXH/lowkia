@@ -128,6 +128,44 @@ const salesOrderItemSchema = new mongoose.Schema(
 
         type:[String],
         default:[]
+    },
+
+
+    // Snapshot from product at sale (overridable per line)
+    warrantyType:{
+
+        type:String,
+        enum:["No Warranty","Days","Months","Years","Lifetime"],
+        default:"No Warranty"
+    },
+
+
+    warrantyPeriod:{
+
+        type:Number,
+        default:0,
+        min:0
+    },
+
+
+    warrantyStartDate:{
+
+        type:Date,
+        default:null
+    },
+
+
+    warrantyEndDate:{
+
+        type:Date,
+        default:null
+    },
+
+
+    warrantyNote:{
+
+        type:String,
+        default:""
     }
 
 },
