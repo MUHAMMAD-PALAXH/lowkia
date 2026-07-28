@@ -45,6 +45,8 @@ const MODULE_CONFIG = {
     delivery: { prefix: "DEL", padding: 6 },
     sales_return: { prefix: "SRT", padding: 6 },
 
+    repair_ticket: { prefix: "T", padding: 5 },
+
     payment: { prefix: "PAY", padding: 6 },
     receipt: { prefix: "REC", padding: 6 },
     expense_category: { prefix: "EXCAT", padding: 6 },
@@ -74,6 +76,7 @@ const MODULE_ALIASES = {
     salesOrder: "sales_order",
     salesInvoice: "invoice",
     salesReturn: "sales_return",
+    repairTicket: "repair_ticket",
     expenseCategory: "expense_category",
     leaveType: "leave_type",
     activityLog: "activity_log"
@@ -188,6 +191,7 @@ const generateSalesOrderCode = () => generateCode("sales_order");
 const generateInvoiceCode = () => generateCode("invoice");
 const generateDeliveryCode = () => generateCode("delivery");
 const generateSalesReturnCode = () => generateCode("sales_return");
+const generateRepairTicketCode = () => generateCode("repair_ticket");
 
 // =====================================================
 // Finance
@@ -253,6 +257,7 @@ module.exports = {
     generateInvoiceCode,
     generateDeliveryCode,
     generateSalesReturnCode,
+    generateRepairTicketCode,
 
     generatePaymentCode,
     generateReceiptCode,

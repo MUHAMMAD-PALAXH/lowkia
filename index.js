@@ -105,6 +105,7 @@ app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/customers', require('./routes/customer'));
 app.use('/api/sales-orders', require('./routes/salesOrder'));
 app.use('/api/sales-returns', require('./routes/salesReturn'));
+app.use('/api/repair-tickets', require('./routes/repairTicket'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');
@@ -143,7 +144,7 @@ app.get('/', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('Global error:', { message: err.message });
 
-  const statusCode = err.statusCode || 500;
+  const statusCode = err.statusCode || err.status || 500;
   const isOperational = err.isOperational === true;
 
   res.status(statusCode).json({

@@ -195,6 +195,86 @@ device:repairItemSchema,
 
 
 // ======================================================
+// Ticket Source & Tracking
+// ======================================================
+
+ticketSource:{
+
+    type:String,
+    enum:[
+        "NewRepair",
+        "ExistingProduct"
+    ],
+    default:"NewRepair",
+    index:true
+},
+
+trackingType:{
+
+    type:String,
+    enum:[
+        "IMEI",
+        "Non-IMEI"
+    ],
+    default:"Non-IMEI"
+},
+
+repairCode:{
+
+    type:String,
+    default:"",
+    trim:true,
+    index:true
+},
+
+barcode:{
+
+    type:String,
+    default:"",
+    trim:true,
+    index:true
+},
+
+serviceDetails:{
+
+    type:String,
+    default:""
+},
+
+paymentMethod:{
+
+    type:String,
+    enum:[
+        "Advance",
+        "Partial",
+        "CashOnDelivery",
+        "Bank"
+    ],
+    default:"Advance"
+},
+
+warrantyChecked:{
+
+    type:Boolean,
+    default:false
+},
+
+itemTrackId:{
+
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"ItemTrack",
+    default:null
+},
+
+sourceSalesOrderId:{
+
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"SalesOrder",
+    default:null
+},
+
+
+// ======================================================
 // Warranty
 // ======================================================
 
