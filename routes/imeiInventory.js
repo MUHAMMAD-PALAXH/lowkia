@@ -313,7 +313,11 @@ router.delete('/delete-branch/:id', protect, vendorOrAdmin, asyncHandler(async (
 // STEP 4: SERVICE LOOKUP & JOB CARD TICKET GENERATOR
 // =========================================================
 router.get('/search/:imei', protect, asyncHandler(async (req, res) => {
-  const item = await ItemTrack.findOne({ imei: req.params.imei.trim() })
+  const raw = String(req.params.imei || "").trim();
+  const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const item = await ItemTrack.findOne({
+    imei: { $regex: `^${escaped}$`, $options: "i" }
+  })
     .populate('productId', 'name description warrantyType warrantyPeriod')
     .populate('variantId')
     .lean();
