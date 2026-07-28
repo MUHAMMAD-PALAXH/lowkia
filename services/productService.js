@@ -1649,7 +1649,8 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
 
     const pos = await PurchaseOrder.find({
         ...NOT_DELETED,
-        status: { $in: ["Received", "Completed"] }
+        status: { $in: ["Received", "Completed"] },
+        purchaseType: "New"
     })
         .populate("supplierId", "supplierCode name phone email")
         .populate(
@@ -1661,7 +1662,6 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
             "sku combinationString purchasePrice costPrice sellingPrice wholesalePrice"
         )
         .sort({ createdAt: -1 })
-        .limit(100)
         .lean();
 
     const usedSourceIds = new Set(
@@ -1727,6 +1727,10 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
                       ? "Already converted into a product"
                       : ""
             };
+
+            if (line.duplicateBlocked) {
+                continue;
+            }
 
             if (search) {
                 const hay =
