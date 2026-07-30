@@ -145,3 +145,10 @@ exports.cancelPurchaseOrder = asyncHandler(async (req, res) => {
     );
     return success(res, "Purchase order cancelled.", po);
 });
+
+exports.getPurchaseOrderDeleteCheck = asyncHandler(async (req, res) => {
+    const data = await purchaseOrderService.getPurchaseOrderDeleteCheck(
+        req.params.id
+    );
+    return success(res, "Purchase order delete check retrieved.", data);
+});

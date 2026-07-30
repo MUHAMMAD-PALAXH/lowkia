@@ -266,12 +266,16 @@ const poCanAutoResolve = (status) =>
 
 const mapOpenPurchaseOrder = (doc) => {
     const status = doc.status || "";
+    const canAutoResolve = poCanAutoResolve(status);
+    // Received stock means the PO stays as history — unlink product instead.
+    const canUnlink = !canAutoResolve;
     return {
         id: String(doc._id),
         purchaseOrderNo: doc.purchaseOrderNo || "",
         status,
         orderDate: doc.orderDate || null,
-        canAutoResolve: poCanAutoResolve(status),
+        canAutoResolve,
+        canUnlink,
         canCancel: !["Received", "Completed", "Partially Received", "Cancelled"].includes(
             status
         ),
@@ -388,6 +392,9 @@ const getProductDeleteCheck = async (id) => {
     const canAutoResolvePos =
         openPurchaseOrders.length > 0 &&
         openPurchaseOrders.every((o) => o.canAutoResolve);
+    const canUnlinkPos =
+        openPurchaseOrders.length === 0 ||
+        openPurchaseOrders.every((o) => o.canAutoResolve || o.canUnlink);
     const canClearStock =
         stock.total > 0 &&
         stock.reserved <= 0 &&
@@ -399,7 +406,7 @@ const getProductDeleteCheck = async (id) => {
     const canForceTrash =
         canDelete ||
         ((stock.total <= 0 || canClearStock) &&
-            (openPurchaseOrders.length === 0 || canAutoResolvePos) &&
+            canUnlinkPos &&
             blockedImeiCount <= 0);
 
     return {
@@ -407,6 +414,7 @@ const getProductDeleteCheck = async (id) => {
         canForceTrash,
         canClearStock,
         canAutoResolvePos,
+        canUnlinkPos,
         stock,
         imeiCount,
         blockedImeiCount,
@@ -420,6 +428,42 @@ const getProductDeleteCheck = async (id) => {
         })),
         openPurchaseOrders
     };
+};
+
+/**
+ * Keep Partially Received / Ordered POs as history, but detach this product
+ * so the catalog entry can be trashed.
+ */
+const unlinkProductFromPurchaseOrders = async (productId, actorId = null) => {
+    const pos = await PurchaseOrder.find({
+        "items.productId": productId,
+        status: { $nin: CLOSED_PO_STATUSES },
+        isDeleted: { $ne: true }
+    });
+
+    const unlinked = [];
+    for (const po of pos) {
+        let changed = false;
+        for (const item of po.items || []) {
+            if (String(item.productId || "") !== String(productId)) continue;
+            if (!item.productName) {
+                item.productName = "Unlinked product";
+            }
+            item.productId = null;
+            item.productVariantId = null;
+            changed = true;
+        }
+        if (!changed) continue;
+        po.updatedBy = toObjectId(actorId) || po.updatedBy;
+        po.markModified("items");
+        await po.save();
+        unlinked.push({
+            id: String(po._id),
+            purchaseOrderNo: po.purchaseOrderNo || "",
+            status: po.status || ""
+        });
+    }
+    return unlinked;
 };
 
 /**
@@ -479,20 +523,27 @@ const prepareAndTrashProduct = async (id, actorId = null) => {
         });
     }
 
-    // 2) Cancel + soft-delete linked open POs that are auto-resolvable
+    // 2) Resolve linked open POs:
+    //    - Draft/Ordered-like → cancel + trash PO
+    //    - Partially Received / locked → unlink product, keep PO as history
     const openPos = await getBlockingPurchaseOrders(product._id, 50);
-    const locked = openPos.filter((o) => !o.canAutoResolve);
-    if (locked.length) {
+    const purchaseOrderService = require("./purchaseOrderService");
+    const autoPos = openPos.filter((o) => o.canAutoResolve);
+    const unlinkPos = openPos.filter((o) => !o.canAutoResolve && o.canUnlink);
+    const blockedPos = openPos.filter(
+        (o) => !o.canAutoResolve && !o.canUnlink
+    );
+
+    if (blockedPos.length) {
         throw new AppError(
-            `Cannot auto-resolve purchase order(s): ${locked
+            `Cannot resolve purchase order(s): ${blockedPos
                 .map((o) => `${o.purchaseOrderNo} (${o.status})`)
-                .join(", ")}. Finish or cancel them manually first.`,
+                .join(", ")}.`,
             400
         );
     }
 
-    const purchaseOrderService = require("./purchaseOrderService");
-    for (const po of openPos) {
+    for (const po of autoPos) {
         if (po.status !== "Cancelled" && po.status !== "Draft") {
             await purchaseOrderService.cancelPurchaseOrder(
                 po.id,
@@ -505,13 +556,27 @@ const prepareAndTrashProduct = async (id, actorId = null) => {
                 id: po.id
             });
         }
-        // Soft-delete Draft / Cancelled POs so product guard passes
         await purchaseOrderService.deletePurchaseOrder(po.id, actorId);
         steps.push({
             action: "trashPo",
             purchaseOrderNo: po.purchaseOrderNo,
             id: po.id
         });
+    }
+
+    if (unlinkPos.length) {
+        const unlinked = await unlinkProductFromPurchaseOrders(
+            product._id,
+            actorId
+        );
+        for (const row of unlinked) {
+            steps.push({
+                action: "unlinkPo",
+                purchaseOrderNo: row.purchaseOrderNo,
+                id: row.id,
+                status: row.status
+            });
+        }
     }
 
     // 3) Soft-delete the product

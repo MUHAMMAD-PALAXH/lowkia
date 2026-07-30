@@ -822,6 +822,72 @@ const cancelPurchaseOrder = async (id, actorId = null, reason = "") => {
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
+/** Friendly trash guidance for Partially Received / locked POs */
+const getPurchaseOrderDeleteCheck = async (id) => {
+    const po = await PurchaseOrder.findOne({ _id: id, ...NOT_DELETED })
+        .populate("items.productId", "name productCode status trackingType")
+        .lean();
+    if (!po) throw new AppError("Purchase order not found.", 404);
+
+    const canTrash = ["Draft", "Cancelled"].includes(po.status);
+    const products = [];
+    const seen = new Set();
+    for (const item of po.items || []) {
+        const p = item.productId;
+        if (!p || typeof p !== "object") continue;
+        const pid = String(p._id || "");
+        if (!pid || seen.has(pid)) continue;
+        seen.add(pid);
+        products.push({
+            id: pid,
+            name: p.name || item.productName || "",
+            productCode: p.productCode || "",
+            status: p.status || "",
+            trackingType: p.trackingType || item.trackingType || ""
+        });
+    }
+
+    let grns = [];
+    try {
+        const Grn = mongoose.models.Grn || require("../model/grn");
+        grns = await Grn.find({
+            purchaseOrderId: po._id,
+            isDeleted: { $ne: true }
+        })
+            .select("grnNumber status createdAt")
+            .sort({ createdAt: -1 })
+            .limit(20)
+            .lean();
+    } catch (_) {
+        grns = [];
+    }
+
+    let tip =
+        "Only Draft or Cancelled purchase orders can move to trash.";
+    if (po.status === "Partially Received" || po.status === "Ordered") {
+        tip =
+            "This PO already has (or expects) receipts, so it stays as purchase history and cannot be trashed. " +
+            "To remove a catalog product linked here: open Products → Resolve & trash. " +
+            "That unlinks the product from this PO and keeps the PO/GRN history intact.";
+    } else if (["Received", "Completed"].includes(po.status)) {
+        tip =
+            "Fully received/completed POs are permanent history and cannot be trashed.";
+    }
+
+    return {
+        canTrash,
+        status: po.status,
+        purchaseOrderNo: po.purchaseOrderNo || "",
+        tip,
+        products,
+        grns: grns.map((g) => ({
+            id: String(g._id),
+            grnNumber: g.grnNumber || "",
+            status: g.status || ""
+        }))
+    };
+};
+
 /** Product helper for Existing PO form: stock + linked suppliers + last prices */
 const getProductPurchaseContext = async (productId) => {
     const id = toObjectId(productId);
@@ -909,6 +975,7 @@ module.exports = {
     rejectPurchaseOrder,
     markOrdered,
     cancelPurchaseOrder,
+    getPurchaseOrderDeleteCheck,
     getProductPurchaseContext,
     LOCKED_AFTER
 };

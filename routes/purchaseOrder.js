@@ -43,6 +43,13 @@ router.get(
     purchaseOrderController.getPurchaseOrderById
 );
 
+router.get(
+    "/:id/delete-check",
+    idValidator,
+    validate,
+    purchaseOrderController.getPurchaseOrderDeleteCheck
+);
+
 router.post(
     "/",
     createPurchaseOrderValidator,
