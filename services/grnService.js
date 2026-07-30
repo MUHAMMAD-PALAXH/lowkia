@@ -30,7 +30,7 @@ const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
-const RECEIVABLE_PO = ["Ordered", "Partially Received"];
+const RECEIVABLE_PO = ["Ordered", "Supplier Accepted", "Partially Received"];
 const EDITABLE_GRN = ["Draft", "Pending Approval"];
 
 const trash = createTrashOps(GRN, {
@@ -764,7 +764,7 @@ const applyPoReceiving = async (grn, session) => {
     po.totalReceivedAmount = receivedAmount;
 
     if (receivedQty <= 0) {
-        po.status = "Ordered";
+        po.status = po.supplierId ? "Supplier Accepted" : "Ordered";
         po.isFullyReceived = false;
         grn.purchaseStatus = "Pending";
     } else if (receivedQty < totalQty) {
@@ -850,7 +850,7 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     if (!po) throw new AppError("Purchase order not found.", 404);
     if (!RECEIVABLE_PO.includes(po.status)) {
         throw new AppError(
-            "GRN can only be created from Ordered or Partially Received purchase orders.",
+            "GRN can only be created from Ordered, Supplier Accepted, or Partially Received purchase orders.",
             400
         );
     }

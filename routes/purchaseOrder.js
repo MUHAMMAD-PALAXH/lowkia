@@ -114,6 +114,20 @@ router.patch(
 );
 
 router.patch(
+    "/:id/supplier-accept",
+    idValidator,
+    validate,
+    purchaseOrderController.supplierAcceptPurchaseOrder
+);
+
+router.patch(
+    "/:id/supplier-reject",
+    idValidator,
+    validate,
+    purchaseOrderController.supplierRejectPurchaseOrder
+);
+
+router.patch(
     "/:id/cancel",
     idValidator,
     validate,

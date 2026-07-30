@@ -388,6 +388,9 @@ const purchaseOrderSchema = new mongoose.Schema(
                 "Pending Approval",
                 "Approved",
                 "Ordered",
+                "Awaiting Supplier",
+                "Supplier Accepted",
+                "Supplier Rejected",
                 "Partially Received",
                 "Received",
                 "Completed",
@@ -471,6 +474,56 @@ const purchaseOrderSchema = new mongoose.Schema(
             type: String,
             default: ""
         },
+
+        // ======================================================
+        // Supplier acceptance (only when supplierId is set)
+        // ======================================================
+
+        supplierAcceptanceStatus: {
+            type: String,
+            enum: ["Not Required", "Pending", "Accepted", "Rejected"],
+            default: "Not Required"
+        },
+
+        supplierNotifiedAt: {
+            type: Date,
+            default: null
+        },
+
+        supplierMessage: {
+            type: String,
+            default: ""
+        },
+
+        supplierRespondedAt: {
+            type: Date,
+            default: null
+        },
+
+        supplierResponseNote: {
+            type: String,
+            default: ""
+        },
+
+        supplierExpectedDeliveryDate: {
+            type: Date,
+            default: null
+        },
+
+        supplierDeliveryType: {
+            type: String,
+            enum: ["Full", "Partial", ""],
+            default: ""
+        },
+
+        supplierPartialSchedule: [
+            {
+                amount: { type: Number, default: 0, min: 0 },
+                days: { type: Number, default: 0, min: 0 },
+                dueDate: { type: Date, default: null },
+                note: { type: String, default: "", trim: true }
+            }
+        ],
 
         internalNote: {
 

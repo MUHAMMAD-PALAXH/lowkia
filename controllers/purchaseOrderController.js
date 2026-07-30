@@ -132,9 +132,35 @@ exports.rejectPurchaseOrder = asyncHandler(async (req, res) => {
 exports.markOrdered = asyncHandler(async (req, res) => {
     const po = await purchaseOrderService.markOrdered(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.body || {}
     );
-    return success(res, "Purchase order marked as Ordered (sent to supplier).", po);
+    const hasSupplier = !!po.supplierId;
+    return success(
+        res,
+        hasSupplier
+            ? "Purchase order sent to supplier — awaiting acceptance."
+            : "Purchase order marked as Ordered.",
+        po
+    );
+});
+
+exports.supplierAcceptPurchaseOrder = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.supplierAcceptPurchaseOrder(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(res, "Purchase order accepted by supplier.", po);
+});
+
+exports.supplierRejectPurchaseOrder = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.supplierRejectPurchaseOrder(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(res, "Purchase order rejected by supplier.", po);
 });
 
 exports.cancelPurchaseOrder = asyncHandler(async (req, res) => {

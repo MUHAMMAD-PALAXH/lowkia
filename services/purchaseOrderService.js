@@ -781,15 +781,151 @@ const rejectPurchaseOrder = async (id, reason = "", actor = {}) => {
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
-const markOrdered = async (id, actorId = null) => {
+const markOrdered = async (id, actorId = null, payload = {}) => {
     const po = await findPoOrFail(id);
     if (po.status !== "Approved") {
         throw new AppError(
-            "Purchase order must be Approved before marking Ordered (sent to supplier).",
+            "Purchase order must be Approved before sending to supplier / marking Ordered.",
             400
         );
     }
-    po.status = "Ordered";
+
+    const hasSupplier = !!po.supplierId;
+    const message = String(
+        payload.supplierMessage || payload.message || po.supplierNote || ""
+    ).trim();
+
+    if (hasSupplier) {
+        // Supplier must accept before receiving / completing
+        po.status = "Awaiting Supplier";
+        po.supplierAcceptanceStatus = "Pending";
+        po.supplierNotifiedAt = new Date();
+        po.supplierMessage =
+            message ||
+            `Purchase order ${po.purchaseOrderNo || ""} has been sent for your acceptance.`;
+        po.supplierRespondedAt = null;
+        po.supplierResponseNote = "";
+        po.supplierExpectedDeliveryDate = null;
+        po.supplierDeliveryType = "";
+        po.supplierPartialSchedule = [];
+    } else {
+        // No supplier selected — classic Ordered path (no accept step)
+        po.status = "Ordered";
+        po.supplierAcceptanceStatus = "Not Required";
+        po.supplierNotifiedAt = null;
+        po.supplierMessage = "";
+    }
+
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
+const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    if (!po.supplierId) {
+        throw new AppError(
+            "This purchase order has no supplier — acceptance is not required.",
+            400
+        );
+    }
+    if (po.status !== "Awaiting Supplier") {
+        throw new AppError(
+            "Only purchase orders awaiting supplier can be accepted.",
+            400
+        );
+    }
+
+    const deliveryType = String(payload.deliveryType || "").trim();
+    if (!["Full", "Partial"].includes(deliveryType)) {
+        throw new AppError(
+            "deliveryType must be Full or Partial when accepting.",
+            400
+        );
+    }
+
+    const expectedRaw =
+        payload.expectedDeliveryDate || payload.deliveryDate || null;
+    const expectedDeliveryDate = expectedRaw ? new Date(expectedRaw) : null;
+    if (!expectedDeliveryDate || Number.isNaN(expectedDeliveryDate.getTime())) {
+        throw new AppError(
+            "expectedDeliveryDate is required when accepting.",
+            400
+        );
+    }
+
+    let partialSchedule = [];
+    if (deliveryType === "Partial") {
+        const raw = Array.isArray(payload.partialSchedule)
+            ? payload.partialSchedule
+            : [];
+        if (!raw.length) {
+            throw new AppError(
+                "partialSchedule is required for Partial delivery (amount + days).",
+                400
+            );
+        }
+        partialSchedule = raw.map((row, idx) => {
+            const amount = Number(row.amount) || 0;
+            const days = Math.max(0, parseInt(row.days, 10) || 0);
+            if (amount <= 0) {
+                throw new AppError(
+                    `partialSchedule[${idx}].amount must be greater than 0.`,
+                    400
+                );
+            }
+            const dueDate = new Date(expectedDeliveryDate);
+            dueDate.setDate(dueDate.getDate() + days);
+            return {
+                amount,
+                days,
+                dueDate,
+                note: String(row.note || "").trim()
+            };
+        });
+    }
+
+    po.status = "Supplier Accepted";
+    po.supplierAcceptanceStatus = "Accepted";
+    po.supplierRespondedAt = new Date();
+    po.supplierResponseNote = String(payload.note || payload.responseNote || "").trim();
+    po.supplierExpectedDeliveryDate = expectedDeliveryDate;
+    po.supplierDeliveryType = deliveryType;
+    po.supplierPartialSchedule = partialSchedule;
+    if (!po.expectedDeliveryDate) {
+        po.expectedDeliveryDate = expectedDeliveryDate;
+    }
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
+const supplierRejectPurchaseOrder = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    if (!po.supplierId) {
+        throw new AppError(
+            "This purchase order has no supplier — rejection is not required.",
+            400
+        );
+    }
+    if (po.status !== "Awaiting Supplier") {
+        throw new AppError(
+            "Only purchase orders awaiting supplier can be rejected.",
+            400
+        );
+    }
+
+    const note = String(payload.note || payload.responseNote || payload.reason || "").trim();
+    if (!note) {
+        throw new AppError("A rejection note/reason is required.", 400);
+    }
+
+    po.status = "Supplier Rejected";
+    po.supplierAcceptanceStatus = "Rejected";
+    po.supplierRespondedAt = new Date();
+    po.supplierResponseNote = note;
+    po.supplierDeliveryType = "";
+    po.supplierPartialSchedule = [];
     po.updatedBy = toObjectId(actorId);
     await po.save();
     return populatePo(PurchaseOrder.findById(po._id));
@@ -797,18 +933,12 @@ const markOrdered = async (id, actorId = null) => {
 
 const cancelPurchaseOrder = async (id, actorId = null, reason = "") => {
     const po = await findPoOrFail(id);
-    if (["Received", "Completed"].includes(po.status)) {
-        throw new AppError(
-            "Fully received / completed purchase orders cannot be cancelled.",
-            400
-        );
-    }
     if (po.status === "Cancelled") {
         throw new AppError("Purchase order is already cancelled.", 400);
     }
-    if (po.status === "Partially Received") {
+    if (["Received", "Completed", "Partially Received"].includes(po.status)) {
         throw new AppError(
-            "Partially received POs cannot be cancelled — complete remaining via GRN.",
+            "Fully received / completed / partially received purchase orders cannot be cancelled.",
             400
         );
     }
@@ -974,6 +1104,8 @@ module.exports = {
     approvePurchaseOrder,
     rejectPurchaseOrder,
     markOrdered,
+    supplierAcceptPurchaseOrder,
+    supplierRejectPurchaseOrder,
     cancelPurchaseOrder,
     getPurchaseOrderDeleteCheck,
     getProductPurchaseContext,

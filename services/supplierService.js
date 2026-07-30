@@ -467,7 +467,7 @@ const getSupplierDetails = async (id, query = {}) => {
             isDeleted: { $ne: true }
         })
             .select(
-                "purchaseOrderNo orderDate status paymentStatus grandTotal paidAmount dueAmount items warehouseId"
+                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPartialSchedule isFullyReceived totalReceivedAmount"
             )
             .sort({ orderDate: -1, createdAt: -1 })
             .limit(poLimit)
@@ -1247,6 +1247,7 @@ const getSupplierDetails = async (id, query = {}) => {
             id: po._id,
             purchaseOrderNo: po.purchaseOrderNo || "",
             orderDate: po.orderDate || null,
+            expectedDeliveryDate: po.expectedDeliveryDate || null,
             status: po.status || "",
             paymentStatus: po.paymentStatus || "",
             grandTotal: Number(po.grandTotal) || 0,
@@ -1257,6 +1258,22 @@ const getSupplierDetails = async (id, query = {}) => {
             receivedQty,
             receiveRate: totalQty > 0 ? receivedQty / totalQty : 0,
             lineSpend,
+            isFullyReceived: !!po.isFullyReceived,
+            totalReceivedAmount: Number(po.totalReceivedAmount) || 0,
+            supplierNote: po.supplierNote || "",
+            supplierAcceptanceStatus: po.supplierAcceptanceStatus || "Not Required",
+            supplierNotifiedAt: po.supplierNotifiedAt || null,
+            supplierMessage: po.supplierMessage || "",
+            supplierRespondedAt: po.supplierRespondedAt || null,
+            supplierResponseNote: po.supplierResponseNote || "",
+            supplierExpectedDeliveryDate: po.supplierExpectedDeliveryDate || null,
+            supplierDeliveryType: po.supplierDeliveryType || "",
+            supplierPartialSchedule: (po.supplierPartialSchedule || []).map((s) => ({
+                amount: Number(s.amount) || 0,
+                days: Number(s.days) || 0,
+                dueDate: s.dueDate || null,
+                note: s.note || ""
+            })),
             items: items.map((i) => ({
                 productId: i.productId || null,
                 productName: i.productName || "",
