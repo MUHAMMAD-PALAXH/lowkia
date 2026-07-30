@@ -492,44 +492,152 @@ const getSupplierDetails = async (id, query = {}) => {
                 $group: {
                     _id: null,
                     poCount: { $sum: 1 },
-                    lifetimeSpend: { $sum: { $ifNull: ["$grandTotal", 0] } },
-                    lifetimePaid: { $sum: { $ifNull: ["$paidAmount", 0] } },
-                    lifetimeDue: { $sum: { $ifNull: ["$dueAmount", 0] } },
+                    // Financials exclude cancelled / rejected POs
+                    lifetimeSpend: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $in: [
+                                        "$status",
+                                        ["Cancelled", "Rejected"]
+                                    ]
+                                },
+                                0,
+                                { $ifNull: ["$grandTotal", 0] }
+                            ]
+                        }
+                    },
+                    lifetimePaid: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $in: [
+                                        "$status",
+                                        ["Cancelled", "Rejected"]
+                                    ]
+                                },
+                                0,
+                                { $ifNull: ["$paidAmount", 0] }
+                            ]
+                        }
+                    },
+                    lifetimeDue: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $in: [
+                                        "$status",
+                                        ["Cancelled", "Rejected"]
+                                    ]
+                                },
+                                0,
+                                { $ifNull: ["$dueAmount", 0] }
+                            ]
+                        }
+                    },
+                    completedSpend: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $in: [
+                                        "$status",
+                                        ["Completed", "Closed", "Received"]
+                                    ]
+                                },
+                                { $ifNull: ["$grandTotal", 0] },
+                                0
+                            ]
+                        }
+                    },
+                    completedPoCount: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $in: [
+                                        "$status",
+                                        ["Completed", "Closed", "Received"]
+                                    ]
+                                },
+                                1,
+                                0
+                            ]
+                        }
+                    },
+                    cancelledPoCount: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $in: [
+                                        "$status",
+                                        ["Cancelled", "Rejected"]
+                                    ]
+                                },
+                                1,
+                                0
+                            ]
+                        }
+                    },
                     totalQtyOrdered: {
                         $sum: {
-                            $reduce: {
-                                input: { $ifNull: ["$items", []] },
-                                initialValue: 0,
-                                in: {
-                                    $add: [
-                                        "$$value",
-                                        { $ifNull: ["$$this.quantity", 0] }
+                            $cond: [
+                                {
+                                    $in: [
+                                        "$status",
+                                        ["Cancelled", "Rejected"]
                                     ]
+                                },
+                                0,
+                                {
+                                    $reduce: {
+                                        input: { $ifNull: ["$items", []] },
+                                        initialValue: 0,
+                                        in: {
+                                            $add: [
+                                                "$$value",
+                                                {
+                                                    $ifNull: [
+                                                        "$$this.quantity",
+                                                        0
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    }
                                 }
-                            }
+                            ]
                         }
                     },
                     totalQtyReceived: {
                         $sum: {
-                            $reduce: {
-                                input: { $ifNull: ["$items", []] },
-                                initialValue: 0,
-                                in: {
-                                    $add: [
-                                        "$$value",
-                                        {
-                                            $ifNull: [
-                                                "$$this.receivedQuantity",
-                                                0
+                            $cond: [
+                                {
+                                    $in: [
+                                        "$status",
+                                        ["Cancelled", "Rejected"]
+                                    ]
+                                },
+                                0,
+                                {
+                                    $reduce: {
+                                        input: { $ifNull: ["$items", []] },
+                                        initialValue: 0,
+                                        in: {
+                                            $add: [
+                                                "$$value",
+                                                {
+                                                    $ifNull: [
+                                                        "$$this.receivedQuantity",
+                                                        0
+                                                    ]
+                                                }
                                             ]
                                         }
-                                    ]
+                                    }
                                 }
-                            }
+                            ]
                         }
                     },
-                    lastPurchaseDate: { $max: "$orderDate" },
-                    lastPoNo: { $max: "$purchaseOrderNo" }
+                    lastPurchaseDate: { $max: "$orderDate" }
                 }
             }
         ]),
@@ -538,7 +646,8 @@ const getSupplierDetails = async (id, query = {}) => {
             {
                 $match: {
                     supplierId,
-                    isDeleted: { $ne: true }
+                    isDeleted: { $ne: true },
+                    status: { $nin: ["Cancelled", "Rejected"] }
                 }
             },
             { $unwind: "$items" },
@@ -563,6 +672,12 @@ const getSupplierDetails = async (id, query = {}) => {
                     lastUnitPrice: {
                         $last: { $ifNull: ["$items.purchasePrice", 0] }
                     },
+                    minUnitPrice: {
+                        $min: { $ifNull: ["$items.purchasePrice", 0] }
+                    },
+                    maxUnitPrice: {
+                        $max: { $ifNull: ["$items.purchasePrice", 0] }
+                    },
                     lastPurchaseDate: { $max: "$orderDate" },
                     poCount: { $addToSet: "$_id" }
                 }
@@ -574,8 +689,19 @@ const getSupplierDetails = async (id, query = {}) => {
                     spend: 1,
                     avgUnitPrice: 1,
                     lastUnitPrice: 1,
+                    minUnitPrice: 1,
+                    maxUnitPrice: 1,
                     lastPurchaseDate: 1,
-                    poCount: { $size: "$poCount" }
+                    poCount: { $size: "$poCount" },
+                    receiveRate: {
+                        $cond: [
+                            { $gt: ["$qtyOrdered", 0] },
+                            {
+                                $divide: ["$qtyReceived", "$qtyOrdered"]
+                            },
+                            0
+                        ]
+                    }
                 }
             },
             { $sort: { spend: -1 } },
@@ -586,18 +712,86 @@ const getSupplierDetails = async (id, query = {}) => {
             supplierId,
             isDeleted: { $ne: true },
             status: {
-                $nin: ["Completed", "Cancelled", "Closed", "Rejected"]
+                $nin: ["Completed", "Cancelled", "Closed", "Rejected", "Received"]
             }
         })
     ]);
 
-    const grnCount = await GRN.countDocuments({
-        supplierId,
-        isDeleted: { $ne: true }
-    });
+    const [grnCount, grnAgg, monthlyTrend, statusBreakdown] = await Promise.all([
+        GRN.countDocuments({
+            supplierId,
+            isDeleted: { $ne: true }
+        }),
+        GRN.aggregate([
+            {
+                $match: {
+                    supplierId,
+                    isDeleted: { $ne: true },
+                    status: {
+                        $in: ["Completed", "Received", "Verified"]
+                    }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    completedGrnCount: { $sum: 1 },
+                    receivedValue: {
+                        $sum: { $ifNull: ["$grandTotal", 0] }
+                    },
+                    acceptedQty: {
+                        $sum: { $ifNull: ["$totalAcceptedQuantity", 0] }
+                    }
+                }
+            }
+        ]),
+        PurchaseOrder.aggregate([
+            {
+                $match: {
+                    supplierId,
+                    isDeleted: { $ne: true },
+                    status: { $nin: ["Cancelled", "Rejected"] },
+                    orderDate: {
+                        $gte: new Date(
+                            new Date().getFullYear(),
+                            new Date().getMonth() - 5,
+                            1
+                        )
+                    }
+                }
+            },
+            {
+                $group: {
+                    _id: {
+                        y: { $year: "$orderDate" },
+                        m: { $month: "$orderDate" }
+                    },
+                    spend: { $sum: { $ifNull: ["$grandTotal", 0] } },
+                    poCount: { $sum: 1 }
+                }
+            },
+            { $sort: { "_id.y": 1, "_id.m": 1 } }
+        ]),
+        PurchaseOrder.aggregate([
+            {
+                $match: {
+                    supplierId,
+                    isDeleted: { $ne: true }
+                }
+            },
+            {
+                $group: {
+                    _id: "$status",
+                    count: { $sum: 1 },
+                    amount: { $sum: { $ifNull: ["$grandTotal", 0] } }
+                }
+            }
+        ])
+    ]);
 
     const lastGrn = grns[0] || null;
     const agg = poAgg[0] || {};
+    const gAgg = grnAgg[0] || {};
 
     const products = linkedProducts.map((p) => {
         const link = (p.suppliers || []).find(
@@ -639,6 +833,10 @@ const getSupplierDetails = async (id, query = {}) => {
             (s, i) => s + (Number(i.receivedQuantity) || 0),
             0
         );
+        const lineSpend = items.reduce(
+            (s, i) => s + (Number(i.total) || 0),
+            0
+        );
         return {
             id: po._id,
             purchaseOrderNo: po.purchaseOrderNo || "",
@@ -651,6 +849,8 @@ const getSupplierDetails = async (id, query = {}) => {
             itemCount: items.length,
             totalQty,
             receivedQty,
+            receiveRate: totalQty > 0 ? receivedQty / totalQty : 0,
+            lineSpend,
             items: items.map((i) => ({
                 productId: i.productId || null,
                 productName: i.productName || "",
@@ -678,44 +878,77 @@ const getSupplierDetails = async (id, query = {}) => {
         purchaseOrderNo: g.purchaseOrderId?.purchaseOrderNo || ""
     }));
 
-    const productSpendRows = productSpend.map((row) => ({
-        productId: row._id?.productId || null,
-        productName: row._id?.productName || "Unknown product",
-        sku: row._id?.sku || "",
-        qtyOrdered: Number(row.qtyOrdered) || 0,
-        qtyReceived: Number(row.qtyReceived) || 0,
+    const productSpendRows = productSpend.map((row) => {
+        const qtyOrdered = Number(row.qtyOrdered) || 0;
+        const qtyReceived = Number(row.qtyReceived) || 0;
+        return {
+            productId: row._id?.productId || null,
+            productName: row._id?.productName || "Unknown product",
+            sku: row._id?.sku || "",
+            qtyOrdered,
+            qtyReceived,
+            spend: Number(row.spend) || 0,
+            avgUnitPrice: Number(Number(row.avgUnitPrice || 0).toFixed(2)),
+            lastUnitPrice: Number(row.lastUnitPrice) || 0,
+            minUnitPrice: Number(row.minUnitPrice) || 0,
+            maxUnitPrice: Number(row.maxUnitPrice) || 0,
+            lastPurchaseDate: row.lastPurchaseDate || null,
+            poCount: Number(row.poCount) || 0,
+            receiveRate: qtyOrdered > 0 ? qtyReceived / qtyOrdered : 0
+        };
+    });
+
+    const lifetimeSpend = Number(agg.lifetimeSpend) || 0;
+    const lifetimePaid = Number(agg.lifetimePaid) || 0;
+    const lifetimeDue = Number(agg.lifetimeDue) || 0;
+    const poCount = Number(agg.poCount) || 0;
+    const activePoCount = Math.max(poCount - (Number(agg.cancelledPoCount) || 0), 0);
+    const qtyOrdered = Number(agg.totalQtyOrdered) || 0;
+    const qtyReceived = Number(agg.totalQtyReceived) || 0;
+    const creditLimit = Number(supplier.creditLimit) || 0;
+    const receiveRate = qtyOrdered > 0 ? qtyReceived / qtyOrdered : 0;
+    const paymentRate = lifetimeSpend > 0 ? lifetimePaid / lifetimeSpend : 0;
+
+    const monthNames = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    ];
+    const monthly = monthlyTrend.map((row) => ({
+        year: row._id?.y || 0,
+        month: row._id?.m || 0,
+        label: `${monthNames[(row._id?.m || 1) - 1]} ${row._id?.y || ""}`.trim(),
         spend: Number(row.spend) || 0,
-        avgUnitPrice: Number(Number(row.avgUnitPrice || 0).toFixed(2)),
-        lastUnitPrice: Number(row.lastUnitPrice) || 0,
-        lastPurchaseDate: row.lastPurchaseDate || null,
         poCount: Number(row.poCount) || 0
     }));
 
-    const lifetimeSpend =
-        Number(agg.lifetimeSpend) || Number(supplier.totalPurchaseAmount) || 0;
-    const lifetimePaid =
-        Number(agg.lifetimePaid) || Number(supplier.totalPaidAmount) || 0;
-    const lifetimeDue =
-        Number(agg.lifetimeDue) || Number(supplier.totalDueAmount) || 0;
-    const poCount = Number(agg.poCount) || 0;
-
-    const creditLimit = Number(supplier.creditLimit) || 0;
     const summary = {
         productCount: products.length,
         primaryProductCount: products.filter((p) => p.isPrimary).length,
         poCount,
         poOpenCount: openPoCount,
+        poCompletedCount: Number(agg.completedPoCount) || 0,
+        poCancelledCount: Number(agg.cancelledPoCount) || 0,
         grnCount,
+        grnCompletedCount: Number(gAgg.completedGrnCount) || 0,
+        receivedValue: Number(gAgg.receivedValue) || 0,
+        acceptedQty: Number(gAgg.acceptedQty) || 0,
         lifetimeSpend,
         lifetimePaid,
         lifetimeDue,
-        avgPoValue: poCount > 0 ? Number((lifetimeSpend / poCount).toFixed(2)) : 0,
-        totalQtyOrdered: Number(agg.totalQtyOrdered) || 0,
-        totalQtyReceived: Number(agg.totalQtyReceived) || 0,
+        completedSpend: Number(agg.completedSpend) || 0,
+        outstandingBalance: lifetimeDue,
+        avgPoValue:
+            activePoCount > 0
+                ? Number((lifetimeSpend / activePoCount).toFixed(2))
+                : 0,
+        totalQtyOrdered: qtyOrdered,
+        totalQtyReceived: qtyReceived,
+        receiveRate: Number(receiveRate.toFixed(4)),
+        paymentRate: Number(paymentRate.toFixed(4)),
         lastPurchaseDate:
             agg.lastPurchaseDate || supplier.lastPurchaseDate || null,
         lastPaymentDate: supplier.lastPaymentDate || null,
-        lastPoNo: purchaseOrderRows[0]?.purchaseOrderNo || agg.lastPoNo || "",
+        lastPoNo: purchaseOrderRows[0]?.purchaseOrderNo || "",
         lastGrnNo: lastGrn?.grnNumber || "",
         creditLimit,
         creditDays: Number(supplier.creditDays) || 0,
@@ -723,11 +956,18 @@ const getSupplierDetails = async (id, query = {}) => {
             creditLimit > 0
                 ? Number((lifetimeDue / creditLimit).toFixed(4))
                 : 0,
+        creditRemaining: Math.max(creditLimit - lifetimeDue, 0),
         rating: Number(supplier.rating) || 0,
         ratingCount: Number(supplier.ratingCount) || 0,
         storedPurchaseAmount: Number(supplier.totalPurchaseAmount) || 0,
         storedPaidAmount: Number(supplier.totalPaidAmount) || 0,
-        storedDueAmount: Number(supplier.totalDueAmount) || 0
+        storedDueAmount: Number(supplier.totalDueAmount) || 0,
+        statusBreakdown: statusBreakdown.map((row) => ({
+            status: row._id || "Unknown",
+            count: Number(row.count) || 0,
+            amount: Number(row.amount) || 0
+        })),
+        monthlyTrend: monthly
     };
 
     return {
