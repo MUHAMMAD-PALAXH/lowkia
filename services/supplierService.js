@@ -455,7 +455,7 @@ const getSupplierDetails = async (id, query = {}) => {
             ]
         })
             .select(
-                "name productCode sku barcode trackingType productType availableStock totalStock reservedStock sellingPrice purchasePrice costPrice wholesalePrice minimumSellingPrice maximumSellingPrice offerPrice lastPurchasePrice primarySupplierId suppliers status isPublished productVariants"
+                "name productCode sku barcode trackingType productType availableStock totalStock reservedStock stockValue sellingPrice purchasePrice costPrice otherCost wholesalePrice minimumSellingPrice maximumSellingPrice offerPrice lastPurchasePrice reorderLevel primarySupplierId suppliers status isPublished productVariants"
             )
             .sort({ name: 1 })
             .limit(productLimit)
@@ -887,7 +887,15 @@ const getSupplierDetails = async (id, query = {}) => {
                               _id: "$productId",
                               currentStock: { $sum: "$currentStock" },
                               availableStock: { $sum: "$availableStock" },
-                              reservedStock: { $sum: "$reservedStock" }
+                              reservedStock: { $sum: "$reservedStock" },
+                              inventoryValue: {
+                                  $sum: {
+                                      $multiply: [
+                                          { $ifNull: ["$currentStock", 0] },
+                                          { $ifNull: ["$averageCost", 0] }
+                                      ]
+                                  }
+                              }
                           }
                       }
                   ]),
@@ -952,7 +960,8 @@ const getSupplierDetails = async (id, query = {}) => {
         const productInv = productInvMap.get(pid) || {
             currentStock: 0,
             availableStock: 0,
-            reservedStock: 0
+            reservedStock: 0,
+            inventoryValue: 0
         };
         const totalImeiCount = productImeiMap.get(pid) || 0;
 
@@ -1061,6 +1070,33 @@ const getSupplierDetails = async (id, query = {}) => {
             0;
         const offerPrice =
             Number(p.offerPrice) || Number(defaultVariant?.offerPrice) || 0;
+        const lastPurchasePrice =
+            Number(link?.lastPurchasePrice) ||
+            Number(p.lastPurchasePrice) ||
+            purchasePrice ||
+            0;
+        const unitCost =
+            costPrice > 0
+                ? costPrice
+                : purchasePrice > 0
+                  ? purchasePrice
+                  : lastPurchasePrice || 0;
+        const cost = unitCost + (Number(p.otherCost) || 0);
+        const grossProfit = Number((sellingPrice - cost).toFixed(2));
+        const profitMarginPercent =
+            sellingPrice > 0
+                ? Number((((sellingPrice - cost) / sellingPrice) * 100).toFixed(2))
+                : 0;
+        const invValue = Number(productInv.inventoryValue) || 0;
+        const stockValue =
+            invValue > 0
+                ? Number(invValue.toFixed(2))
+                : Number(
+                      (
+                          liveTotal *
+                          (costPrice > 0 ? costPrice : purchasePrice || 0)
+                      ).toFixed(2)
+                  );
 
         return {
             productId: p._id,
@@ -1074,11 +1110,7 @@ const getSupplierDetails = async (id, query = {}) => {
             isPublished: !!p.isPublished,
             isPrimary,
             supplierSku: link?.supplierSku || "",
-            lastPurchasePrice:
-                Number(link?.lastPurchasePrice) ||
-                Number(p.lastPurchasePrice) ||
-                purchasePrice ||
-                0,
+            lastPurchasePrice,
             purchasePrice,
             costPrice,
             sellingPrice,
@@ -1091,6 +1123,10 @@ const getSupplierDetails = async (id, query = {}) => {
             totalStock: liveTotal,
             reservedStock: liveReserved,
             totalImeiCount,
+            stockValue,
+            reorderLevel: Number(p.reorderLevel) || 0,
+            grossProfit,
+            profitMarginPercent,
             variantCount: variants.length,
             variants
         };
