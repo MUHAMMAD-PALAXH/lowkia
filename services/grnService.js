@@ -27,10 +27,34 @@ const {
 const { generateProductBarcode } = require("./barcodeGenerator");
 const productService = require("./productService");
 const AppError = require("../utils/appError");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const RECEIVABLE_PO = ["Ordered", "Partially Received"];
 const EDITABLE_GRN = ["Draft", "Pending Approval"];
+
+const trash = createTrashOps(GRN, {
+    label: "GRN",
+    nameField: "grnNumber",
+    statusField: "status",
+    restoreStatus: "Draft",
+    beforeSoftDelete: async (doc) => {
+        if (doc.status !== "Draft" || doc.inventoryUpdated) {
+            throw new AppError(
+                "Only Draft GRNs can move to trash. Completed GRNs already updated inventory and cannot be trashed.",
+                400
+            );
+        }
+    },
+    scopeStatusMap: {
+        draft: "Draft",
+        pendingapproval: "Pending Approval",
+        completed: "Completed",
+        cancelled: "Cancelled",
+        received: "Received",
+        verified: "Verified"
+    }
+});
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -876,7 +900,8 @@ const getGrns = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
-    const filter = { ...NOT_DELETED };
+    const trashMode = isTrashQuery(query);
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
 
     if (query.status) filter.status = query.status;
     if (query.purchaseOrderId) {
@@ -894,10 +919,9 @@ const getGrns = async (query = {}) => {
         ];
     }
 
+    const sort = trash.resolveEntitySort(query);
     const [items, total] = await Promise.all([
-        populateGrn(
-            GRN.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)
-        ),
+        populateGrn(GRN.find(filter).sort(sort).skip(skip).limit(limit)),
         GRN.countDocuments(filter)
     ]);
 
@@ -908,7 +932,8 @@ const getGrns = async (query = {}) => {
             limit,
             total,
             totalPages: Math.ceil(total / limit) || 0
-        }
+        },
+        trash: trashMode
     };
 };
 
@@ -921,15 +946,18 @@ const getGrnById = async (id) => {
 };
 
 const getGrnStats = async () => {
-    const rows = await GRN.aggregate([
-        { $match: { ...NOT_DELETED } },
-        {
-            $group: {
-                _id: "$status",
-                count: { $sum: 1 },
-                amount: { $sum: "$grandTotal" }
+    const [rows, trashCount] = await Promise.all([
+        GRN.aggregate([
+            { $match: { ...NOT_DELETED } },
+            {
+                $group: {
+                    _id: "$status",
+                    count: { $sum: 1 },
+                    amount: { $sum: "$grandTotal" }
+                }
             }
-        }
+        ]),
+        trash.trashCount()
     ]);
     const stats = {
         total: 0,
@@ -937,7 +965,8 @@ const getGrnStats = async () => {
         pendingApproval: 0,
         completed: 0,
         cancelled: 0,
-        totalAmount: 0
+        totalAmount: 0,
+        trashCount
     };
     for (const row of rows) {
         stats.total += row.count;
@@ -1378,17 +1407,12 @@ const cancelGrn = async (id, actorId = null, reason = "") => {
     return populateGrn(GRN.findById(grn._id));
 };
 
-const deleteGrn = async (id, actorId = null) => {
-    const grn = await findGrnOrFail(id);
-    if (grn.status !== "Draft") {
-        throw new AppError("Only Draft GRNs can be deleted.", 400);
-    }
-    grn.isDeleted = true;
-    grn.deletedAt = new Date();
-    grn.updatedBy = toObjectId(actorId) || grn.updatedBy;
-    await grn.save();
-    return { id: grn._id, deleted: true };
-};
+const deleteGrn = (id, actorId = null) => trash.softDelete(id, actorId);
+const restoreGrn = (id, actorId = null) => trash.restore(id, actorId);
+const permanentDeleteGrn = (id) => trash.permanentDelete(id);
+const bulkDeleteGrns = (payload, actorId) => trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreGrns = (payload, actorId) => trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteGrns = (payload) => trash.bulkPermanentDelete(payload);
 
 module.exports = {
     listReceivablePurchaseOrders,
@@ -1406,5 +1430,10 @@ module.exports = {
     completeGrn,
     cancelGrn,
     deleteGrn,
+    restoreGrn,
+    permanentDeleteGrn,
+    bulkDeleteGrns,
+    bulkRestoreGrns,
+    bulkPermanentDeleteGrns,
     RECEIVABLE_PO
 };

@@ -10,8 +10,34 @@ const {
 } = require("./codeGenerator");
 const productService = require("./productService");
 const AppError = require("../utils/appError");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
+const STOCK_RESTORED_STATUSES = ["Received", "Refunded"];
+
+const trash = createTrashOps(SalesReturn, {
+    label: "Sales Return",
+    nameField: "returnNumber",
+    statusField: "status",
+    restoreStatus: "Draft",
+    beforeSoftDelete: async (doc) => {
+        if (STOCK_RESTORED_STATUSES.includes(doc.status)) {
+            throw new AppError(
+                "This sales return already restored stock (Received/Refunded). Only Draft or unreceived returns can move to trash.",
+                400
+            );
+        }
+    },
+    scopeStatusMap: {
+        draft: "Draft",
+        pendingapproval: "Pending Approval",
+        approved: "Approved",
+        received: "Received",
+        refunded: "Refunded",
+        rejected: "Rejected",
+        cancelled: "Cancelled"
+    }
+});
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -468,22 +494,25 @@ const getReturns = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
-    const filter = { ...NOT_DELETED };
+    const trashMode = isTrashQuery(query);
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
     if (query.status) filter.status = query.status;
     if (query.salesOrderId && toObjectId(query.salesOrderId)) {
         filter.salesOrderId = toObjectId(query.salesOrderId);
     }
 
+    const sort = trash.resolveEntitySort(query);
     const [items, total] = await Promise.all([
         populateReturn(
-            SalesReturn.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)
+            SalesReturn.find(filter).sort(sort).skip(skip).limit(limit)
         ),
         SalesReturn.countDocuments(filter)
     ]);
 
     return {
         items,
-        pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 }
+        pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 },
+        trash: trashMode
     };
 };
 
@@ -558,10 +587,88 @@ const getReturnableFromOrder = async (salesOrderId) => {
     };
 };
 
+const getReturnStats = async () => {
+    const [rows, trashCount] = await Promise.all([
+        SalesReturn.aggregate([
+            { $match: { ...NOT_DELETED } },
+            {
+                $group: {
+                    _id: "$status",
+                    count: { $sum: 1 },
+                    amount: { $sum: "$refundAmount" }
+                }
+            }
+        ]),
+        trash.trashCount()
+    ]);
+
+    const stats = {
+        total: 0,
+        draft: 0,
+        pendingApproval: 0,
+        approved: 0,
+        received: 0,
+        refunded: 0,
+        rejected: 0,
+        cancelled: 0,
+        totalAmount: 0,
+        trashCount
+    };
+
+    rows.forEach((row) => {
+        stats.total += row.count;
+        stats.totalAmount += row.amount || 0;
+        switch (row._id) {
+            case "Draft":
+                stats.draft = row.count;
+                break;
+            case "Pending Approval":
+                stats.pendingApproval = row.count;
+                break;
+            case "Approved":
+                stats.approved = row.count;
+                break;
+            case "Received":
+                stats.received = row.count;
+                break;
+            case "Refunded":
+                stats.refunded = row.count;
+                break;
+            case "Rejected":
+                stats.rejected = row.count;
+                break;
+            case "Cancelled":
+                stats.cancelled = row.count;
+                break;
+            default:
+                break;
+        }
+    });
+
+    return stats;
+};
+
+const deleteSalesReturn = (id, actorId = null) => trash.softDelete(id, actorId);
+const restoreSalesReturn = (id, actorId = null) => trash.restore(id, actorId);
+const permanentDeleteSalesReturn = (id) => trash.permanentDelete(id);
+const bulkDeleteSalesReturns = (payload, actorId) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreSalesReturns = (payload, actorId) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteSalesReturns = (payload) =>
+    trash.bulkPermanentDelete(payload);
+
 module.exports = {
     createFromSalesOrder,
     receiveReturn,
     getReturns,
     getReturnById,
-    getReturnableFromOrder
+    getReturnableFromOrder,
+    getReturnStats,
+    deleteSalesReturn,
+    restoreSalesReturn,
+    permanentDeleteSalesReturn,
+    bulkDeleteSalesReturns,
+    bulkRestoreSalesReturns,
+    bulkPermanentDeleteSalesReturns
 };

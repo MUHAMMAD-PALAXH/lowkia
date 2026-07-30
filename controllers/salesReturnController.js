@@ -37,3 +37,54 @@ exports.getReturnableFromOrder = asyncHandler(async (req, res) => {
     );
     return success(res, "Returnable lines retrieved.", data);
 });
+
+exports.getReturnStats = asyncHandler(async (req, res) => {
+    const stats = await salesReturnService.getReturnStats();
+    return success(res, "Sales return stats retrieved.", stats);
+});
+
+exports.deleteSalesReturn = asyncHandler(async (req, res) => {
+    const result = await salesReturnService.deleteSalesReturn(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Sales return moved to trash.", result);
+});
+
+exports.restoreSalesReturn = asyncHandler(async (req, res) => {
+    const doc = await salesReturnService.restoreSalesReturn(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Sales return restored from trash.", doc);
+});
+
+exports.permanentDeleteSalesReturn = asyncHandler(async (req, res) => {
+    const result = await salesReturnService.permanentDeleteSalesReturn(
+        req.params.id
+    );
+    return success(res, "Sales return permanently deleted.", result);
+});
+
+exports.bulkDeleteSalesReturns = asyncHandler(async (req, res) => {
+    const result = await salesReturnService.bulkDeleteSalesReturns(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Sales returns moved to trash.", result);
+});
+
+exports.bulkRestoreSalesReturns = asyncHandler(async (req, res) => {
+    const result = await salesReturnService.bulkRestoreSalesReturns(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Sales returns restored from trash.", result);
+});
+
+exports.bulkPermanentDeleteSalesReturns = asyncHandler(async (req, res) => {
+    const result = await salesReturnService.bulkPermanentDeleteSalesReturns(
+        req.body || {}
+    );
+    return success(res, "Trash sales returns permanently deleted.", result);
+});

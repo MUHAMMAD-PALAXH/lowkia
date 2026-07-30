@@ -59,7 +59,45 @@ exports.deletePurchaseOrder = asyncHandler(async (req, res) => {
         req.params.id,
         getActorId(req)
     );
-    return success(res, "Purchase order deleted successfully.", result);
+    return success(res, "Purchase order moved to trash.", result);
+});
+
+exports.restorePurchaseOrder = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.restorePurchaseOrder(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Purchase order restored from trash.", po);
+});
+
+exports.permanentDeletePurchaseOrder = asyncHandler(async (req, res) => {
+    const result = await purchaseOrderService.permanentDeletePurchaseOrder(
+        req.params.id
+    );
+    return success(res, "Purchase order permanently deleted.", result);
+});
+
+exports.bulkDeletePurchaseOrders = asyncHandler(async (req, res) => {
+    const result = await purchaseOrderService.bulkDeletePurchaseOrders(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Purchase orders moved to trash.", result);
+});
+
+exports.bulkRestorePurchaseOrders = asyncHandler(async (req, res) => {
+    const result = await purchaseOrderService.bulkRestorePurchaseOrders(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Purchase orders restored from trash.", result);
+});
+
+exports.bulkPermanentDeletePurchaseOrders = asyncHandler(async (req, res) => {
+    const result = await purchaseOrderService.bulkPermanentDeletePurchaseOrders(
+        req.body || {}
+    );
+    return success(res, "Trash purchase orders permanently deleted.", result);
 });
 
 exports.submitPurchaseOrder = asyncHandler(async (req, res) => {

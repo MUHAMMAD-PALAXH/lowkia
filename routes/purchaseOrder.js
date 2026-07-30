@@ -29,6 +29,13 @@ router.get(
     purchaseOrderController.getProductPurchaseContext
 );
 
+router.post("/bulk-delete", purchaseOrderController.bulkDeletePurchaseOrders);
+router.post("/bulk-restore", purchaseOrderController.bulkRestorePurchaseOrders);
+router.post(
+    "/bulk-permanent-delete",
+    purchaseOrderController.bulkPermanentDeletePurchaseOrders
+);
+
 router.get(
     "/:id",
     idValidator,
@@ -55,6 +62,20 @@ router.delete(
     idValidator,
     validate,
     purchaseOrderController.deletePurchaseOrder
+);
+
+router.delete(
+    "/:id/permanent",
+    idValidator,
+    validate,
+    purchaseOrderController.permanentDeletePurchaseOrder
+);
+
+router.patch(
+    "/:id/restore",
+    idValidator,
+    validate,
+    purchaseOrderController.restorePurchaseOrder
 );
 
 router.patch(

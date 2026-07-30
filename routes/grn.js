@@ -23,6 +23,10 @@ router.get(
 
 router.get("/stats", grnController.getGrnStats);
 
+router.post("/bulk-delete", grnController.bulkDeleteGrns);
+router.post("/bulk-restore", grnController.bulkRestoreGrns);
+router.post("/bulk-permanent-delete", grnController.bulkPermanentDeleteGrns);
+
 router.get("/", listValidator, validate, grnController.getGrns);
 
 router.get("/:id", idValidator, validate, grnController.getGrnById);
@@ -73,5 +77,19 @@ router.patch(
 router.patch("/:id/cancel", idValidator, validate, grnController.cancelGrn);
 
 router.delete("/:id", idValidator, validate, grnController.deleteGrn);
+
+router.delete(
+    "/:id/permanent",
+    idValidator,
+    validate,
+    grnController.permanentDeleteGrn
+);
+
+router.patch(
+    "/:id/restore",
+    idValidator,
+    validate,
+    grnController.restoreGrn
+);
 
 module.exports = router;

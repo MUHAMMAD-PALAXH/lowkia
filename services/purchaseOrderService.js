@@ -7,11 +7,41 @@ const Warehouse = require("../model/warehouse");
 const Branch = require("../model/branch");
 const { generatePurchaseOrderCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
 const EDITABLE_STATUSES = ["Draft", "Pending Approval"];
 const LOCKED_AFTER = ["Ordered", "Partially Received", "Received", "Completed"];
+const NO_STOCK_IMPACT_STATUSES = ["Draft", "Cancelled"];
+
+const trash = createTrashOps(PurchaseOrder, {
+    label: "Purchase Order",
+    nameField: "purchaseOrderNo",
+    statusField: "status",
+    restoreStatus: "Draft",
+    beforeSoftDelete: async (doc) => {
+        if (!NO_STOCK_IMPACT_STATUSES.includes(doc.status)) {
+            throw new AppError(
+                `Only Draft or Cancelled purchase orders can move to trash. This PO is "${doc.status}".`,
+                400
+            );
+        }
+    },
+    softDeleteExtra: (doc) => {
+        if (doc.status !== "Cancelled") doc.status = "Cancelled";
+    },
+    scopeStatusMap: {
+        draft: "Draft",
+        pendingapproval: "Pending Approval",
+        approved: "Approved",
+        ordered: "Ordered",
+        partiallyreceived: "Partially Received",
+        received: "Received",
+        completed: "Completed",
+        cancelled: "Cancelled"
+    }
+});
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -352,14 +382,7 @@ const assertRefs = async ({ supplierId, warehouseId, branchId }) => {
     return { supplier, warehouse };
 };
 
-const findPoOrFail = async (id) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-        throw new AppError("Invalid purchase order id.", 400);
-    }
-    const po = await PurchaseOrder.findOne({ _id: id, ...NOT_DELETED });
-    if (!po) throw new AppError("Purchase order not found.", 404);
-    return po;
-};
+const findPoOrFail = trash.findActiveOrFail;
 
 const createPurchaseOrder = async (payload = {}, actorId = null) => {
     const purchaseType =
@@ -440,7 +463,8 @@ const getPurchaseOrders = async (query = {}) => {
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const filter = { ...NOT_DELETED };
+    const trashMode = isTrashQuery(query);
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
 
     if (query.status) {
         if (query.status === "Completed") {
@@ -470,10 +494,11 @@ const getPurchaseOrders = async (query = {}) => {
         ];
     }
 
+    const sort = trash.resolveEntitySort(query);
     const [items, total] = await Promise.all([
         populatePo(
             PurchaseOrder.find(filter)
-                .sort({ createdAt: -1 })
+                .sort(sort)
                 .skip(skip)
                 .limit(limit)
         ),
@@ -487,7 +512,8 @@ const getPurchaseOrders = async (query = {}) => {
             limit,
             total,
             totalPages: Math.ceil(total / limit) || 0
-        }
+        },
+        trash: trashMode
     };
 };
 
@@ -500,15 +526,18 @@ const getPurchaseOrderById = async (id) => {
 };
 
 const getPurchaseOrderStats = async () => {
-    const rows = await PurchaseOrder.aggregate([
-        { $match: { ...NOT_DELETED } },
-        {
-            $group: {
-                _id: "$status",
-                count: { $sum: 1 },
-                amount: { $sum: "$grandTotal" }
+    const [rows, trashCount] = await Promise.all([
+        PurchaseOrder.aggregate([
+            { $match: { ...NOT_DELETED } },
+            {
+                $group: {
+                    _id: "$status",
+                    count: { $sum: 1 },
+                    amount: { $sum: "$grandTotal" }
+                }
             }
-        }
+        ]),
+        trash.trashCount()
     ]);
 
     const stats = {
@@ -520,7 +549,8 @@ const getPurchaseOrderStats = async () => {
         partiallyReceived: 0,
         completed: 0,
         cancelled: 0,
-        totalAmount: 0
+        totalAmount: 0,
+        trashCount
     };
 
     rows.forEach((row) => {
@@ -680,18 +710,15 @@ const updatePurchaseOrder = async (id, payload = {}, actorId = null) => {
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
-const deletePurchaseOrder = async (id, actorId = null) => {
-    const po = await findPoOrFail(id);
-    if (po.status !== "Draft") {
-        throw new AppError("Only Draft purchase orders can be deleted.", 400);
-    }
-    po.isDeleted = true;
-    po.deletedAt = new Date();
-    po.deletedBy = toObjectId(actorId);
-    po.status = "Cancelled";
-    await po.save();
-    return { id: po._id, deleted: true };
-};
+const deletePurchaseOrder = (id, actorId = null) => trash.softDelete(id, actorId);
+const restorePurchaseOrder = (id, actorId = null) => trash.restore(id, actorId);
+const permanentDeletePurchaseOrder = (id) => trash.permanentDelete(id);
+const bulkDeletePurchaseOrders = (payload, actorId) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestorePurchaseOrders = (payload, actorId) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeletePurchaseOrders = (payload) =>
+    trash.bulkPermanentDelete(payload);
 
 const submitPurchaseOrder = async (id, actorId = null) => {
     const po = await findPoOrFail(id);
@@ -872,6 +899,11 @@ module.exports = {
     getPurchaseOrderStats,
     updatePurchaseOrder,
     deletePurchaseOrder,
+    restorePurchaseOrder,
+    permanentDeletePurchaseOrder,
+    bulkDeletePurchaseOrders,
+    bulkRestorePurchaseOrders,
+    bulkPermanentDeletePurchaseOrders,
     submitPurchaseOrder,
     approvePurchaseOrder,
     rejectPurchaseOrder,

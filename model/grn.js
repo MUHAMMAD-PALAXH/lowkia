@@ -510,7 +510,16 @@ isDeleted:{
 
 deletedAt:{
 
-    type:Date
+    type:Date,
+    default:null
+},
+
+
+deletedBy:{
+
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"AdminUser",
+    default:null
 },
 
 
