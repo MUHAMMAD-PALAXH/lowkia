@@ -27,6 +27,11 @@ exports.getActiveWarehouses = asyncHandler(async (req, res) => {
     );
 });
 
+exports.getWarehouseStats = asyncHandler(async (req, res) => {
+    const stats = await warehouseService.getWarehouseStats();
+    return success(res, "Warehouse stats retrieved successfully.", stats);
+});
+
 exports.getWarehouseById = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.getWarehouseById(req.params.id);
     return success(res, "Warehouse retrieved successfully.", warehouse);
@@ -55,7 +60,45 @@ exports.deleteWarehouse = asyncHandler(async (req, res) => {
         req.params.id,
         getActorId(req)
     );
-    return success(res, "Warehouse deleted successfully.", warehouse);
+    return success(res, "Warehouse moved to trash.", warehouse);
+});
+
+exports.restoreWarehouse = asyncHandler(async (req, res) => {
+    const warehouse = await warehouseService.restoreWarehouse(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Warehouse restored from trash.", warehouse);
+});
+
+exports.permanentDeleteWarehouse = asyncHandler(async (req, res) => {
+    const result = await warehouseService.permanentDeleteWarehouse(
+        req.params.id
+    );
+    return success(res, "Warehouse permanently deleted.", result);
+});
+
+exports.bulkDeleteWarehouses = asyncHandler(async (req, res) => {
+    const result = await warehouseService.bulkDeleteWarehouses(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Warehouses moved to trash.", result);
+});
+
+exports.bulkRestoreWarehouses = asyncHandler(async (req, res) => {
+    const result = await warehouseService.bulkRestoreWarehouses(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Warehouses restored from trash.", result);
+});
+
+exports.bulkPermanentDeleteWarehouses = asyncHandler(async (req, res) => {
+    const result = await warehouseService.bulkPermanentDeleteWarehouses(
+        req.body || {}
+    );
+    return success(res, "Trash warehouses permanently deleted.", result);
 });
 
 exports.setStatus = asyncHandler(async (req, res) => {

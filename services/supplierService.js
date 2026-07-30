@@ -2,6 +2,21 @@ const mongoose = require("mongoose");
 const Supplier = require("../model/supplier");
 const { generateSupplierCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+
+const trash = createTrashOps(Supplier, {
+    label: "Supplier",
+    nameField: "name",
+    softDeleteExtra: (doc) => {
+        doc.status = "Inactive";
+    },
+    restoreStatus: "Active",
+    scopeStatusMap: {
+        active: "Active",
+        inactive: "Inactive",
+        blocked: "Blocked"
+    }
+});
 
 // Fields clients must never overwrite directly
 const PROTECTED_FIELDS = [
@@ -45,22 +60,7 @@ const pickUpdatableFields = (payload = {}) => {
     return data;
 };
 
-const findActiveSupplierOrFail = async (id) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-        throw new AppError("Invalid supplier id.", 400);
-    }
-
-    const supplier = await Supplier.findOne({
-        _id: id,
-        isDeleted: false
-    });
-
-    if (!supplier) {
-        throw new AppError("Supplier not found.", 404);
-    }
-
-    return supplier;
-};
+const findActiveSupplierOrFail = trash.findActiveOrFail;
 
 // ==========================================================
 // Create Supplier
@@ -127,10 +127,9 @@ const getSuppliers = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
+    const trashMode = isTrashQuery(query);
 
-    const filter = {
-        isDeleted: false
-    };
+    const filter = trashMode ? { isDeleted: true } : { isDeleted: false };
 
     if (query.status) {
         filter.status = query.status;
@@ -157,9 +156,10 @@ const getSuppliers = async (query = {}) => {
         ];
     }
 
+    const sort = trash.resolveEntitySort(query);
     const [items, total] = await Promise.all([
         Supplier.find(filter)
-            .sort({ createdAt: -1 })
+            .sort(sort)
             .skip(skip)
             .limit(limit)
             .populate("createdBy", "firstName lastName email")
@@ -175,7 +175,8 @@ const getSuppliers = async (query = {}) => {
             limit,
             total,
             totalPages: Math.ceil(total / limit) || 0
-        }
+        },
+        trash: trashMode
     };
 };
 
@@ -253,16 +254,60 @@ const updateSupplier = async (id, payload, actorId = null) => {
 // Soft Delete
 // ==========================================================
 
-const deleteSupplier = async (id, actorId = null) => {
-    const supplier = await findActiveSupplierOrFail(id);
+const deleteSupplier = (id, actorId = null) => trash.softDelete(id, actorId);
+const restoreSupplier = (id, actorId = null) => trash.restore(id, actorId);
+const permanentDeleteSupplier = (id) => trash.permanentDelete(id);
+const bulkDeleteSuppliers = (payload, actorId) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreSuppliers = (payload, actorId) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteSuppliers = (payload) =>
+    trash.bulkPermanentDelete(payload);
 
-    supplier.isDeleted = true;
-    supplier.deletedAt = new Date();
-    supplier.deletedBy = actorId || null;
-    supplier.status = "Inactive";
-    await supplier.save();
+const getSupplierStats = async () => {
+    const [[rows], trashCount] = await Promise.all([
+        Supplier.aggregate([
+            { $match: { isDeleted: false } },
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: 1 },
+                    active: {
+                        $sum: { $cond: [{ $eq: ["$status", "Active"] }, 1, 0] }
+                    },
+                    inactive: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Inactive"] }, 1, 0]
+                        }
+                    },
+                    blocked: {
+                        $sum: { $cond: [{ $eq: ["$status", "Blocked"] }, 1, 0] }
+                    },
+                    approved: {
+                        $sum: { $cond: ["$isApproved", 1, 0] }
+                    },
+                    pendingApproval: {
+                        $sum: { $cond: ["$isApproved", 0, 1] }
+                    },
+                    dueAmount: { $sum: "$totalDueAmount" }
+                }
+            }
+        ]),
+        trash.trashCount()
+    ]);
 
-    return supplier;
+    return {
+        ...(rows || {
+            total: 0,
+            active: 0,
+            inactive: 0,
+            blocked: 0,
+            approved: 0,
+            pendingApproval: 0,
+            dueAmount: 0
+        }),
+        trashCount
+    };
 };
 
 // ==========================================================
@@ -365,6 +410,12 @@ module.exports = {
     getSupplierById,
     updateSupplier,
     deleteSupplier,
+    restoreSupplier,
+    permanentDeleteSupplier,
+    bulkDeleteSuppliers,
+    bulkRestoreSuppliers,
+    bulkPermanentDeleteSuppliers,
+    getSupplierStats,
     approveSupplier,
     blockSupplier,
     activateSupplier,

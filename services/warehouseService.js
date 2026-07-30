@@ -3,8 +3,63 @@ const Warehouse = require("../model/warehouse");
 const Branch = require("../model/branch");
 const { generateWarehouseCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
+
+const trash = createTrashOps(Warehouse, {
+    label: "Warehouse",
+    nameField: "warehouseName",
+    softDeleteExtra: (doc) => {
+        doc.status = "Closed";
+    },
+    restoreStatus: "Active",
+    beforeSoftDelete: async (doc) => {
+        if (doc.branchIds && doc.branchIds.length > 0) {
+            throw new AppError(
+                "Cannot delete warehouse while branches are linked. Unassign branches first.",
+                400
+            );
+        }
+
+        const linkedBranches = await Branch.countDocuments({
+            ...NOT_DELETED,
+            warehouseIds: doc._id
+        });
+
+        if (linkedBranches > 0) {
+            throw new AppError(
+                "Cannot delete warehouse while branches still reference it. Unassign first.",
+                400
+            );
+        }
+
+        if (doc.isDefault) {
+            throw new AppError(
+                "Cannot delete the default warehouse. Set another default first.",
+                400
+            );
+        }
+
+        const childCount = await Warehouse.countDocuments({
+            parentWarehouseId: doc._id,
+            ...NOT_DELETED
+        });
+
+        if (childCount > 0) {
+            throw new AppError(
+                "Cannot delete warehouse while child warehouses exist. Reassign parent first.",
+                400
+            );
+        }
+    },
+    scopeStatusMap: {
+        active: "Active",
+        inactive: "Inactive",
+        closed: "Closed",
+        maintenance: "Maintenance"
+    }
+});
 
 const PROTECTED_FIELDS = [
     "warehouseCode",
@@ -126,22 +181,7 @@ const ensureSingleDefault = async (warehouseId = null) => {
     await Warehouse.updateMany(filter, { $set: { isDefault: false } });
 };
 
-const findActiveWarehouseOrFail = async (id) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-        throw new AppError("Invalid warehouse id.", 400);
-    }
-
-    const warehouse = await Warehouse.findOne({
-        _id: id,
-        ...NOT_DELETED
-    });
-
-    if (!warehouse) {
-        throw new AppError("Warehouse not found.", 404);
-    }
-
-    return warehouse;
-};
+const findActiveWarehouseOrFail = trash.findActiveOrFail;
 
 const populateWarehouse = (query) =>
     query
@@ -231,8 +271,9 @@ const getWarehouses = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
+    const trashMode = isTrashQuery(query);
 
-    const filter = { ...NOT_DELETED };
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
 
     if (query.status) filter.status = query.status;
     if (query.warehouseType) filter.warehouseType = query.warehouseType;
@@ -255,12 +296,10 @@ const getWarehouses = async (query = {}) => {
         ];
     }
 
+    const sort = trash.resolveEntitySort(query);
     const [items, total] = await Promise.all([
         populateWarehouse(
-            Warehouse.find(filter)
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limit)
+            Warehouse.find(filter).sort(sort).skip(skip).limit(limit)
         ),
         Warehouse.countDocuments(filter)
     ]);
@@ -272,7 +311,8 @@ const getWarehouses = async (query = {}) => {
             limit,
             total,
             totalPages: Math.ceil(total / limit) || 0
-        }
+        },
+        trash: trashMode
     };
 };
 
@@ -373,54 +413,60 @@ const assignBranches = async (id, branchIdsInput, actorId = null) => {
 // Soft delete
 // ==========================================================
 
-const deleteWarehouse = async (id, actorId = null) => {
-    const warehouse = await findActiveWarehouseOrFail(id);
+const deleteWarehouse = (id, actorId = null) => trash.softDelete(id, actorId);
+const restoreWarehouse = (id, actorId = null) => trash.restore(id, actorId);
+const permanentDeleteWarehouse = (id) => trash.permanentDelete(id);
+const bulkDeleteWarehouses = (payload, actorId) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreWarehouses = (payload, actorId) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteWarehouses = (payload) =>
+    trash.bulkPermanentDelete(payload);
 
-    if (warehouse.branchIds && warehouse.branchIds.length > 0) {
-        throw new AppError(
-            "Cannot delete warehouse while branches are linked. Unassign branches first.",
-            400
-        );
-    }
+const getWarehouseStats = async () => {
+    const [[rows], trashCount] = await Promise.all([
+        Warehouse.aggregate([
+            { $match: NOT_DELETED },
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: 1 },
+                    active: {
+                        $sum: { $cond: [{ $eq: ["$status", "Active"] }, 1, 0] }
+                    },
+                    inactive: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Inactive"] }, 1, 0]
+                        }
+                    },
+                    closed: {
+                        $sum: { $cond: [{ $eq: ["$status", "Closed"] }, 1, 0] }
+                    },
+                    maintenance: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Maintenance"] }, 1, 0]
+                        }
+                    },
+                    defaultCount: {
+                        $sum: { $cond: ["$isDefault", 1, 0] }
+                    }
+                }
+            }
+        ]),
+        trash.trashCount()
+    ]);
 
-    const linkedBranches = await Branch.countDocuments({
-        ...NOT_DELETED,
-        warehouseIds: warehouse._id
-    });
-
-    if (linkedBranches > 0) {
-        throw new AppError(
-            "Cannot delete warehouse while branches still reference it. Unassign first.",
-            400
-        );
-    }
-
-    if (warehouse.isDefault) {
-        throw new AppError(
-            "Cannot delete the default warehouse. Set another default first.",
-            400
-        );
-    }
-
-    const childCount = await Warehouse.countDocuments({
-        parentWarehouseId: warehouse._id,
-        ...NOT_DELETED
-    });
-
-    if (childCount > 0) {
-        throw new AppError(
-            "Cannot delete warehouse while child warehouses exist. Reassign parent first.",
-            400
-        );
-    }
-
-    warehouse.isDeleted = true;
-    warehouse.deletedAt = new Date();
-    warehouse.deletedBy = actorId || null;
-    warehouse.status = "Closed";
-    await warehouse.save();
-
-    return warehouse;
+    return {
+        ...(rows || {
+            total: 0,
+            active: 0,
+            inactive: 0,
+            closed: 0,
+            maintenance: 0,
+            defaultCount: 0
+        }),
+        trashCount
+    };
 };
 
 const setStatus = async (id, status, actorId = null) => {
@@ -453,6 +499,12 @@ module.exports = {
     updateWarehouse,
     assignBranches,
     deleteWarehouse,
+    restoreWarehouse,
+    permanentDeleteWarehouse,
+    bulkDeleteWarehouses,
+    bulkRestoreWarehouses,
+    bulkPermanentDeleteWarehouses,
+    getWarehouseStats,
     setStatus,
     setDefault
 };

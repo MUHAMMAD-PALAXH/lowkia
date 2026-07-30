@@ -11,6 +11,7 @@ const Brand = require("../model/brand");
 const { generateProductCode } = require("./codeGenerator");
 const { generateProductBarcode } = require("./barcodeGenerator");
 const AppError = require("../utils/appError");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -242,16 +243,74 @@ const populateProduct = (query) =>
         .populate("primarySupplierId", "supplierCode name phone email status")
         .populate("warehouseStock.warehouseId", "warehouseCode warehouseName city");
 
-const findProductOrFail = async (id) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-        throw new AppError("Invalid product id.", 400);
+// Purchase Order module is not built yet, so this stays defensive.
+const hasOpenPurchaseOrder = async (productId) => {
+    try {
+        const PurchaseOrderModel = mongoose.models.PurchaseOrder;
+        if (!PurchaseOrderModel) return false;
+
+        const count = await PurchaseOrderModel.countDocuments({
+            "items.productId": productId,
+            status: { $nin: ["Cancelled", "Completed", "Closed", "Rejected"] },
+            isDeleted: { $ne: true }
+        });
+
+        return count > 0;
+    } catch (error) {
+        return false;
+    }
+};
+
+const beforeProductSoftDelete = async (doc) => {
+    if ((Number(doc.totalStock) || 0) > 0) {
+        throw new AppError(
+            'Cannot delete product while stock exists. Go to Inventory -> Warehouse Stock and use "Clear Stock" for this product first.',
+            400
+        );
     }
 
-    const product = await Product.findOne({ _id: id, ...NOT_DELETED });
-    if (!product) throw new AppError("Product not found.", 404);
+    const imeiCount = await ItemTrack.countDocuments({
+        productId: doc._id,
+        status: { $ne: "deleted" }
+    });
 
-    return product;
+    if (imeiCount > 0) {
+        throw new AppError(
+            `Cannot delete product while ${imeiCount} IMEI record(s) exist.`,
+            400
+        );
+    }
+
+    const openOrder = await hasOpenPurchaseOrder(doc._id);
+    if (openOrder) {
+        throw new AppError(
+            "Cannot delete product while it is on an open purchase order.",
+            400
+        );
+    }
 };
+
+const trash = createTrashOps(Product, {
+    label: "Product",
+    nameField: "name",
+    softDeleteExtra: (doc) => {
+        doc.status = "Archived";
+        doc.isPublished = false;
+    },
+    restoreStatus: "Inactive",
+    beforeSoftDelete: beforeProductSoftDelete,
+    beforePermanent: async (doc) => {
+        await ProductVariant.deleteMany({ productId: doc._id });
+    },
+    scopeStatusMap: {
+        active: "Active",
+        inactive: "Inactive",
+        draft: "Draft",
+        archived: "Archived"
+    }
+});
+
+const findProductOrFail = trash.findActiveOrFail;
 
 const pushApproval = (product, action, actor = {}, note = "") => {
     product.approvalHistory.push({
@@ -901,8 +960,9 @@ const getProducts = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
+    const trashMode = isTrashQuery(query);
 
-    const filter = { ...NOT_DELETED };
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
 
     if (query.status) filter.status = query.status;
     if (query.approvalStatus) filter.approvalStatus = query.approvalStatus;
@@ -935,15 +995,18 @@ const getProducts = async (query = {}) => {
         ];
     }
 
-    const sortBy = query.sortBy || "createdAt";
-    const sortOrder = query.order === "asc" ? 1 : -1;
+    let sort;
+    if (query.sort) {
+        sort = trash.resolveEntitySort(query);
+    } else {
+        const sortBy = query.sortBy || "createdAt";
+        const sortOrder = query.order === "asc" ? 1 : -1;
+        sort = { [sortBy]: sortOrder };
+    }
 
     const [items, total] = await Promise.all([
         populateProduct(
-            Product.find(filter)
-                .sort({ [sortBy]: sortOrder })
-                .skip(skip)
-                .limit(limit)
+            Product.find(filter).sort(sort).skip(skip).limit(limit)
         ),
         Product.countDocuments(filter)
     ]);
@@ -958,7 +1021,8 @@ const getProducts = async (query = {}) => {
             limit,
             total,
             totalPages: Math.ceil(total / limit) || 0
-        }
+        },
+        trash: trashMode
     };
 };
 
@@ -1538,49 +1602,15 @@ const assignSuppliers = async (id, suppliersInput, actorId = null) => {
 // ==========================================================
 
 const deleteProduct = async (id, actorId = null) => {
-    const product = await findProductOrFail(id);
-
-    if ((Number(product.totalStock) || 0) > 0) {
-        throw new AppError(
-            'Cannot delete product while stock exists. Go to Inventory -> Warehouse Stock and use "Clear Stock" for this product first.',
-            400
-        );
-    }
-
-    const imeiCount = await ItemTrack.countDocuments({
-        productId: product._id,
-        status: { $ne: "deleted" }
-    });
-
-    if (imeiCount > 0) {
-        throw new AppError(
-            `Cannot delete product while ${imeiCount} IMEI record(s) exist.`,
-            400
-        );
-    }
-
-    const openOrder = await hasOpenPurchaseOrder(product._id);
-    if (openOrder) {
-        throw new AppError(
-            "Cannot delete product while it is on an open purchase order.",
-            400
-        );
-    }
-
-    product.isDeleted = true;
-    product.deletedAt = new Date();
-    product.deletedBy = actorId || null;
-    product.status = "Archived";
-    product.isPublished = false;
-    await product.save();
+    const product = await trash.softDelete(id, actorId);
 
     await ProductVariant.updateMany(
         { productId: product._id, isDeleted: { $ne: true } },
         {
             $set: {
                 isDeleted: true,
-                deletedAt: new Date(),
-                deletedBy: actorId || null
+                deletedAt: product.deletedAt,
+                deletedBy: product.deletedBy
             }
         }
     );
@@ -1588,40 +1618,24 @@ const deleteProduct = async (id, actorId = null) => {
     return product;
 };
 
-// Purchase Order module is not built yet, so this stays defensive.
-const hasOpenPurchaseOrder = async (productId) => {
-    try {
-        const PurchaseOrder = mongoose.models.PurchaseOrder;
-        if (!PurchaseOrder) return false;
+const restoreProduct = async (id, actorId = null) => {
+    const product = await trash.restore(id, actorId);
 
-        const count = await PurchaseOrder.countDocuments({
-            "items.productId": productId,
-            status: { $nin: ["Cancelled", "Completed", "Closed", "Rejected"] },
-            isDeleted: { $ne: true }
-        });
-
-        return count > 0;
-    } catch (error) {
-        return false;
-    }
-};
-
-const restoreProduct = async (id) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-        throw new AppError("Invalid product id.", 400);
-    }
-
-    const product = await Product.findById(id);
-    if (!product) throw new AppError("Product not found.", 404);
-
-    product.isDeleted = false;
-    product.deletedAt = null;
-    product.deletedBy = null;
-    product.status = "Inactive";
-    await product.save();
+    await ProductVariant.updateMany(
+        { productId: product._id, isDeleted: true },
+        { $set: { isDeleted: false, deletedAt: null, deletedBy: null } }
+    );
 
     return populateProduct(Product.findById(product._id));
 };
+
+const permanentDeleteProduct = (id) => trash.permanentDelete(id);
+const bulkDeleteProducts = (payload, actorId) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreProducts = (payload, actorId) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteProducts = (payload) =>
+    trash.bulkPermanentDelete(payload);
 
 // ==========================================================
 // Stock summary (written by Inventory Service only)
@@ -1713,7 +1727,8 @@ const refreshStockSummary = async (id) => {
 };
 
 const getProductStats = async () => {
-    const [rows] = await Product.aggregate([
+    const [[rows], trashCount] = await Promise.all([
+        Product.aggregate([
         { $match: NOT_DELETED },
         {
             $group: {
@@ -1747,10 +1762,12 @@ const getProductStats = async () => {
                 stockValue: { $sum: "$stockValue" }
             }
         }
+        ]),
+        trash.trashCount()
     ]);
 
-    return (
-        rows || {
+    return {
+        ...(rows || {
             total: 0,
             active: 0,
             draft: 0,
@@ -1762,8 +1779,9 @@ const getProductStats = async () => {
             nonImei: 0,
             lowStock: 0,
             stockValue: 0
-        }
-    );
+        }),
+        trashCount
+    };
 };
 
 const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
@@ -1890,6 +1908,10 @@ module.exports = {
     assignSuppliers,
     deleteProduct,
     restoreProduct,
+    permanentDeleteProduct,
+    bulkDeleteProducts,
+    bulkRestoreProducts,
+    bulkPermanentDeleteProducts,
     refreshStockSummary,
     getProductStats,
     getCompletedPurchaseOrderSourceLines

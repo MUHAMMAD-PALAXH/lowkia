@@ -26,6 +26,15 @@ router.get(
     warehouseController.getActiveWarehouses
 );
 
+router.get("/stats", warehouseController.getWarehouseStats);
+
+router.post("/bulk-delete", warehouseController.bulkDeleteWarehouses);
+router.post("/bulk-restore", warehouseController.bulkRestoreWarehouses);
+router.post(
+    "/bulk-permanent-delete",
+    warehouseController.bulkPermanentDeleteWarehouses
+);
+
 router.get(
     "/:id",
     idValidator,
@@ -101,6 +110,20 @@ router.delete(
     idValidator,
     validate,
     warehouseController.deleteWarehouse
+);
+
+router.delete(
+    "/:id/permanent",
+    idValidator,
+    validate,
+    warehouseController.permanentDeleteWarehouse
+);
+
+router.patch(
+    "/:id/restore",
+    idValidator,
+    validate,
+    warehouseController.restoreWarehouse
 );
 
 module.exports = router;

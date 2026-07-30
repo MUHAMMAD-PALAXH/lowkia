@@ -26,6 +26,13 @@ router.get("/", listProductValidator, validate, productController.getProducts);
 
 router.get("/stats", productController.getProductStats);
 
+router.post("/bulk-delete", productController.bulkDeleteProducts);
+router.post("/bulk-restore", productController.bulkRestoreProducts);
+router.post(
+    "/bulk-permanent-delete",
+    productController.bulkPermanentDeleteProducts
+);
+
 router.get("/active", productController.getApprovedProducts);
 
 router.get("/approved", productController.getApprovedProducts);
@@ -226,5 +233,12 @@ router.patch(
 );
 
 router.delete("/:id", idValidator, validate, productController.deleteProduct);
+
+router.delete(
+    "/:id/permanent",
+    idValidator,
+    validate,
+    productController.permanentDeleteProduct
+);
 
 module.exports = router;

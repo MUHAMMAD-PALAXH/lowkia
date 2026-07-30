@@ -20,6 +20,11 @@ exports.getActiveBranches = asyncHandler(async (req, res) => {
     return success(res, "Active branches retrieved successfully.", branches);
 });
 
+exports.getBranchStats = asyncHandler(async (req, res) => {
+    const stats = await branchService.getBranchStats();
+    return success(res, "Branch stats retrieved successfully.", stats);
+});
+
 exports.getBranchById = asyncHandler(async (req, res) => {
     const branch = await branchService.getBranchById(req.params.id);
     return success(res, "Branch retrieved successfully.", branch);
@@ -48,7 +53,43 @@ exports.deleteBranch = asyncHandler(async (req, res) => {
         req.params.id,
         getActorId(req)
     );
-    return success(res, "Branch deleted successfully.", branch);
+    return success(res, "Branch moved to trash.", branch);
+});
+
+exports.restoreBranch = asyncHandler(async (req, res) => {
+    const branch = await branchService.restoreBranch(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Branch restored from trash.", branch);
+});
+
+exports.permanentDeleteBranch = asyncHandler(async (req, res) => {
+    const result = await branchService.permanentDeleteBranch(req.params.id);
+    return success(res, "Branch permanently deleted.", result);
+});
+
+exports.bulkDeleteBranches = asyncHandler(async (req, res) => {
+    const result = await branchService.bulkDeleteBranches(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Branches moved to trash.", result);
+});
+
+exports.bulkRestoreBranches = asyncHandler(async (req, res) => {
+    const result = await branchService.bulkRestoreBranches(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Branches restored from trash.", result);
+});
+
+exports.bulkPermanentDeleteBranches = asyncHandler(async (req, res) => {
+    const result = await branchService.bulkPermanentDeleteBranches(
+        req.body || {}
+    );
+    return success(res, "Trash branches permanently deleted.", result);
 });
 
 exports.setStatus = asyncHandler(async (req, res) => {

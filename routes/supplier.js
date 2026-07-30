@@ -29,6 +29,15 @@ router.get(
     supplierController.getActiveSuppliers
 );
 
+router.get("/stats", supplierController.getSupplierStats);
+
+router.post("/bulk-delete", supplierController.bulkDeleteSuppliers);
+router.post("/bulk-restore", supplierController.bulkRestoreSuppliers);
+router.post(
+    "/bulk-permanent-delete",
+    supplierController.bulkPermanentDeleteSuppliers
+);
+
 router.get(
     "/reports/purchase",
     supplierController.getPurchaseReport
@@ -65,6 +74,20 @@ router.delete(
     idValidator,
     validate,
     supplierController.deleteSupplier
+);
+
+router.delete(
+    "/:id/permanent",
+    idValidator,
+    validate,
+    supplierController.permanentDeleteSupplier
+);
+
+router.patch(
+    "/:id/restore",
+    idValidator,
+    validate,
+    supplierController.restoreSupplier
 );
 
 router.patch(

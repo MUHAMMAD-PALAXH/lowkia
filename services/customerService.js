@@ -2,6 +2,21 @@ const mongoose = require("mongoose");
 const Customer = require("../model/customer");
 const { generateCustomerCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+
+const trash = createTrashOps(Customer, {
+    label: "Customer",
+    nameField: "name",
+    softDeleteExtra: (doc) => {
+        doc.status = "Inactive";
+    },
+    restoreStatus: "Active",
+    scopeStatusMap: {
+        active: "Active",
+        inactive: "Inactive",
+        blocked: "Blocked"
+    }
+});
 
 const PROTECTED_FIELDS = [
     "customerId",
@@ -37,22 +52,7 @@ const pickUpdatableFields = (payload = {}) => {
     return data;
 };
 
-const findActiveCustomerOrFail = async (id) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-        throw new AppError("Invalid customer id.", 400);
-    }
-
-    const customer = await Customer.findOne({
-        _id: id,
-        isDeleted: false
-    });
-
-    if (!customer) {
-        throw new AppError("Customer not found.", 404);
-    }
-
-    return customer;
-};
+const findActiveCustomerOrFail = trash.findActiveOrFail;
 
 const createCustomer = async (payload, actorId = null) => {
     const name = payload.name?.trim();
@@ -106,10 +106,12 @@ const createCustomer = async (payload, actorId = null) => {
 
 const getCustomers = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
+    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
     const skip = (page - 1) * limit;
-
-    const filter = { isDeleted: false };
+    const trashMode = isTrashQuery(query);
+    const filter = trashMode
+        ? { isDeleted: true }
+        : { isDeleted: { $ne: true } };
 
     if (query.status) filter.status = query.status;
     if (query.customerType) filter.customerType = query.customerType;
@@ -125,8 +127,9 @@ const getCustomers = async (query = {}) => {
         ];
     }
 
+    const sort = trash.resolveEntitySort(query);
     const [items, total] = await Promise.all([
-        Customer.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+        Customer.find(filter).sort(sort).skip(skip).limit(limit),
         Customer.countDocuments(filter)
     ]);
 
@@ -137,13 +140,24 @@ const getCustomers = async (query = {}) => {
             limit,
             total,
             pages: Math.ceil(total / limit) || 1
-        }
+        },
+        trash: trashMode
     };
 };
 
 const getActiveCustomers = () => Customer.getActiveCustomers().sort({ name: 1 });
 
-const getCustomerById = async (id) => findActiveCustomerOrFail(id);
+const getCustomerById = async (id, { includeDeleted = false } = {}) => {
+    if (includeDeleted) {
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            throw new AppError("Invalid customer id.", 400);
+        }
+        const customer = await Customer.findById(id);
+        if (!customer) throw new AppError("Customer not found.", 404);
+        return customer;
+    }
+    return findActiveCustomerOrFail(id);
+};
 
 const updateCustomer = async (id, payload, actorId = null) => {
     const customer = await findActiveCustomerOrFail(id);
@@ -167,14 +181,52 @@ const updateCustomer = async (id, payload, actorId = null) => {
     return customer;
 };
 
-const deleteCustomer = async (id, actorId = null) => {
-    const customer = await findActiveCustomerOrFail(id);
-    customer.isDeleted = true;
-    customer.deletedAt = new Date();
-    customer.deletedBy = actorId || null;
-    customer.status = "Inactive";
-    await customer.save();
-    return customer;
+const deleteCustomer = (id, actorId = null) => trash.softDelete(id, actorId);
+const restoreCustomer = (id, actorId = null) => trash.restore(id, actorId);
+const permanentDeleteCustomer = (id) => trash.permanentDelete(id);
+const bulkDeleteCustomers = (payload, actorId) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreCustomers = (payload, actorId) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteCustomers = (payload) =>
+    trash.bulkPermanentDelete(payload);
+
+const getCustomerStats = async () => {
+    const [[rows], trashCount] = await Promise.all([
+        Customer.aggregate([
+            { $match: { isDeleted: { $ne: true } } },
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: 1 },
+                    active: {
+                        $sum: { $cond: [{ $eq: ["$status", "Active"] }, 1, 0] }
+                    },
+                    blocked: {
+                        $sum: { $cond: [{ $eq: ["$status", "Blocked"] }, 1, 0] }
+                    },
+                    inactive: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Inactive"] }, 1, 0]
+                        }
+                    },
+                    dueAmount: { $sum: "$totalDueAmount" }
+                }
+            }
+        ]),
+        trash.trashCount()
+    ]);
+
+    return {
+        ...(rows || {
+            total: 0,
+            active: 0,
+            blocked: 0,
+            inactive: 0,
+            dueAmount: 0
+        }),
+        trashCount
+    };
 };
 
 const blockCustomer = async (id) => {
@@ -196,6 +248,12 @@ module.exports = {
     getCustomerById,
     updateCustomer,
     deleteCustomer,
+    restoreCustomer,
+    permanentDeleteCustomer,
+    bulkDeleteCustomers,
+    bulkRestoreCustomers,
+    bulkPermanentDeleteCustomers,
+    getCustomerStats,
     blockCustomer,
     activateCustomer,
     getDueReport

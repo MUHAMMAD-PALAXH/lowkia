@@ -41,6 +41,16 @@ exports.getActiveSuppliers = asyncHandler(async (req, res) => {
 });
 
 // ==========================================================
+// Stats
+// GET /api/suppliers/stats
+// ==========================================================
+
+exports.getSupplierStats = asyncHandler(async (req, res) => {
+    const stats = await supplierService.getSupplierStats();
+    return success(res, "Supplier stats retrieved successfully.", stats);
+});
+
+// ==========================================================
 // Reports
 // ==========================================================
 
@@ -90,7 +100,54 @@ exports.deleteSupplier = asyncHandler(async (req, res) => {
         getActorId(req)
     );
 
-    return success(res, "Supplier deleted successfully.", supplier);
+    return success(res, "Supplier moved to trash.", supplier);
+});
+
+// ==========================================================
+// Restore / Permanent Delete / Bulk
+// ==========================================================
+
+exports.restoreSupplier = asyncHandler(async (req, res) => {
+    const supplier = await supplierService.restoreSupplier(
+        req.params.id,
+        getActorId(req)
+    );
+
+    return success(res, "Supplier restored from trash.", supplier);
+});
+
+exports.permanentDeleteSupplier = asyncHandler(async (req, res) => {
+    const result = await supplierService.permanentDeleteSupplier(
+        req.params.id
+    );
+
+    return success(res, "Supplier permanently deleted.", result);
+});
+
+exports.bulkDeleteSuppliers = asyncHandler(async (req, res) => {
+    const result = await supplierService.bulkDeleteSuppliers(
+        req.body || {},
+        getActorId(req)
+    );
+
+    return success(res, "Suppliers moved to trash.", result);
+});
+
+exports.bulkRestoreSuppliers = asyncHandler(async (req, res) => {
+    const result = await supplierService.bulkRestoreSuppliers(
+        req.body || {},
+        getActorId(req)
+    );
+
+    return success(res, "Suppliers restored from trash.", result);
+});
+
+exports.bulkPermanentDeleteSuppliers = asyncHandler(async (req, res) => {
+    const result = await supplierService.bulkPermanentDeleteSuppliers(
+        req.body || {}
+    );
+
+    return success(res, "Trash suppliers permanently deleted.", result);
 });
 
 // ==========================================================

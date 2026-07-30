@@ -27,6 +27,15 @@ router.get(
     branchController.getActiveBranches
 );
 
+router.get("/stats", branchController.getBranchStats);
+
+router.post("/bulk-delete", branchController.bulkDeleteBranches);
+router.post("/bulk-restore", branchController.bulkRestoreBranches);
+router.post(
+    "/bulk-permanent-delete",
+    branchController.bulkPermanentDeleteBranches
+);
+
 router.get(
     "/:id",
     idValidator,
@@ -102,6 +111,20 @@ router.delete(
     idValidator,
     validate,
     branchController.deleteBranch
+);
+
+router.delete(
+    "/:id/permanent",
+    idValidator,
+    validate,
+    branchController.permanentDeleteBranch
+);
+
+router.patch(
+    "/:id/restore",
+    idValidator,
+    validate,
+    branchController.restoreBranch
 );
 
 module.exports = router;

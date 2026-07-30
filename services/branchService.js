@@ -3,9 +3,52 @@ const Branch = require("../model/branch");
 const Warehouse = require("../model/warehouse");
 const { generateBranchCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 // Matches false / null / missing — safe for legacy IMEI-created branches
 const NOT_DELETED = { isDeleted: { $ne: true } };
+
+const trash = createTrashOps(Branch, {
+    label: "Branch",
+    nameField: "name",
+    softDeleteExtra: (doc) => {
+        doc.status = "Closed";
+    },
+    restoreStatus: "Active",
+    beforeSoftDelete: async (doc) => {
+        if (doc.warehouseIds && doc.warehouseIds.length > 0) {
+            throw new AppError(
+                "Cannot delete branch while warehouses are assigned. Reassign or remove warehouses first.",
+                400
+            );
+        }
+
+        const linkedCount = await Warehouse.countDocuments({
+            isDeleted: { $ne: true },
+            $or: [{ branchIds: doc._id }, { branchId: doc._id }]
+        });
+
+        if (linkedCount > 0) {
+            throw new AppError(
+                "Cannot delete branch while warehouses are still linked. Reassign warehouses first.",
+                400
+            );
+        }
+
+        if (doc.isHeadOffice) {
+            throw new AppError(
+                "Cannot delete Head Office branch. Assign another Head Office first.",
+                400
+            );
+        }
+    },
+    scopeStatusMap: {
+        active: "Active",
+        inactive: "Inactive",
+        closed: "Closed",
+        maintenance: "Maintenance"
+    }
+});
 
 const PROTECTED_FIELDS = [
     "branchCode",
@@ -141,22 +184,7 @@ const ensureSingleHeadOffice = async (branchId = null) => {
     });
 };
 
-const findActiveBranchOrFail = async (id) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-        throw new AppError("Invalid branch id.", 400);
-    }
-
-    const branch = await Branch.findOne({
-        _id: id,
-        ...NOT_DELETED
-    });
-
-    if (!branch) {
-        throw new AppError("Branch not found.", 404);
-    }
-
-    return branch;
-};
+const findActiveBranchOrFail = trash.findActiveOrFail;
 
 const populateBranch = (query) =>
     query
@@ -237,8 +265,9 @@ const getBranches = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
+    const trashMode = isTrashQuery(query);
 
-    const filter = { ...NOT_DELETED };
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
 
     if (query.status) filter.status = query.status;
     if (query.isHeadOffice !== undefined) {
@@ -261,9 +290,10 @@ const getBranches = async (query = {}) => {
         ];
     }
 
+    const sort = trash.resolveEntitySort(query);
     const [items, total] = await Promise.all([
         populateBranch(
-            Branch.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)
+            Branch.find(filter).sort(sort).skip(skip).limit(limit)
         ),
         Branch.countDocuments(filter)
     ]);
@@ -275,7 +305,8 @@ const getBranches = async (query = {}) => {
             limit,
             total,
             totalPages: Math.ceil(total / limit) || 0
-        }
+        },
+        trash: trashMode
     };
 };
 
@@ -362,43 +393,60 @@ const assignWarehouses = async (id, warehouseIdsInput, actorId = null) => {
 // Soft delete — blocked if warehouses still assigned
 // ==========================================================
 
-const deleteBranch = async (id, actorId = null) => {
-    const branch = await findActiveBranchOrFail(id);
+const deleteBranch = (id, actorId = null) => trash.softDelete(id, actorId);
+const restoreBranch = (id, actorId = null) => trash.restore(id, actorId);
+const permanentDeleteBranch = (id) => trash.permanentDelete(id);
+const bulkDeleteBranches = (payload, actorId) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreBranches = (payload, actorId) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteBranches = (payload) =>
+    trash.bulkPermanentDelete(payload);
 
-    if (branch.warehouseIds && branch.warehouseIds.length > 0) {
-        throw new AppError(
-            "Cannot delete branch while warehouses are assigned. Reassign or remove warehouses first.",
-            400
-        );
-    }
+const getBranchStats = async () => {
+    const [[rows], trashCount] = await Promise.all([
+        Branch.aggregate([
+            { $match: NOT_DELETED },
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: 1 },
+                    active: {
+                        $sum: { $cond: [{ $eq: ["$status", "Active"] }, 1, 0] }
+                    },
+                    inactive: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Inactive"] }, 1, 0]
+                        }
+                    },
+                    closed: {
+                        $sum: { $cond: [{ $eq: ["$status", "Closed"] }, 1, 0] }
+                    },
+                    maintenance: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Maintenance"] }, 1, 0]
+                        }
+                    },
+                    headOfficeCount: {
+                        $sum: { $cond: ["$isHeadOffice", 1, 0] }
+                    }
+                }
+            }
+        ]),
+        trash.trashCount()
+    ]);
 
-    // Extra safety: warehouses still linking this branch
-    const linkedCount = await Warehouse.countDocuments({
-        isDeleted: { $ne: true },
-        $or: [{ branchIds: branch._id }, { branchId: branch._id }]
-    });
-
-    if (linkedCount > 0) {
-        throw new AppError(
-            "Cannot delete branch while warehouses are still linked. Reassign warehouses first.",
-            400
-        );
-    }
-
-    if (branch.isHeadOffice) {
-        throw new AppError(
-            "Cannot delete Head Office branch. Assign another Head Office first.",
-            400
-        );
-    }
-
-    branch.isDeleted = true;
-    branch.deletedAt = new Date();
-    branch.deletedBy = actorId || null;
-    branch.status = "Closed";
-    await branch.save();
-
-    return branch;
+    return {
+        ...(rows || {
+            total: 0,
+            active: 0,
+            inactive: 0,
+            closed: 0,
+            maintenance: 0,
+            headOfficeCount: 0
+        }),
+        trashCount
+    };
 };
 
 // ==========================================================
@@ -435,6 +483,12 @@ module.exports = {
     updateBranch,
     assignWarehouses,
     deleteBranch,
+    restoreBranch,
+    permanentDeleteBranch,
+    bulkDeleteBranches,
+    bulkRestoreBranches,
+    bulkPermanentDeleteBranches,
+    getBranchStats,
     setStatus,
     setHeadOffice
 };

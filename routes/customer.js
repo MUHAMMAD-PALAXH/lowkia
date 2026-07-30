@@ -19,9 +19,16 @@ router.get(
     customerController.getCustomers
 );
 
+router.get("/stats", customerController.getCustomerStats);
 router.get("/active", customerController.getActiveCustomers);
-
 router.get("/reports/due", customerController.getDueReport);
+
+router.post("/bulk-delete", customerController.bulkDeleteCustomers);
+router.post("/bulk-restore", customerController.bulkRestoreCustomers);
+router.post(
+    "/bulk-permanent-delete",
+    customerController.bulkPermanentDeleteCustomers
+);
 
 router.get(
     "/:id",
@@ -49,6 +56,20 @@ router.delete(
     idValidator,
     validate,
     customerController.deleteCustomer
+);
+
+router.delete(
+    "/:id/permanent",
+    idValidator,
+    validate,
+    customerController.permanentDeleteCustomer
+);
+
+router.patch(
+    "/:id/restore",
+    idValidator,
+    validate,
+    customerController.restoreCustomer
 );
 
 router.patch(

@@ -165,10 +165,41 @@ exports.refreshStockSummary = asyncHandler(async (req, res) => {
 
 exports.deleteProduct = asyncHandler(async (req, res) => {
     await productService.deleteProduct(req.params.id, getActorId(req));
-    return success(res, "Product deleted successfully.");
+    return success(res, "Product moved to trash.");
 });
 
 exports.restoreProduct = asyncHandler(async (req, res) => {
-    const product = await productService.restoreProduct(req.params.id);
-    return success(res, "Product restored successfully.", product);
+    const product = await productService.restoreProduct(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Product restored from trash.", product);
+});
+
+exports.permanentDeleteProduct = asyncHandler(async (req, res) => {
+    const result = await productService.permanentDeleteProduct(req.params.id);
+    return success(res, "Product permanently deleted.", result);
+});
+
+exports.bulkDeleteProducts = asyncHandler(async (req, res) => {
+    const result = await productService.bulkDeleteProducts(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Products moved to trash.", result);
+});
+
+exports.bulkRestoreProducts = asyncHandler(async (req, res) => {
+    const result = await productService.bulkRestoreProducts(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Products restored from trash.", result);
+});
+
+exports.bulkPermanentDeleteProducts = asyncHandler(async (req, res) => {
+    const result = await productService.bulkPermanentDeleteProducts(
+        req.body || {}
+    );
+    return success(res, "Trash products permanently deleted.", result);
 });
