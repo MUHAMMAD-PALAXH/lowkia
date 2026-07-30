@@ -717,7 +717,39 @@ const getSupplierDetails = async (id, query = {}) => {
         })
     ]);
 
-    const [grnCount, grnAgg, monthlyTrend, statusBreakdown] = await Promise.all([
+    const trendPeriod = ['day', 'week', 'month', 'year'].includes(String(query.trendPeriod || '').toLowerCase())
+        ? String(query.trendPeriod).toLowerCase()
+        : 'month';
+
+    const now = new Date();
+    let trendFrom = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    let trendGroup = {
+        y: { $year: '$orderDate' },
+        m: { $month: '$orderDate' }
+    };
+    if (trendPeriod === 'day') {
+        trendFrom = new Date(now);
+        trendFrom.setHours(0, 0, 0, 0);
+        trendFrom.setDate(trendFrom.getDate() - 29);
+        trendGroup = {
+            y: { $year: '$orderDate' },
+            m: { $month: '$orderDate' },
+            d: { $dayOfMonth: '$orderDate' }
+        };
+    } else if (trendPeriod === 'week') {
+        trendFrom = new Date(now);
+        trendFrom.setHours(0, 0, 0, 0);
+        trendFrom.setDate(trendFrom.getDate() - (12 * 7) + 1);
+        trendGroup = {
+            y: { $isoWeekYear: '$orderDate' },
+            w: { $isoWeek: '$orderDate' }
+        };
+    } else if (trendPeriod === 'year') {
+        trendFrom = new Date(now.getFullYear() - 4, 0, 1);
+        trendGroup = { y: { $year: '$orderDate' } };
+    }
+
+    const [grnCount, grnAgg, spendTrendRaw, statusBreakdown, partialDeliveryCount] = await Promise.all([
         GRN.countDocuments({
             supplierId,
             isDeleted: { $ne: true }
@@ -728,7 +760,7 @@ const getSupplierDetails = async (id, query = {}) => {
                     supplierId,
                     isDeleted: { $ne: true },
                     status: {
-                        $in: ["Completed", "Received", "Verified"]
+                        $in: ['Completed', 'Received', 'Verified']
                     }
                 }
             },
@@ -737,10 +769,10 @@ const getSupplierDetails = async (id, query = {}) => {
                     _id: null,
                     completedGrnCount: { $sum: 1 },
                     receivedValue: {
-                        $sum: { $ifNull: ["$grandTotal", 0] }
+                        $sum: { $ifNull: ['$grandTotal', 0] }
                     },
                     acceptedQty: {
-                        $sum: { $ifNull: ["$totalAcceptedQuantity", 0] }
+                        $sum: { $ifNull: ['$totalAcceptedQuantity', 0] }
                     }
                 }
             }
@@ -750,27 +782,18 @@ const getSupplierDetails = async (id, query = {}) => {
                 $match: {
                     supplierId,
                     isDeleted: { $ne: true },
-                    status: { $nin: ["Cancelled", "Rejected"] },
-                    orderDate: {
-                        $gte: new Date(
-                            new Date().getFullYear(),
-                            new Date().getMonth() - 5,
-                            1
-                        )
-                    }
+                    status: { $nin: ['Cancelled', 'Rejected'] },
+                    orderDate: { $gte: trendFrom }
                 }
             },
             {
                 $group: {
-                    _id: {
-                        y: { $year: "$orderDate" },
-                        m: { $month: "$orderDate" }
-                    },
-                    spend: { $sum: { $ifNull: ["$grandTotal", 0] } },
+                    _id: trendGroup,
+                    spend: { $sum: { $ifNull: ['$grandTotal', 0] } },
                     poCount: { $sum: 1 }
                 }
             },
-            { $sort: { "_id.y": 1, "_id.m": 1 } }
+            { $sort: { '_id.y': 1, '_id.m': 1, '_id.d': 1, '_id.w': 1 } }
         ]),
         PurchaseOrder.aggregate([
             {
@@ -781,12 +804,17 @@ const getSupplierDetails = async (id, query = {}) => {
             },
             {
                 $group: {
-                    _id: "$status",
+                    _id: '$status',
                     count: { $sum: 1 },
-                    amount: { $sum: { $ifNull: ["$grandTotal", 0] } }
+                    amount: { $sum: { $ifNull: ['$grandTotal', 0] } }
                 }
             }
-        ])
+        ]),
+        PurchaseOrder.countDocuments({
+            supplierId,
+            isDeleted: { $ne: true },
+            status: 'Partially Received'
+        })
     ]);
 
     const lastGrn = grns[0] || null;
@@ -913,13 +941,37 @@ const getSupplierDetails = async (id, query = {}) => {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
     ];
-    const monthly = monthlyTrend.map((row) => ({
-        year: row._id?.y || 0,
-        month: row._id?.m || 0,
-        label: `${monthNames[(row._id?.m || 1) - 1]} ${row._id?.y || ""}`.trim(),
-        spend: Number(row.spend) || 0,
-        poCount: Number(row.poCount) || 0
-    }));
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const spendTrend = (spendTrendRaw || []).map((row) => {
+        const y = row._id?.y || 0;
+        const m = row._id?.m || 0;
+        const d = row._id?.d || 0;
+        const w = row._id?.w || 0;
+        let label = "";
+        if (trendPeriod === "day") {
+            label = `${pad2(d)} ${monthNames[(m || 1) - 1]}`;
+        } else if (trendPeriod === "week") {
+            label = `W${w} '${String(y).slice(-2)}`;
+        } else if (trendPeriod === "year") {
+            label = String(y);
+        } else {
+            label = `${monthNames[(m || 1) - 1]} ${y}`.trim();
+        }
+        return {
+            year: y,
+            month: m,
+            day: d,
+            week: w,
+            label,
+            spend: Number(row.spend) || 0,
+            poCount: Number(row.poCount) || 0
+        };
+    });
+    const monthly = spendTrend;
+    const createdAt = supplier.createdAt ? new Date(supplier.createdAt) : null;
+    const lifetimeDays = createdAt
+        ? Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 86400000))
+        : 0;
 
     const summary = {
         productCount: products.length,
@@ -928,6 +980,8 @@ const getSupplierDetails = async (id, query = {}) => {
         poOpenCount: openPoCount,
         poCompletedCount: Number(agg.completedPoCount) || 0,
         poCancelledCount: Number(agg.cancelledPoCount) || 0,
+        partialDeliveryCount: Number(partialDeliveryCount) || 0,
+        lifetimeDays,
         grnCount,
         grnCompletedCount: Number(gAgg.completedGrnCount) || 0,
         receivedValue: Number(gAgg.receivedValue) || 0,
@@ -967,7 +1021,9 @@ const getSupplierDetails = async (id, query = {}) => {
             count: Number(row.count) || 0,
             amount: Number(row.amount) || 0
         })),
-        monthlyTrend: monthly
+        monthlyTrend: monthly,
+        spendTrend,
+        trendPeriod
     };
 
     return {
