@@ -18,6 +18,19 @@ router.get("/lookup/barcode/:code", salesOrderController.lookupByBarcode);
 router.get("/lookup/imei/:imei", salesOrderController.lookupByImei);
 router.get("/branch-catalog", salesOrderController.getBranchCatalog);
 
+router.post(
+    "/bulk-delete",
+    salesOrderController.bulkDeleteSalesOrders
+);
+router.post(
+    "/bulk-restore",
+    salesOrderController.bulkRestoreSalesOrders
+);
+router.post(
+    "/bulk-permanent-delete",
+    salesOrderController.bulkPermanentDeleteSalesOrders
+);
+
 router.get(
     "/:id",
     idValidator,
@@ -44,6 +57,20 @@ router.delete(
     idValidator,
     validate,
     salesOrderController.deleteSalesOrder
+);
+
+router.delete(
+    "/:id/permanent",
+    idValidator,
+    validate,
+    salesOrderController.permanentDeleteSalesOrder
+);
+
+router.patch(
+    "/:id/restore",
+    idValidator,
+    validate,
+    salesOrderController.restoreSalesOrder
 );
 
 router.patch(

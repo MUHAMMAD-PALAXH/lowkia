@@ -28,7 +28,11 @@ exports.getSalesOrderStats = asyncHandler(async (req, res) => {
 });
 
 exports.getSalesOrderById = asyncHandler(async (req, res) => {
-    const order = await salesOrderService.getSalesOrderById(req.params.id);
+    const includeDeleted =
+        req.query.deleted === "true" || req.query.trash === "true";
+    const order = await salesOrderService.getSalesOrderById(req.params.id, {
+        includeDeleted
+    });
     return success(res, "Sales order retrieved successfully.", order);
 });
 
@@ -43,7 +47,47 @@ exports.updateSalesOrder = asyncHandler(async (req, res) => {
 
 exports.deleteSalesOrder = asyncHandler(async (req, res) => {
     await salesOrderService.deleteSalesOrder(req.params.id, getActorId(req));
-    return success(res, "Sales order deleted successfully.", null);
+    return success(res, "Sales order moved to trash.", null);
+});
+
+exports.restoreSalesOrder = asyncHandler(async (req, res) => {
+    const order = await salesOrderService.restoreSalesOrder(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Sales order restored from trash.", order);
+});
+
+exports.permanentDeleteSalesOrder = asyncHandler(async (req, res) => {
+    const result = await salesOrderService.permanentDeleteSalesOrder(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Sales order permanently deleted.", result);
+});
+
+exports.bulkDeleteSalesOrders = asyncHandler(async (req, res) => {
+    const result = await salesOrderService.bulkDeleteSalesOrders(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Sales orders moved to trash.", result);
+});
+
+exports.bulkRestoreSalesOrders = asyncHandler(async (req, res) => {
+    const result = await salesOrderService.bulkRestoreSalesOrders(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Sales orders restored from trash.", result);
+});
+
+exports.bulkPermanentDeleteSalesOrders = asyncHandler(async (req, res) => {
+    const result = await salesOrderService.bulkPermanentDeleteSalesOrders(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Trash items permanently deleted.", result);
 });
 
 exports.submitSalesOrder = asyncHandler(async (req, res) => {

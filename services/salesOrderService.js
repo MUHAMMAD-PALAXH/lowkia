@@ -426,6 +426,234 @@ const findOrderOrFail = async (id) => {
     return order;
 };
 
+const findDeletedOrderOrFail = async (id) => {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw new AppError("Invalid sales order id.", 400);
+    }
+    const order = await SalesOrder.findOne({ _id: id, isDeleted: true });
+    if (!order) throw new AppError("Trash sales order not found.", 404);
+    return order;
+};
+
+const resolveSort = (query = {}) => {
+    const sortKey = String(query.sort || query.sortBy || "newest").toLowerCase();
+    switch (sortKey) {
+        case "alpha":
+        case "alphabetical":
+        case "name":
+            return { customerName: 1, orderNumber: 1 };
+        case "items_asc":
+        case "count_asc":
+        case "low":
+            return { itemCount: 1, createdAt: -1 };
+        case "items_desc":
+        case "count_desc":
+        case "high":
+            return { itemCount: -1, createdAt: -1 };
+        case "oldest":
+            return { createdAt: 1 };
+        case "newest":
+        default:
+            return { createdAt: -1 };
+    }
+};
+
+/** Put inventory qty back after a stocked SO is moved to trash. */
+const restoreInventoryQty = async ({
+    warehouseId,
+    branchId,
+    productId,
+    productVariantId,
+    sku,
+    productName,
+    qty,
+    unitCost,
+    salesOrderId,
+    actorId,
+    session
+}) => {
+    let inv = await findInventoryRow({
+        warehouseId,
+        productId,
+        productVariantId,
+        session
+    });
+
+    if (!inv) {
+        const [created] = await Inventory.create(
+            [
+                {
+                    warehouseId,
+                    branchId: branchId || null,
+                    productId,
+                    productVariantId: productVariantId || null,
+                    currentStock: 0,
+                    availableStock: 0,
+                    reservedStock: 0,
+                    averageCost: unitCost || 0,
+                    isDeleted: false
+                }
+            ],
+            { session }
+        );
+        inv = created;
+    }
+
+    const previous = Number(inv.currentStock) || 0;
+    inv.currentStock = previous + qty;
+    inv.availableStock = (Number(inv.availableStock) || 0) + qty;
+    inv.inventoryValue =
+        (Number(inv.averageCost) || unitCost || 0) * inv.currentStock;
+    inv.lastMovementDate = new Date();
+    await inv.save({ session });
+
+    const movementNumber = await generateStockMovementCode();
+    const [movement] = await StockMovement.create(
+        [
+            {
+                movementNumber,
+                movementDate: new Date(),
+                warehouseId,
+                branchId: branchId || null,
+                productId,
+                productVariantId: productVariantId || null,
+                sku: sku || "",
+                productName,
+                movementType: "Adjustment",
+                movementDirection: "IN",
+                quantity: qty,
+                previousStock: previous,
+                currentStock: inv.currentStock,
+                unitCost: Number(inv.averageCost) || unitCost || 0,
+                totalCost: (Number(inv.averageCost) || unitCost || 0) * qty,
+                referenceType: "Sales Order",
+                salesOrderId,
+                remarks: "Stock restored — Sales Order moved to trash",
+                createdBy: actorId || new mongoose.Types.ObjectId()
+            }
+        ],
+        { session }
+    );
+
+    return { inv, movement };
+};
+
+const unmarkImeisSold = async ({
+    productId,
+    variantId,
+    imeis = [],
+    salesOrderId,
+    session
+}) => {
+    for (const imei of imeis) {
+        const track = await ItemTrack.findOne({
+            productId,
+            ...(variantId ? { variantId } : {}),
+            imei,
+            status: "sold"
+        }).session(session || null);
+        if (!track) continue;
+        const soldOrderId = track.saleInfo?.orderId
+            ? String(track.saleInfo.orderId)
+            : "";
+        if (soldOrderId && String(salesOrderId) !== soldOrderId) continue;
+
+        track.status = "available";
+        track.saleInfo = undefined;
+        track.history = track.history || [];
+        track.history.push({
+            status: "available",
+            date: new Date(),
+            notes: "Restored — Sales Order moved to trash"
+        });
+        await track.save({ session });
+    }
+};
+
+/**
+ * Reverse stock + customer sales impact before trashing a stocked order.
+ * Ensures active sales calculations / stock stay correct.
+ */
+const reverseStockForTrash = async (order, actorId = null) => {
+    if (!order.stockUpdated) return order;
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    const productIds = new Set();
+
+    try {
+        if (order.warehouseId) {
+            for (const line of order.items || []) {
+                const qty = Number(line.quantity) || 0;
+                if (qty <= 0) continue;
+                const trackingType = resolveTrackingType(line.trackingType);
+
+                if (trackingType === "IMEI") {
+                    await unmarkImeisSold({
+                        productId: line.productId,
+                        variantId: line.productVariantId,
+                        imeis: line.imeis || [],
+                        salesOrderId: order._id,
+                        session
+                    });
+                }
+
+                await restoreInventoryQty({
+                    warehouseId: order.warehouseId,
+                    branchId: order.branchId,
+                    productId: line.productId,
+                    productVariantId: line.productVariantId,
+                    sku: line.sku,
+                    productName: line.productName,
+                    qty,
+                    unitCost: line.unitPrice,
+                    salesOrderId: order._id,
+                    actorId,
+                    session
+                });
+
+                line.deliveredQuantity = 0;
+                line.pendingQuantity = qty;
+                if (line.productId) productIds.add(String(line.productId));
+            }
+        }
+
+        order.stockUpdated = false;
+        order.stockUpdatedAt = null;
+        order.stockMovementIds = [];
+        order.markModified("items");
+        await order.save({ session });
+        await session.commitTransaction();
+    } catch (err) {
+        await session.abortTransaction();
+        throw err;
+    } finally {
+        session.endSession();
+    }
+
+    try {
+        const customer = await Customer.findById(order.customerId);
+        if (customer && typeof customer.updateBalance === "function") {
+            await customer.updateBalance(
+                -(Number(order.grandTotal) || 0),
+                -(Number(order.paidAmount) || 0)
+            );
+        }
+    } catch (_) {
+        /* ignore */
+    }
+
+    for (const pid of productIds) {
+        try {
+            await productService.refreshStockSummary(pid);
+        } catch (e) {
+            console.warn("[SO trash] refreshStockSummary failed:", pid, e?.message || e);
+        }
+    }
+
+    return order;
+};
+
 const createSalesOrder = async (payload, actorId = null) => {
     const refs = await resolveHeaderRefs(payload);
     const items = await normalizeItems(payload.items);
@@ -474,9 +702,13 @@ const createSalesOrder = async (payload, actorId = null) => {
 
 const getSalesOrders = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
+    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
     const skip = (page - 1) * limit;
-    const filter = { ...NOT_DELETED };
+    const trash =
+        query.deleted === "true" ||
+        query.trash === "true" ||
+        query.includeDeleted === "trash";
+    const filter = trash ? { isDeleted: true } : { ...NOT_DELETED };
 
     if (query.status) filter.status = query.status;
     if (query.customerId && toObjectId(query.customerId)) {
@@ -497,12 +729,27 @@ const getSalesOrders = async (query = {}) => {
         ];
     }
 
-    const [items, total] = await Promise.all([
-        populateSo(
-            SalesOrder.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)
-        ),
+    const sort = resolveSort(query);
+    const [rawItems, total] = await Promise.all([
+        SalesOrder.aggregate([
+            { $match: filter },
+            {
+                $addFields: {
+                    itemCount: { $size: { $ifNull: ["$items", []] } }
+                }
+            },
+            { $sort: sort },
+            { $skip: skip },
+            { $limit: limit },
+            { $project: { itemCount: 0 } }
+        ]),
         SalesOrder.countDocuments(filter)
     ]);
+
+    const ids = rawItems.map((r) => r._id);
+    const populated = await populateSo(SalesOrder.find({ _id: { $in: ids } }));
+    const byId = new Map(populated.map((p) => [String(p._id), p]));
+    const items = ids.map((id) => byId.get(String(id))).filter(Boolean);
 
     return {
         items,
@@ -511,14 +758,15 @@ const getSalesOrders = async (query = {}) => {
             limit,
             total,
             pages: Math.ceil(total / limit) || 1
-        }
+        },
+        trash
     };
 };
 
-const getSalesOrderById = async (id) => {
-    const order = await populateSo(
-        SalesOrder.findOne({ _id: id, ...NOT_DELETED })
-    );
+const getSalesOrderById = async (id, { includeDeleted = false } = {}) => {
+    const filter = { _id: id };
+    if (!includeDeleted) Object.assign(filter, NOT_DELETED);
+    const order = await populateSo(SalesOrder.findOne(filter));
     if (!order) throw new AppError("Sales order not found.", 404);
     return order;
 };
@@ -630,17 +878,173 @@ const updateSalesOrder = async (id, payload, actorId = null) => {
 
 const deleteSalesOrder = async (id, actorId = null) => {
     const order = await findOrderOrFail(id);
-    if (!EDITABLE_STATUSES.includes(order.status) && order.status !== "Cancelled") {
-        throw new AppError(
-            `Cannot delete a sales order in "${order.status}" status.`,
-            400
-        );
-    }
+    // Stocked orders: put inventory/IMEI back so active calculations stay correct.
+    await reverseStockForTrash(order, actorId);
     order.isDeleted = true;
     order.deletedAt = new Date();
     order.deletedBy = actorId || null;
+    order.updatedBy = actorId || null;
     await order.save();
     return order;
+};
+
+const restoreSalesOrder = async (id, actorId = null) => {
+    const order = await findDeletedOrderOrFail(id);
+    order.isDeleted = false;
+    order.deletedAt = null;
+    order.deletedBy = null;
+    // After trash reverse, stock is no longer deducted — keep status editable.
+    if (["Confirmed", "Processing", "Completed"].includes(order.status)) {
+        order.status = "Draft";
+        order.deliveryStatus = "Pending";
+    }
+    order.updatedBy = actorId || null;
+    await order.save();
+    return populateSo(SalesOrder.findById(order._id));
+};
+
+const permanentDeleteSalesOrder = async (id, actorId = null) => {
+    const order = await findDeletedOrderOrFail(id);
+    // Must already be in trash. Hard-delete document.
+    await SalesOrder.deleteOne({ _id: order._id, isDeleted: true });
+    return { id: String(order._id), orderNumber: order.orderNumber };
+};
+
+/**
+ * Soft-delete many active orders.
+ * scope: ids | all | drafts | pending | cancelled | approved | confirmed | completed
+ */
+const bulkDeleteSalesOrders = async (
+    { ids = [], scope = "ids", status } = {},
+    actorId = null
+) => {
+    const filter = { ...NOT_DELETED };
+    const scopeKey = String(scope || "ids").toLowerCase();
+
+    if (scopeKey === "ids") {
+        const objectIds = (ids || [])
+            .map((id) => toObjectId(id))
+            .filter(Boolean);
+        if (!objectIds.length) {
+            throw new AppError("Select at least one sales order to delete.", 400);
+        }
+        filter._id = { $in: objectIds };
+    } else if (scopeKey === "drafts" || scopeKey === "draft") {
+        filter.status = "Draft";
+    } else if (scopeKey === "pending") {
+        filter.status = "Pending Approval";
+    } else if (scopeKey === "cancelled") {
+        filter.status = "Cancelled";
+    } else if (scopeKey === "approved") {
+        filter.status = "Approved";
+    } else if (scopeKey === "confirmed") {
+        filter.status = { $in: ["Confirmed", "Processing"] };
+    } else if (scopeKey === "completed") {
+        filter.status = "Completed";
+    } else if (scopeKey === "all") {
+        // all active
+    } else if (status) {
+        filter.status = status;
+    } else {
+        throw new AppError("Invalid delete scope.", 400);
+    }
+
+    const orders = await SalesOrder.find(filter);
+    let deleted = 0;
+    const errors = [];
+    for (const order of orders) {
+        try {
+            await reverseStockForTrash(order, actorId);
+            order.isDeleted = true;
+            order.deletedAt = new Date();
+            order.deletedBy = actorId || null;
+            order.updatedBy = actorId || null;
+            await order.save();
+            deleted += 1;
+        } catch (e) {
+            errors.push({
+                id: String(order._id),
+                orderNumber: order.orderNumber,
+                message: e?.message || "Failed"
+            });
+        }
+    }
+
+    return { deleted, failed: errors.length, errors };
+};
+
+const bulkRestoreSalesOrders = async (
+    { ids = [], scope = "ids", status } = {},
+    actorId = null
+) => {
+    const filter = { isDeleted: true };
+    const scopeKey = String(scope || "ids").toLowerCase();
+
+    if (scopeKey === "ids") {
+        const objectIds = (ids || [])
+            .map((id) => toObjectId(id))
+            .filter(Boolean);
+        if (!objectIds.length) {
+            throw new AppError("Select at least one trash item to restore.", 400);
+        }
+        filter._id = { $in: objectIds };
+    } else if (scopeKey === "drafts" || scopeKey === "draft") {
+        filter.status = "Draft";
+    } else if (scopeKey === "pending") {
+        filter.status = "Pending Approval";
+    } else if (scopeKey === "cancelled") {
+        filter.status = "Cancelled";
+    } else if (scopeKey === "all") {
+        // all trash
+    } else if (status) {
+        filter.status = status;
+    } else {
+        throw new AppError("Invalid restore scope.", 400);
+    }
+
+    const orders = await SalesOrder.find(filter);
+    let restored = 0;
+    for (const order of orders) {
+        order.isDeleted = false;
+        order.deletedAt = null;
+        order.deletedBy = null;
+        if (["Confirmed", "Processing", "Completed"].includes(order.status)) {
+            order.status = "Draft";
+            order.deliveryStatus = "Pending";
+        }
+        order.updatedBy = actorId || null;
+        await order.save();
+        restored += 1;
+    }
+    return { restored };
+};
+
+const bulkPermanentDeleteSalesOrders = async (
+    { ids = [], scope = "ids" } = {},
+    actorId = null
+) => {
+    const filter = { isDeleted: true };
+    const scopeKey = String(scope || "ids").toLowerCase();
+
+    if (scopeKey === "ids") {
+        const objectIds = (ids || [])
+            .map((id) => toObjectId(id))
+            .filter(Boolean);
+        if (!objectIds.length) {
+            throw new AppError(
+                "Select at least one trash item to delete permanently.",
+                400
+            );
+        }
+        filter._id = { $in: objectIds };
+    } else if (scopeKey === "all") {
+        // purge entire trash
+    } else {
+        throw new AppError("Invalid permanent-delete scope.", 400);
+    }
+
+    const result = await SalesOrder.deleteMany(filter);
+    return { deleted: result.deletedCount || 0 };
 };
 
 const submitSalesOrder = async (id, actorId = null) => {
@@ -1522,40 +1926,55 @@ const getBranchCatalog = async (query = {}) => {
 };
 
 const getSalesOrderStats = async () => {
-    const [rows] = await SalesOrder.aggregate([
-        { $match: NOT_DELETED },
-        {
-            $group: {
-                _id: null,
-                total: { $sum: 1 },
-                draft: {
-                    $sum: { $cond: [{ $eq: ["$status", "Draft"] }, 1, 0] }
-                },
-                pending: {
-                    $sum: {
-                        $cond: [{ $eq: ["$status", "Pending Approval"] }, 1, 0]
-                    }
-                },
-                approved: {
-                    $sum: { $cond: [{ $eq: ["$status", "Approved"] }, 1, 0] }
-                },
-                confirmed: {
-                    $sum: { $cond: [{ $eq: ["$status", "Confirmed"] }, 1, 0] }
-                },
-                completed: {
-                    $sum: { $cond: [{ $eq: ["$status", "Completed"] }, 1, 0] }
-                },
-                cancelled: {
-                    $sum: { $cond: [{ $eq: ["$status", "Cancelled"] }, 1, 0] }
-                },
-                salesValue: { $sum: "$grandTotal" },
-                dueAmount: { $sum: "$dueAmount" }
+    const [[rows], trashCount] = await Promise.all([
+        SalesOrder.aggregate([
+            { $match: NOT_DELETED },
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: 1 },
+                    draft: {
+                        $sum: { $cond: [{ $eq: ["$status", "Draft"] }, 1, 0] }
+                    },
+                    pending: {
+                        $sum: {
+                            $cond: [
+                                { $eq: ["$status", "Pending Approval"] },
+                                1,
+                                0
+                            ]
+                        }
+                    },
+                    approved: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Approved"] }, 1, 0]
+                        }
+                    },
+                    confirmed: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Confirmed"] }, 1, 0]
+                        }
+                    },
+                    completed: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Completed"] }, 1, 0]
+                        }
+                    },
+                    cancelled: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Cancelled"] }, 1, 0]
+                        }
+                    },
+                    salesValue: { $sum: "$grandTotal" },
+                    dueAmount: { $sum: "$dueAmount" }
+                }
             }
-        }
+        ]),
+        SalesOrder.countDocuments({ isDeleted: true })
     ]);
 
-    return (
-        rows || {
+    return {
+        ...(rows || {
             total: 0,
             draft: 0,
             pending: 0,
@@ -1565,8 +1984,9 @@ const getSalesOrderStats = async () => {
             cancelled: 0,
             salesValue: 0,
             dueAmount: 0
-        }
-    );
+        }),
+        trashCount
+    };
 };
 
 module.exports = {
@@ -1575,6 +1995,11 @@ module.exports = {
     getSalesOrderById,
     updateSalesOrder,
     deleteSalesOrder,
+    restoreSalesOrder,
+    permanentDeleteSalesOrder,
+    bulkDeleteSalesOrders,
+    bulkRestoreSalesOrders,
+    bulkPermanentDeleteSalesOrders,
     submitSalesOrder,
     approveSalesOrder,
     confirmSalesOrder,
