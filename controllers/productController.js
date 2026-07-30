@@ -63,6 +63,11 @@ exports.getProductById = asyncHandler(async (req, res) => {
     return success(res, "Product retrieved successfully.", product);
 });
 
+exports.getProductDeleteCheck = asyncHandler(async (req, res) => {
+    const data = await productService.getProductDeleteCheck(req.params.id);
+    return success(res, "Product delete check retrieved successfully.", data);
+});
+
 exports.updateProduct = asyncHandler(async (req, res) => {
     const product = await productService.updateProduct(
         req.params.id,

@@ -50,6 +50,13 @@ router.get(
 
 router.get("/barcode/:barcode", productController.getProductByBarcode);
 
+router.get(
+    "/:id/delete-check",
+    idValidator,
+    validate,
+    productController.getProductDeleteCheck
+);
+
 router.get("/:id", idValidator, validate, productController.getProductById);
 
 router.post("/", createProductValidator, validate, productController.createProduct);

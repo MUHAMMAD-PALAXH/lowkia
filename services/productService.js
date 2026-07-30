@@ -261,6 +261,58 @@ const hasOpenPurchaseOrder = async (productId) => {
     }
 };
 
+const getOpenPurchaseOrders = async (productId, limit = 10) => {
+    try {
+        const PurchaseOrderModel = mongoose.models.PurchaseOrder;
+        if (!PurchaseOrderModel) return [];
+
+        const docs = await PurchaseOrderModel.find({
+            "items.productId": productId,
+            status: { $nin: ["Cancelled", "Completed", "Closed", "Rejected"] },
+            isDeleted: { $ne: true }
+        })
+            .select(
+                "purchaseOrderNo status orderDate supplierId warehouseId branchId"
+            )
+            .populate("supplierId", "supplierCode name")
+            .populate("warehouseId", "warehouseCode warehouseName")
+            .populate("branchId", "branchCode name")
+            .sort({ createdAt: -1 })
+            .limit(limit)
+            .lean();
+
+        return docs.map((doc) => ({
+            id: String(doc._id),
+            purchaseOrderNo: doc.purchaseOrderNo || "",
+            status: doc.status || "",
+            orderDate: doc.orderDate || null,
+            supplier: doc.supplierId
+                ? {
+                      id: String(doc.supplierId._id || ""),
+                      supplierCode: doc.supplierId.supplierCode || "",
+                      name: doc.supplierId.name || ""
+                  }
+                : null,
+            warehouse: doc.warehouseId
+                ? {
+                      id: String(doc.warehouseId._id || ""),
+                      warehouseCode: doc.warehouseId.warehouseCode || "",
+                      warehouseName: doc.warehouseId.warehouseName || ""
+                  }
+                : null,
+            branch: doc.branchId
+                ? {
+                      id: String(doc.branchId._id || ""),
+                      branchCode: doc.branchId.branchCode || "",
+                      name: doc.branchId.name || ""
+                  }
+                : null
+        }));
+    } catch (error) {
+        return [];
+    }
+};
+
 const beforeProductSoftDelete = async (doc) => {
     if ((Number(doc.totalStock) || 0) > 0) {
         throw new AppError(
@@ -288,6 +340,41 @@ const beforeProductSoftDelete = async (doc) => {
             400
         );
     }
+};
+
+const getProductDeleteCheck = async (id) => {
+    const product = await populateProduct(Product.findOne({ _id: id, ...NOT_DELETED }));
+    if (!product) throw new AppError("Product not found.", 404);
+
+    const imeiCount = await ItemTrack.countDocuments({
+        productId: product._id,
+        status: { $ne: "deleted" }
+    });
+    const openPurchaseOrders = await getOpenPurchaseOrders(product._id);
+
+    const stock = {
+        total: Number(product.totalStock) || 0,
+        available: Number(product.availableStock) || 0,
+        reserved: Number(product.reservedStock) || 0
+    };
+
+    return {
+        canDelete:
+            stock.total <= 0 &&
+            imeiCount <= 0 &&
+            (!openPurchaseOrders || openPurchaseOrders.length === 0),
+        stock,
+        imeiCount,
+        warehouseStock: (product.warehouseStock || []).map((row) => ({
+            warehouseId: row.warehouseId?._id || row.warehouseId || null,
+            warehouseCode: row.warehouseId?.warehouseCode || "",
+            warehouseName: row.warehouseId?.warehouseName || "",
+            quantity: Number(row.quantity) || 0,
+            availableQuantity: Number(row.availableQuantity) || 0,
+            reservedQuantity: Number(row.reservedQuantity) || 0
+        })),
+        openPurchaseOrders
+    };
 };
 
 const trash = createTrashOps(Product, {
@@ -1896,6 +1983,7 @@ module.exports = {
     createProduct,
     getProducts,
     getProductById,
+    getProductDeleteCheck,
     getApprovedProducts,
     getPendingApprovals,
     getLowStockProducts,
