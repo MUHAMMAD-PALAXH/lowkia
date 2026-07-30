@@ -404,10 +404,347 @@ const getDueReport = async () => {
     return Supplier.getDueReport();
 };
 
+// ==========================================================
+// Rich supplier profile (products / POs / GRNs / spend)
+// ==========================================================
+
+const getSupplierDetails = async (id, query = {}) => {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw new AppError("Invalid supplier id.", 400);
+    }
+
+    const supplierId = new mongoose.Types.ObjectId(id);
+    const poLimit = Math.min(Math.max(parseInt(query.poLimit, 10) || 30, 1), 100);
+    const grnLimit = Math.min(Math.max(parseInt(query.grnLimit, 10) || 30, 1), 100);
+    const productLimit = Math.min(
+        Math.max(parseInt(query.productLimit, 10) || 100, 1),
+        200
+    );
+
+    const Product = require("../model/product");
+    const PurchaseOrder = require("../model/purchaseOrder");
+    const GRN = require("../model/grn");
+
+    const supplier = await Supplier.findOne({
+        _id: supplierId,
+        isDeleted: { $ne: true }
+    })
+        .populate("createdBy", "firstName lastName email name")
+        .populate("updatedBy", "firstName lastName email name")
+        .populate("approvedBy", "firstName lastName email name");
+
+    if (!supplier) throw new AppError("Supplier not found.", 404);
+
+    const [
+        linkedProducts,
+        purchaseOrders,
+        grns,
+        poAgg,
+        productSpend,
+        openPoCount
+    ] = await Promise.all([
+        Product.find({
+            isDeleted: { $ne: true },
+            $or: [
+                { "suppliers.supplierId": supplierId },
+                { primarySupplierId: supplierId },
+                { sourceSupplierId: supplierId }
+            ]
+        })
+            .select(
+                "name productCode sku barcode trackingType availableStock totalStock sellingPrice purchasePrice lastPurchasePrice primarySupplierId suppliers status isPublished"
+            )
+            .sort({ name: 1 })
+            .limit(productLimit)
+            .lean(),
+
+        PurchaseOrder.find({
+            supplierId,
+            isDeleted: { $ne: true }
+        })
+            .select(
+                "purchaseOrderNo orderDate status paymentStatus grandTotal paidAmount dueAmount items warehouseId"
+            )
+            .sort({ orderDate: -1, createdAt: -1 })
+            .limit(poLimit)
+            .lean(),
+
+        GRN.find({
+            supplierId,
+            isDeleted: { $ne: true }
+        })
+            .select(
+                "grnNumber receivedDate status grandTotal totalAcceptedQuantity supplierInvoiceNo purchaseOrderId inventoryUpdated"
+            )
+            .populate("purchaseOrderId", "purchaseOrderNo")
+            .sort({ receivedDate: -1, createdAt: -1 })
+            .limit(grnLimit)
+            .lean(),
+
+        PurchaseOrder.aggregate([
+            {
+                $match: {
+                    supplierId,
+                    isDeleted: { $ne: true }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    poCount: { $sum: 1 },
+                    lifetimeSpend: { $sum: { $ifNull: ["$grandTotal", 0] } },
+                    lifetimePaid: { $sum: { $ifNull: ["$paidAmount", 0] } },
+                    lifetimeDue: { $sum: { $ifNull: ["$dueAmount", 0] } },
+                    totalQtyOrdered: {
+                        $sum: {
+                            $reduce: {
+                                input: { $ifNull: ["$items", []] },
+                                initialValue: 0,
+                                in: {
+                                    $add: [
+                                        "$$value",
+                                        { $ifNull: ["$$this.quantity", 0] }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    totalQtyReceived: {
+                        $sum: {
+                            $reduce: {
+                                input: { $ifNull: ["$items", []] },
+                                initialValue: 0,
+                                in: {
+                                    $add: [
+                                        "$$value",
+                                        {
+                                            $ifNull: [
+                                                "$$this.receivedQuantity",
+                                                0
+                                            ]
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    lastPurchaseDate: { $max: "$orderDate" },
+                    lastPoNo: { $max: "$purchaseOrderNo" }
+                }
+            }
+        ]),
+
+        PurchaseOrder.aggregate([
+            {
+                $match: {
+                    supplierId,
+                    isDeleted: { $ne: true }
+                }
+            },
+            { $unwind: "$items" },
+            { $sort: { orderDate: 1, createdAt: 1 } },
+            {
+                $group: {
+                    _id: {
+                        productId: "$items.productId",
+                        productName: "$items.productName",
+                        sku: "$items.sku"
+                    },
+                    qtyOrdered: {
+                        $sum: { $ifNull: ["$items.quantity", 0] }
+                    },
+                    qtyReceived: {
+                        $sum: { $ifNull: ["$items.receivedQuantity", 0] }
+                    },
+                    spend: { $sum: { $ifNull: ["$items.total", 0] } },
+                    avgUnitPrice: {
+                        $avg: { $ifNull: ["$items.purchasePrice", 0] }
+                    },
+                    lastUnitPrice: {
+                        $last: { $ifNull: ["$items.purchasePrice", 0] }
+                    },
+                    lastPurchaseDate: { $max: "$orderDate" },
+                    poCount: { $addToSet: "$_id" }
+                }
+            },
+            {
+                $project: {
+                    qtyOrdered: 1,
+                    qtyReceived: 1,
+                    spend: 1,
+                    avgUnitPrice: 1,
+                    lastUnitPrice: 1,
+                    lastPurchaseDate: 1,
+                    poCount: { $size: "$poCount" }
+                }
+            },
+            { $sort: { spend: -1 } },
+            { $limit: productLimit }
+        ]),
+
+        PurchaseOrder.countDocuments({
+            supplierId,
+            isDeleted: { $ne: true },
+            status: {
+                $nin: ["Completed", "Cancelled", "Closed", "Rejected"]
+            }
+        })
+    ]);
+
+    const grnCount = await GRN.countDocuments({
+        supplierId,
+        isDeleted: { $ne: true }
+    });
+
+    const lastGrn = grns[0] || null;
+    const agg = poAgg[0] || {};
+
+    const products = linkedProducts.map((p) => {
+        const link = (p.suppliers || []).find(
+            (row) => String(row.supplierId) === String(supplierId)
+        );
+        const isPrimary =
+            !!link?.isPrimary ||
+            String(p.primarySupplierId || "") === String(supplierId);
+        return {
+            productId: p._id,
+            productCode: p.productCode || "",
+            name: p.name || "",
+            sku: p.sku || "",
+            barcode: p.barcode || "",
+            trackingType: p.trackingType || "Non-IMEI",
+            status: p.status || "",
+            isPublished: !!p.isPublished,
+            isPrimary,
+            supplierSku: link?.supplierSku || "",
+            lastPurchasePrice:
+                Number(link?.lastPurchasePrice) ||
+                Number(p.lastPurchasePrice) ||
+                Number(p.purchasePrice) ||
+                0,
+            leadTimeDays: Number(link?.leadTimeDays) || 0,
+            availableStock: Number(p.availableStock) || 0,
+            totalStock: Number(p.totalStock) || 0,
+            sellingPrice: Number(p.sellingPrice) || 0
+        };
+    });
+
+    const purchaseOrderRows = purchaseOrders.map((po) => {
+        const items = po.items || [];
+        const totalQty = items.reduce(
+            (s, i) => s + (Number(i.quantity) || 0),
+            0
+        );
+        const receivedQty = items.reduce(
+            (s, i) => s + (Number(i.receivedQuantity) || 0),
+            0
+        );
+        return {
+            id: po._id,
+            purchaseOrderNo: po.purchaseOrderNo || "",
+            orderDate: po.orderDate || null,
+            status: po.status || "",
+            paymentStatus: po.paymentStatus || "",
+            grandTotal: Number(po.grandTotal) || 0,
+            paidAmount: Number(po.paidAmount) || 0,
+            dueAmount: Number(po.dueAmount) || 0,
+            itemCount: items.length,
+            totalQty,
+            receivedQty,
+            items: items.map((i) => ({
+                productId: i.productId || null,
+                productName: i.productName || "",
+                sku: i.sku || "",
+                variantLabel: i.variantLabel || "",
+                quantity: Number(i.quantity) || 0,
+                receivedQuantity: Number(i.receivedQuantity) || 0,
+                purchasePrice: Number(i.purchasePrice) || 0,
+                total: Number(i.total) || 0,
+                trackingType: i.trackingType || ""
+            }))
+        };
+    });
+
+    const grnRows = grns.map((g) => ({
+        id: g._id,
+        grnNumber: g.grnNumber || "",
+        receivedDate: g.receivedDate || null,
+        status: g.status || "",
+        grandTotal: Number(g.grandTotal) || 0,
+        totalAcceptedQuantity: Number(g.totalAcceptedQuantity) || 0,
+        supplierInvoiceNo: g.supplierInvoiceNo || "",
+        inventoryUpdated: !!g.inventoryUpdated,
+        purchaseOrderId: g.purchaseOrderId?._id || g.purchaseOrderId || null,
+        purchaseOrderNo: g.purchaseOrderId?.purchaseOrderNo || ""
+    }));
+
+    const productSpendRows = productSpend.map((row) => ({
+        productId: row._id?.productId || null,
+        productName: row._id?.productName || "Unknown product",
+        sku: row._id?.sku || "",
+        qtyOrdered: Number(row.qtyOrdered) || 0,
+        qtyReceived: Number(row.qtyReceived) || 0,
+        spend: Number(row.spend) || 0,
+        avgUnitPrice: Number(Number(row.avgUnitPrice || 0).toFixed(2)),
+        lastUnitPrice: Number(row.lastUnitPrice) || 0,
+        lastPurchaseDate: row.lastPurchaseDate || null,
+        poCount: Number(row.poCount) || 0
+    }));
+
+    const lifetimeSpend =
+        Number(agg.lifetimeSpend) || Number(supplier.totalPurchaseAmount) || 0;
+    const lifetimePaid =
+        Number(agg.lifetimePaid) || Number(supplier.totalPaidAmount) || 0;
+    const lifetimeDue =
+        Number(agg.lifetimeDue) || Number(supplier.totalDueAmount) || 0;
+    const poCount = Number(agg.poCount) || 0;
+
+    const creditLimit = Number(supplier.creditLimit) || 0;
+    const summary = {
+        productCount: products.length,
+        primaryProductCount: products.filter((p) => p.isPrimary).length,
+        poCount,
+        poOpenCount: openPoCount,
+        grnCount,
+        lifetimeSpend,
+        lifetimePaid,
+        lifetimeDue,
+        avgPoValue: poCount > 0 ? Number((lifetimeSpend / poCount).toFixed(2)) : 0,
+        totalQtyOrdered: Number(agg.totalQtyOrdered) || 0,
+        totalQtyReceived: Number(agg.totalQtyReceived) || 0,
+        lastPurchaseDate:
+            agg.lastPurchaseDate || supplier.lastPurchaseDate || null,
+        lastPaymentDate: supplier.lastPaymentDate || null,
+        lastPoNo: purchaseOrderRows[0]?.purchaseOrderNo || agg.lastPoNo || "",
+        lastGrnNo: lastGrn?.grnNumber || "",
+        creditLimit,
+        creditDays: Number(supplier.creditDays) || 0,
+        creditUtilization:
+            creditLimit > 0
+                ? Number((lifetimeDue / creditLimit).toFixed(4))
+                : 0,
+        rating: Number(supplier.rating) || 0,
+        ratingCount: Number(supplier.ratingCount) || 0,
+        storedPurchaseAmount: Number(supplier.totalPurchaseAmount) || 0,
+        storedPaidAmount: Number(supplier.totalPaidAmount) || 0,
+        storedDueAmount: Number(supplier.totalDueAmount) || 0
+    };
+
+    return {
+        supplier,
+        summary,
+        products,
+        purchaseOrders: purchaseOrderRows,
+        grns: grnRows,
+        productSpend: productSpendRows
+    };
+};
+
 module.exports = {
     createSupplier,
     getSuppliers,
     getSupplierById,
+    getSupplierDetails,
     updateSupplier,
     deleteSupplier,
     restoreSupplier,

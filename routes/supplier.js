@@ -49,6 +49,13 @@ router.get(
 );
 
 router.get(
+    "/:id/details",
+    idValidator,
+    validate,
+    supplierController.getSupplierDetails
+);
+
+router.get(
     "/:id",
     idValidator,
     validate,

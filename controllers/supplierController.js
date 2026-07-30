@@ -74,6 +74,14 @@ exports.getSupplierById = asyncHandler(async (req, res) => {
     return success(res, "Supplier retrieved successfully.", supplier);
 });
 
+exports.getSupplierDetails = asyncHandler(async (req, res) => {
+    const data = await supplierService.getSupplierDetails(
+        req.params.id,
+        req.query
+    );
+    return success(res, "Supplier details retrieved successfully.", data);
+});
+
 // ==========================================================
 // Update
 // PUT /api/suppliers/:id
