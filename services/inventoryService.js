@@ -1,6 +1,7 @@
 /**
  * Inventory Service (read layer after GRN)
- * Stock increases only via GRN complete — this module is for viewing stock.
+ * Stock increases only via GRN complete — this module is for viewing stock
+ * plus clear/sync helpers used by product trash.
  */
 
 const mongoose = require("mongoose");
@@ -22,13 +23,30 @@ const toObjectId = (value) => {
 const escapeRegex = (value = "") =>
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Keep Inventory.stockStatus in sync after qty changes */
+const computeStockStatus = (availableStock, reorderLevel = 0) => {
+    const avail = Number(availableStock) || 0;
+    const reorder = Number(reorderLevel) || 0;
+    if (avail <= 0) return "Out Of Stock";
+    if (reorder > 0 && avail <= reorder) return "Low Stock";
+    return "In Stock";
+};
+
+const applyStockStatus = (inv) => {
+    inv.stockStatus = computeStockStatus(
+        inv.availableStock,
+        inv.reorderLevel
+    );
+    return inv;
+};
+
 const populateInventory = (query) =>
     query
         .populate("warehouseId", "warehouseCode warehouseName city")
         .populate("branchId", "branchCode name city")
         .populate(
             "productId",
-            "name productCode sku barcode trackingType productType"
+            "name productCode sku barcode trackingType productType isDeleted"
         )
         .populate("productVariantId", "sku combinationString attributes");
 
@@ -40,6 +58,81 @@ const populateMovement = (query) =>
         .populate("productVariantId", "sku combinationString")
         .populate("grnId", "grnNumber status")
         .populate("createdBy", "name email");
+
+const resolveSearchProductIds = async (search) => {
+    const s = String(search || "").trim();
+    if (!s) return null;
+    const regex = { $regex: escapeRegex(s), $options: "i" };
+    const products = await Product.find({
+        isDeleted: { $ne: true },
+        $or: [
+            { name: regex },
+            { productCode: regex },
+            { sku: regex },
+            { barcode: regex },
+            { shortName: regex }
+        ]
+    })
+        .select("_id")
+        .lean();
+    return products.map((p) => p._id);
+};
+
+/**
+ * Live warehouse + IMEI totals for trash / clear decisions.
+ * Always uses Inventory qty (not IMEI-overwritten product summary).
+ */
+const getLiveWarehouseStock = async (productId) => {
+    const pid = toObjectId(productId);
+    if (!pid) {
+        return {
+            invTotal: 0,
+            invAvailable: 0,
+            invReserved: 0,
+            availableImei: 0,
+            activeImei: 0,
+            blockedImei: 0
+        };
+    }
+
+    const [agg] = await Inventory.aggregate([
+        {
+            $match: {
+                productId: pid,
+                isDeleted: { $ne: true }
+            }
+        },
+        {
+            $group: {
+                _id: null,
+                invTotal: { $sum: "$currentStock" },
+                invAvailable: { $sum: "$availableStock" },
+                invReserved: { $sum: "$reservedStock" }
+            }
+        }
+    ]);
+
+    const [availableImei, activeImei, blockedImei] = await Promise.all([
+        ItemTrack.countDocuments({ productId: pid, status: "available" }),
+        ItemTrack.countDocuments({
+            productId: pid,
+            status: { $ne: "deleted" }
+        }),
+        ItemTrack.countDocuments({
+            productId: pid,
+            status: { $in: ["sold", "repairing", "in-transit"] }
+        })
+    ]);
+
+    return {
+        invTotal: Number(agg?.invTotal) || 0,
+        invAvailable: Number(agg?.invAvailable) || 0,
+        invReserved: Number(agg?.invReserved) || 0,
+        availableImei,
+        activeImei,
+        blockedImei
+    };
+};
 
 const getInventoryList = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
@@ -69,46 +162,25 @@ const getInventoryList = async (query = {}) => {
 
     if (query.search) {
         const search = escapeRegex(String(query.search).trim());
-        // Search via populated fields needs aggregation OR pre-filter products.
-        // Simple approach: match product names via $lookup later; for now use
-        // sku-like fields if present on inventory, else rely on productId filter.
-        filter.$or = [
-            ...(filter.$or || []),
-            { batchNumber: { $regex: search, $options: "i" } }
-        ];
+        const productIds = await resolveSearchProductIds(query.search);
+        const searchOr = [{ batchNumber: { $regex: search, $options: "i" } }];
+        if (productIds && productIds.length) {
+            searchOr.push({ productId: { $in: productIds } });
+        }
+        if (filter.$or) {
+            filter.$and = [{ $or: filter.$or }, { $or: searchOr }];
+            delete filter.$or;
+        } else {
+            filter.$or = searchOr;
+        }
     }
 
-    let itemsQuery = populateInventory(
-        Inventory.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit)
-    );
-    let items = await itemsQuery.lean();
-
-    // Client-side name filter when search provided
-    if (query.search) {
-        const s = String(query.search).trim().toLowerCase();
-        items = items.filter((row) => {
-            const name = (row.productId?.name || "").toLowerCase();
-            const code = (row.productId?.productCode || "").toLowerCase();
-            const sku = (
-                row.productVariantId?.sku ||
-                row.productId?.sku ||
-                ""
-            ).toLowerCase();
-            const wh = (
-                row.warehouseId?.warehouseName ||
-                row.warehouseId?.warehouseCode ||
-                ""
-            ).toLowerCase();
-            return (
-                name.includes(s) ||
-                code.includes(s) ||
-                sku.includes(s) ||
-                wh.includes(s)
-            );
-        });
-    }
-
-    const total = await Inventory.countDocuments(filter);
+    const [items, total] = await Promise.all([
+        populateInventory(
+            Inventory.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit)
+        ).lean(),
+        Inventory.countDocuments(filter)
+    ]);
 
     return {
         items,
@@ -132,9 +204,12 @@ const getInventoryById = async (id) => {
     return row;
 };
 
-const getInventoryStats = async () => {
+const getInventoryStats = async (query = {}) => {
+    const match = { isDeleted: { $ne: true } };
+    if (query.warehouseId) match.warehouseId = toObjectId(query.warehouseId);
+
     const [agg] = await Inventory.aggregate([
-        { $match: { isDeleted: { $ne: true } } },
+        { $match: match },
         {
             $group: {
                 _id: null,
@@ -145,7 +220,27 @@ const getInventoryStats = async () => {
                 inventoryValue: { $sum: "$inventoryValue" },
                 lowStock: {
                     $sum: {
-                        $cond: [{ $eq: ["$stockStatus", "Low Stock"] }, 1, 0]
+                        $cond: [
+                            {
+                                $or: [
+                                    { $eq: ["$stockStatus", "Low Stock"] },
+                                    {
+                                        $and: [
+                                            { $gt: ["$reorderLevel", 0] },
+                                            {
+                                                $lte: [
+                                                    "$availableStock",
+                                                    "$reorderLevel"
+                                                ]
+                                            },
+                                            { $gt: ["$availableStock", 0] }
+                                        ]
+                                    }
+                                ]
+                            },
+                            1,
+                            0
+                        ]
                     }
                 },
                 outOfStock: {
@@ -166,6 +261,7 @@ const getInventoryStats = async () => {
         }
     ]);
 
+    const imeiMatch = { status: { $ne: "deleted" } };
     const imeiAvailable = await ItemTrack.countDocuments({
         status: "available"
     });
@@ -173,6 +269,7 @@ const getInventoryStats = async () => {
     const imeiInTransit = await ItemTrack.countDocuments({
         status: "in-transit"
     });
+    const imeiActive = await ItemTrack.countDocuments(imeiMatch);
 
     return {
         totalSkus: agg?.totalSkus || 0,
@@ -184,7 +281,8 @@ const getInventoryStats = async () => {
         outOfStock: agg?.outOfStock || 0,
         imeiAvailable,
         imeiSold,
-        imeiInTransit
+        imeiInTransit,
+        imeiActive
     };
 };
 
@@ -211,7 +309,14 @@ const getLowStock = async (query = {}) => {
         Inventory.find(filter).sort({ availableStock: 1 }).limit(limit)
     ).lean();
 
-    return { items, total: items.length };
+    // Drop rows whose product is already trashed
+    const filtered = items.filter((row) => {
+        const p = row.productId;
+        if (p && typeof p === "object" && p.isDeleted === true) return false;
+        return true;
+    });
+
+    return { items: filtered, total: filtered.length };
 };
 
 const getStockMovements = async (query = {}) => {
@@ -271,9 +376,13 @@ const getImeiStock = async (query = {}) => {
     const skip = (page - 1) * limit;
     const filter = {};
 
-    if (query.status) filter.status = query.status;
-    else if (query.availableOnly === "true" || query.availableOnly === true) {
+    if (query.status) {
+        filter.status = query.status;
+    } else if (query.availableOnly === "true" || query.availableOnly === true) {
         filter.status = "available";
+    } else if (query.includeDeleted !== "true" && query.includeDeleted !== true) {
+        // Hide cleared/trashed IMEIs by default
+        filter.status = { $ne: "deleted" };
     }
 
     if (query.branchId) filter.currentBranchId = toObjectId(query.branchId);
@@ -310,17 +419,27 @@ const getImeiStock = async (query = {}) => {
     };
 };
 
-/** Push Inventory totals onto Product.totalStock / stockValue for all stocked products */
+/** Push Inventory totals onto Product.totalStock / stockValue */
 const syncProductStockSummaries = async () => {
     const productService = require("./productService");
-    const ids = await Inventory.distinct("productId", {
-        isDeleted: { $ne: true },
-        currentStock: { $gt: 0 }
-    });
+
+    const [fromInventory, fromImei, staleSummaries] = await Promise.all([
+        Inventory.distinct("productId", { isDeleted: { $ne: true } }),
+        ItemTrack.distinct("productId", { status: { $ne: "deleted" } }),
+        Product.distinct("_id", {
+            isDeleted: { $ne: true },
+            totalStock: { $gt: 0 }
+        })
+    ]);
+
+    const idSet = new Set();
+    for (const id of [...fromInventory, ...fromImei, ...staleSummaries]) {
+        if (id) idSet.add(String(id));
+    }
+
     let updated = 0;
     const errors = [];
-    for (const id of ids) {
-        if (!id) continue;
+    for (const id of idSet) {
         try {
             await productService.refreshStockSummary(id);
             updated += 1;
@@ -328,7 +447,7 @@ const syncProductStockSummaries = async () => {
             errors.push(`${id}: ${err?.message || err}`);
         }
     }
-    return { updated, total: ids.length, errors };
+    return { updated, total: idSet.size, errors };
 };
 
 const clearProductStock = async (productId, actorId = null) => {
@@ -355,8 +474,17 @@ const clearProductStock = async (productId, actorId = null) => {
         currentStock: { $gt: 0 }
     });
 
-    const reservedRow = rows.find((row) => Number(row.reservedStock) > 0);
-    if (reservedRow) {
+    const reservedAgg = await Inventory.aggregate([
+        {
+            $match: {
+                productId: id,
+                isDeleted: { $ne: true },
+                reservedStock: { $gt: 0 }
+            }
+        },
+        { $group: { _id: null, reserved: { $sum: "$reservedStock" } } }
+    ]);
+    if ((Number(reservedAgg[0]?.reserved) || 0) > 0) {
         throw new AppError(
             "Cannot clear stock while reserved stock exists for this product.",
             400
@@ -408,7 +536,7 @@ const clearProductStock = async (productId, actorId = null) => {
         row.currentStock = 0;
         row.availableStock = 0;
         row.inventoryValue = 0;
-        row.stockStatus = "Out Of Stock";
+        applyStockStatus(row);
         await row.save();
 
         clearedQty += qty;
@@ -436,6 +564,13 @@ const clearProductStock = async (productId, actorId = null) => {
         }
     );
 
+    // Also zero any leftover catalog opening qty on variants so summaries stay clean
+    const ProductVariant = require("../model/productVariant");
+    await ProductVariant.updateMany(
+        { productId: id, isDeleted: { $ne: true }, quantity: { $gt: 0 } },
+        { $set: { quantity: 0 } }
+    );
+
     const productService = require("./productService");
     await productService.refreshStockSummary(id);
 
@@ -456,5 +591,8 @@ module.exports = {
     getStockMovements,
     getImeiStock,
     syncProductStockSummaries,
-    clearProductStock
+    clearProductStock,
+    computeStockStatus,
+    applyStockStatus,
+    getLiveWarehouseStock
 };

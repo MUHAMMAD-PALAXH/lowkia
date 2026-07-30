@@ -1170,6 +1170,8 @@ const deductInventory = async ({
     inv.inventoryValue =
         (Number(inv.averageCost) || unitCost || 0) * inv.currentStock;
     inv.lastMovementDate = new Date();
+    const { applyStockStatus } = require("./inventoryService");
+    applyStockStatus(inv);
     await inv.save({ session });
 
     const movementNumber = await generateStockMovementCode();

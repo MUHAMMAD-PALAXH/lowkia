@@ -336,21 +336,19 @@ const hasOpenPurchaseOrder = async (productId) => {
 };
 
 const beforeProductSoftDelete = async (doc) => {
-    if ((Number(doc.totalStock) || 0) > 0) {
+    const inventoryService = require("./inventoryService");
+    const live = await inventoryService.getLiveWarehouseStock(doc._id);
+
+    if (live.invTotal > 0 || live.availableImei > 0) {
         throw new AppError(
             'Cannot delete product while stock exists. Clear stock first (or use "Resolve & trash").',
             400
         );
     }
 
-    const imeiCount = await ItemTrack.countDocuments({
-        productId: doc._id,
-        status: { $ne: "deleted" }
-    });
-
-    if (imeiCount > 0) {
+    if (live.activeImei > 0) {
         throw new AppError(
-            `Cannot delete product while ${imeiCount} IMEI record(s) exist. Clear stock / IMEIs first (or use "Resolve & trash").`,
+            `Cannot delete product while ${live.activeImei} IMEI record(s) exist. Clear stock / IMEIs first (or use "Resolve & trash").`,
             400
         );
     }
@@ -373,21 +371,23 @@ const getProductDeleteCheck = async (id) => {
     );
     if (!product) throw new AppError("Product not found.", 404);
 
-    const imeiCount = await ItemTrack.countDocuments({
-        productId: product._id,
-        status: { $ne: "deleted" }
-    });
-    const blockedImeiCount = await ItemTrack.countDocuments({
-        productId: product._id,
-        status: { $in: ["sold", "repairing", "in-transit"] }
-    });
+    const inventoryService = require("./inventoryService");
+    const live = await inventoryService.getLiveWarehouseStock(product._id);
     const openPurchaseOrders = await getBlockingPurchaseOrders(product._id);
 
+    // Prefer live warehouse qty so stale product.totalStock cannot hide stock.
     const stock = {
-        total: Number(product.totalStock) || 0,
-        available: Number(product.availableStock) || 0,
-        reserved: Number(product.reservedStock) || 0
+        total: live.invTotal > 0 || live.availableImei > 0
+            ? Math.max(live.invTotal, live.availableImei)
+            : Number(product.totalStock) || 0,
+        available: live.invAvailable > 0 || live.availableImei > 0
+            ? Math.max(live.invAvailable, live.availableImei)
+            : Number(product.availableStock) || 0,
+        reserved: live.invReserved
     };
+
+    const imeiCount = live.activeImei;
+    const blockedImeiCount = live.blockedImei;
 
     const canAutoResolvePos =
         openPurchaseOrders.length > 0 &&
@@ -395,17 +395,19 @@ const getProductDeleteCheck = async (id) => {
     const canUnlinkPos =
         openPurchaseOrders.length === 0 ||
         openPurchaseOrders.every((o) => o.canAutoResolve || o.canUnlink);
+    const hasClearableStock =
+        live.invTotal > 0 || live.availableImei > 0;
     const canClearStock =
-        stock.total > 0 &&
+        hasClearableStock &&
         stock.reserved <= 0 &&
         blockedImeiCount <= 0;
     const canDelete =
-        stock.total <= 0 &&
+        live.invTotal <= 0 &&
         imeiCount <= 0 &&
         openPurchaseOrders.length === 0;
     const canForceTrash =
         canDelete ||
-        ((stock.total <= 0 || canClearStock) &&
+        ((!hasClearableStock || canClearStock) &&
             canUnlinkPos &&
             blockedImeiCount <= 0);
 
@@ -473,45 +475,24 @@ const unlinkProductFromPurchaseOrders = async (productId, actorId = null) => {
 const prepareAndTrashProduct = async (id, actorId = null) => {
     const product = await findProductOrFail(id);
     const steps = [];
+    const inventoryService = require("./inventoryService");
+    const live = await inventoryService.getLiveWarehouseStock(product._id);
 
-    // 1) Clear warehouse / available IMEI stock when possible
-    const stockTotal = Number(product.totalStock) || 0;
-    const reserved = Number(product.reservedStock) || 0;
-    const blockedImeiCount = await ItemTrack.countDocuments({
-        productId: product._id,
-        status: { $in: ["sold", "repairing", "in-transit"] }
-    });
-
-    if (stockTotal > 0 || reserved > 0) {
-        if (reserved > 0) {
-            throw new AppError(
-                "Cannot clear reserved stock automatically. Unreserve first, then retry.",
-                400
-            );
-        }
-        if (blockedImeiCount > 0) {
-            throw new AppError(
-                `Cannot clear stock: ${blockedImeiCount} IMEI(s) are sold, repairing, or in-transit.`,
-                400
-            );
-        }
-        const inventoryService = require("./inventoryService");
-        const cleared = await inventoryService.clearProductStock(
-            product._id,
-            actorId
+    // 1) Clear warehouse / available IMEI stock when possible (live qty, not summary)
+    if (live.invReserved > 0) {
+        throw new AppError(
+            "Cannot clear reserved stock automatically. Unreserve first, then retry.",
+            400
         );
-        steps.push({
-            action: "clearStock",
-            clearedQty: cleared.clearedQty || 0,
-            clearedImeis: cleared.clearedImeis || 0
-        });
-    } else if (
-        (await ItemTrack.countDocuments({
-            productId: product._id,
-            status: "available"
-        })) > 0
-    ) {
-        const inventoryService = require("./inventoryService");
+    }
+    if (live.blockedImei > 0) {
+        throw new AppError(
+            `Cannot clear stock: ${live.blockedImei} IMEI(s) are sold, repairing, or in-transit.`,
+            400
+        );
+    }
+
+    if (live.invTotal > 0 || live.availableImei > 0) {
         const cleared = await inventoryService.clearProductStock(
             product._id,
             actorId

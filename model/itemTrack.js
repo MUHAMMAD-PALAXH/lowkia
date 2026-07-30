@@ -30,7 +30,8 @@ const itemTrackSchema = new mongoose.Schema({
   },
   status: { 
     type: String, 
-    enum: ['available', 'in-transit', 'sold', 'repairing'], 
+    // "deleted" = cleared with product stock / trash prep (not physically sold)
+    enum: ['available', 'in-transit', 'sold', 'repairing', 'deleted'], 
     default: 'available',
     index: true
   },

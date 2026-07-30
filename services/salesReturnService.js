@@ -391,6 +391,8 @@ const receiveReturn = async (id, actorId = null) => {
             inv.inventoryValue =
                 (Number(inv.averageCost) || line.unitPrice || 0) *
                 inv.currentStock;
+            const { applyStockStatus } = require("./inventoryService");
+            applyStockStatus(inv);
             await inv.save({ session });
 
             const movementNumber = await generateStockMovementCode();

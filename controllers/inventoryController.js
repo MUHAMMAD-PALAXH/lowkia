@@ -8,7 +8,7 @@ exports.getInventoryList = asyncHandler(async (req, res) => {
 });
 
 exports.getInventoryStats = asyncHandler(async (req, res) => {
-    const data = await inventoryService.getInventoryStats();
+    const data = await inventoryService.getInventoryStats(req.query);
     return success(res, "Inventory stats retrieved.", data);
 });
 
