@@ -422,6 +422,9 @@ const getSupplierDetails = async (id, query = {}) => {
     );
 
     const Product = require("../model/product");
+    const ProductVariant = require("../model/productVariant");
+    const Inventory = require("../model/inventory");
+    const ItemTrack = require("../model/itemTrack");
     const PurchaseOrder = require("../model/purchaseOrder");
     const GRN = require("../model/grn");
 
@@ -821,6 +824,121 @@ const getSupplierDetails = async (id, query = {}) => {
     const agg = poAgg[0] || {};
     const gAgg = grnAgg[0] || {};
 
+    // Real ProductVariant docs + live Inventory/IMEI (same source as product details)
+    const linkedProductIds = linkedProducts.map((p) => p._id);
+    const variantDocs = linkedProductIds.length
+        ? await ProductVariant.find({
+              productId: { $in: linkedProductIds },
+              isDeleted: { $ne: true }
+          })
+              .populate("attributes.variantTypeId", "type name")
+              .populate("attributes.variantId", "name")
+              .lean()
+        : [];
+
+    const [invRows, imeiRows, productInvRows, productImeiRows] =
+        linkedProductIds.length
+            ? await Promise.all([
+                  Inventory.aggregate([
+                      {
+                          $match: {
+                              productId: { $in: linkedProductIds },
+                              isDeleted: { $ne: true }
+                          }
+                      },
+                      {
+                          $group: {
+                              _id: {
+                                  productId: "$productId",
+                                  variantId: "$productVariantId"
+                              },
+                              currentStock: { $sum: "$currentStock" },
+                              availableStock: { $sum: "$availableStock" },
+                              reservedStock: { $sum: "$reservedStock" }
+                          }
+                      }
+                  ]),
+                  ItemTrack.aggregate([
+                      {
+                          $match: {
+                              productId: { $in: linkedProductIds },
+                              status: "available"
+                          }
+                      },
+                      {
+                          $group: {
+                              _id: {
+                                  productId: "$productId",
+                                  variantId: "$variantId"
+                              },
+                              count: { $sum: 1 }
+                          }
+                      }
+                  ]),
+                  Inventory.aggregate([
+                      {
+                          $match: {
+                              productId: { $in: linkedProductIds },
+                              isDeleted: { $ne: true }
+                          }
+                      },
+                      {
+                          $group: {
+                              _id: "$productId",
+                              currentStock: { $sum: "$currentStock" },
+                              availableStock: { $sum: "$availableStock" },
+                              reservedStock: { $sum: "$reservedStock" }
+                          }
+                      }
+                  ]),
+                  ItemTrack.aggregate([
+                      {
+                          $match: {
+                              productId: { $in: linkedProductIds },
+                              status: "available"
+                          }
+                      },
+                      {
+                          $group: {
+                              _id: "$productId",
+                              count: { $sum: 1 }
+                          }
+                      }
+                  ])
+              ])
+            : [[], [], [], []];
+
+    const invKey = (productId, variantId) =>
+        `${String(productId)}::${variantId ? String(variantId) : "null"}`;
+
+    const invMap = new Map(
+        invRows.map((r) => [invKey(r._id.productId, r._id.variantId), r])
+    );
+    const imeiMap = new Map(
+        imeiRows.map((r) => [
+            invKey(r._id.productId, r._id.variantId),
+            r.count || 0
+        ])
+    );
+    const productInvMap = new Map(
+        productInvRows.map((r) => [String(r._id), r])
+    );
+    const productImeiMap = new Map(
+        productImeiRows.map((r) => [String(r._id), r.count || 0])
+    );
+
+    const variantsByProduct = new Map();
+    for (const v of variantDocs) {
+        const pid = String(v.productId);
+        if (!variantsByProduct.has(pid)) variantsByProduct.set(pid, []);
+        variantsByProduct.get(pid).push(v);
+    }
+
+    const isImeiTracking = (trackingType) => {
+        const tType = String(trackingType || "").toUpperCase();
+        return tType.includes("IMEI") && !tType.includes("NON");
+    };
+
     const products = linkedProducts.map((p) => {
         const link = (p.suppliers || []).find(
             (row) => String(row.supplierId) === String(supplierId)
@@ -828,27 +946,53 @@ const getSupplierDetails = async (id, query = {}) => {
         const isPrimary =
             !!link?.isPrimary ||
             String(p.primarySupplierId || "") === String(supplierId);
-        const variants = (p.productVariants || []).map((v) => {
+        const pid = String(p._id);
+        const isImei = isImeiTracking(p.trackingType);
+        const rawVariants = variantsByProduct.get(pid) || [];
+        const productInv = productInvMap.get(pid) || {
+            currentStock: 0,
+            availableStock: 0,
+            reservedStock: 0
+        };
+        const totalImeiCount = productImeiMap.get(pid) || 0;
+
+        const variants = rawVariants.map((v) => {
+            const vid = v._id ? String(v._id) : null;
+            const key = invKey(pid, vid);
+            const inv = invMap.get(key) || {
+                currentStock: 0,
+                availableStock: 0,
+                reservedStock: 0
+            };
+            const imeiCount = imeiMap.get(key) || 0;
+            const catalogQty = Number(v.quantity) || 0;
+            const fromInv =
+                Number(inv.availableStock) || Number(inv.currentStock) || 0;
+            const liveQty = isImei
+                ? imeiCount
+                : fromInv > 0
+                  ? fromInv
+                  : catalogQty;
+            const stockCurrent = Number(inv.currentStock) || catalogQty || 0;
+            const stockAvailable = fromInv > 0 ? fromInv : catalogQty;
+            const stockReserved = Number(inv.reservedStock) || 0;
+
             const labels = [];
             for (const attr of v.attributes || []) {
-                const type =
+                const typeName =
                     (attr.variantTypeId &&
                         (attr.variantTypeId.name ||
-                            attr.variantTypeId.type ||
-                            attr.variantTypeId)) ||
+                            attr.variantTypeId.type)) ||
                     "";
-                const value =
-                    (attr.variantId &&
-                        (attr.variantId.name ||
-                            attr.variantId.value ||
-                            attr.variantId)) ||
-                    "";
-                const label = [type, value]
+                const valueName =
+                    (attr.variantId && attr.variantId.name) || "";
+                const label = [typeName, valueName]
                     .map((x) => String(x || "").trim())
                     .filter(Boolean)
                     .join(": ");
                 if (label) labels.push(label);
             }
+
             return {
                 id: v._id,
                 sku: v.sku || "",
@@ -861,13 +1005,63 @@ const getSupplierDetails = async (id, query = {}) => {
                 sellingPrice: Number(v.sellingPrice || v.price) || 0,
                 wholesalePrice: Number(v.wholesalePrice) || 0,
                 offerPrice: Number(v.offerPrice) || 0,
-                stockCurrent: Number(v.stockCurrent) || 0,
-                stockAvailable: Number(v.stockAvailable || v.quantity) || 0,
-                stockReserved: Number(v.stockReserved) || 0,
+                stockCurrent,
+                stockAvailable: isImei ? imeiCount : stockAvailable,
+                stockReserved,
+                quantity: liveQty,
+                imeiAvailableCount: imeiCount,
                 status: v.status || "",
                 isDefaultVariant: !!v.isDefaultVariant
             };
         });
+
+        const invAvailable = Number(productInv.availableStock) || 0;
+        const invCurrent = Number(productInv.currentStock) || 0;
+        const invReserved = Number(productInv.reservedStock) || 0;
+
+        // Mirror getLiveProductStock: IMEI uses count; else inventory, else catalog
+        let liveAvailable;
+        let liveTotal;
+        let liveReserved = invReserved || Number(p.reservedStock) || 0;
+        if (isImei) {
+            liveAvailable = totalImeiCount;
+            liveTotal = totalImeiCount;
+        } else if (invCurrent > 0 || invAvailable > 0) {
+            liveAvailable = invAvailable;
+            liveTotal = invCurrent;
+        } else if (variants.length) {
+            liveAvailable = variants.reduce(
+                (s, v) => s + (Number(v.stockAvailable) || 0),
+                0
+            );
+            liveTotal = variants.reduce(
+                (s, v) => s + (Number(v.stockCurrent) || 0),
+                0
+            );
+        } else {
+            liveAvailable = Number(p.availableStock) || 0;
+            liveTotal = Number(p.totalStock) || 0;
+        }
+
+        const defaultVariant =
+            variants.find((v) => v.isDefaultVariant) || variants[0] || null;
+        const purchasePrice =
+            Number(p.purchasePrice) ||
+            Number(defaultVariant?.purchasePrice) ||
+            0;
+        const costPrice =
+            Number(p.costPrice) || Number(defaultVariant?.costPrice) || 0;
+        const sellingPrice =
+            Number(p.sellingPrice) ||
+            Number(defaultVariant?.sellingPrice) ||
+            0;
+        const wholesalePrice =
+            Number(p.wholesalePrice) ||
+            Number(defaultVariant?.wholesalePrice) ||
+            0;
+        const offerPrice =
+            Number(p.offerPrice) || Number(defaultVariant?.offerPrice) || 0;
+
         return {
             productId: p._id,
             productCode: p.productCode || "",
@@ -883,19 +1077,20 @@ const getSupplierDetails = async (id, query = {}) => {
             lastPurchasePrice:
                 Number(link?.lastPurchasePrice) ||
                 Number(p.lastPurchasePrice) ||
-                Number(p.purchasePrice) ||
+                purchasePrice ||
                 0,
-            purchasePrice: Number(p.purchasePrice) || 0,
-            costPrice: Number(p.costPrice) || 0,
-            sellingPrice: Number(p.sellingPrice) || 0,
-            wholesalePrice: Number(p.wholesalePrice) || 0,
+            purchasePrice,
+            costPrice,
+            sellingPrice,
+            wholesalePrice,
             minimumSellingPrice: Number(p.minimumSellingPrice) || 0,
             maximumSellingPrice: Number(p.maximumSellingPrice) || 0,
-            offerPrice: Number(p.offerPrice) || 0,
+            offerPrice,
             leadTimeDays: Number(link?.leadTimeDays) || 0,
-            availableStock: Number(p.availableStock) || 0,
-            totalStock: Number(p.totalStock) || 0,
-            reservedStock: Number(p.reservedStock) || 0,
+            availableStock: liveAvailable,
+            totalStock: liveTotal,
+            reservedStock: liveReserved,
+            totalImeiCount,
             variantCount: variants.length,
             variants
         };
