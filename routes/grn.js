@@ -29,6 +29,8 @@ router.post("/bulk-permanent-delete", grnController.bulkPermanentDeleteGrns);
 
 router.get("/", listValidator, validate, grnController.getGrns);
 
+router.get("/:id/delete-check", idValidator, validate, grnController.getGrnDeleteCheck);
+
 router.get("/:id", idValidator, validate, grnController.getGrnById);
 
 router.post(

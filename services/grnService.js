@@ -39,9 +39,16 @@ const trash = createTrashOps(GRN, {
     statusField: "status",
     restoreStatus: "Draft",
     beforeSoftDelete: async (doc) => {
-        if (doc.status !== "Draft" || doc.inventoryUpdated) {
+        if (doc.inventoryUpdated || doc.status === "Completed") {
             throw new AppError(
-                "Only Draft GRNs can move to trash. Completed GRNs already updated inventory and cannot be trashed.",
+                "Completed GRNs already updated inventory and cannot be trashed.",
+                400
+            );
+        }
+        // Align with PO: Draft and Cancelled may enter trash.
+        if (!["Draft", "Cancelled"].includes(doc.status)) {
+            throw new AppError(
+                `Only Draft or Cancelled GRNs can move to trash (current: ${doc.status}). Cancel Pending Approval first, or complete/reject as needed.`,
                 400
             );
         }
@@ -232,9 +239,17 @@ const validateDraftLines = (grn) => {
                 .map(normalizeImei)
                 .filter(Boolean);
             item.imeis = [...new Set(imeis)];
-            if (received > 0 && item.imeis.length !== received) {
+            const accepted = Math.max(received - damaged, 0);
+            // Damaged units never enter ItemTrack — IMEI count must match accepted.
+            if (accepted > 0 && item.imeis.length !== accepted) {
                 throw new AppError(
-                    `IMEI count must equal received qty for ${item.productName} (${item.imeis.length}/${received}).`,
+                    `IMEI count must equal accepted qty (received − damaged) for ${item.productName} (${item.imeis.length}/${accepted}).`,
+                    400
+                );
+            }
+            if (accepted <= 0 && item.imeis.length > 0) {
+                throw new AppError(
+                    `Remove IMEIs for ${item.productName} when accepted qty is 0.`,
                     400
                 );
             }
@@ -248,7 +263,10 @@ const validateDraftLines = (grn) => {
 
 const assertImeiUnique = async (imeis, session) => {
     if (!imeis.length) return;
-    const existing = await ItemTrack.find({ imei: { $in: imeis } })
+    const existing = await ItemTrack.find({
+        imei: { $in: imeis },
+        status: { $ne: "deleted" }
+    })
         .session(session)
         .select("imei")
         .lean();
@@ -275,10 +293,27 @@ const upsertInventory = async ({
     const filter = {
         warehouseId,
         productId,
-        productVariantId: productVariantId || null
+        productVariantId: productVariantId || null,
+        isDeleted: { $ne: true }
     };
 
     let inv = await Inventory.findOne(filter).session(session);
+    if (!inv) {
+        // Prefer reactivating a soft-deleted row over unique-index clash
+        const soft = await Inventory.findOne({
+            warehouseId,
+            productId,
+            productVariantId: productVariantId || null,
+            isDeleted: true
+        }).session(session);
+        if (soft) {
+            soft.isDeleted = false;
+            soft.deletedAt = null;
+            soft.deletedBy = null;
+            soft.status = "Active";
+            inv = soft;
+        }
+    }
     if (!inv) {
         inv = new Inventory({
             warehouseId,
@@ -829,23 +864,65 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     }).sort({ createdAt: -1 });
 
     if (existingOpen) {
-        // Normalize stale line flags on reused drafts
-        let dirty = false;
+        // Refresh pending caps / missing lines from current PO state
+        const freshLines = await buildLinesFromPo(po);
+        const byPoItem = new Map();
         for (const line of existingOpen.items || []) {
-            const tt = resolveTrackingType(line.trackingType);
-            if (line.trackingType !== tt) {
-                line.trackingType = tt;
-                dirty = true;
-            }
-            if (!line.productId) continue;
-            const product = await loadProductMeta(line.productId);
-            if (!product) continue;
-            if (!line.barcode && product.barcode) {
-                line.barcode = product.barcode;
-                dirty = true;
+            const key = String(line.purchaseOrderItemId || "");
+            if (key) byPoItem.set(key, line);
+        }
+
+        const merged = [];
+        for (const fresh of freshLines) {
+            const key = String(fresh.purchaseOrderItemId || "");
+            const prev = key ? byPoItem.get(key) : null;
+            if (prev) {
+                const received = Math.max(Number(prev.receivedQuantity) || 0, 0);
+                const damaged = Math.max(Number(prev.damagedQuantity) || 0, 0);
+                const ordered = Math.max(Number(fresh.orderedQuantity) || 0, 0);
+                // Keep work-in-progress receive data; refresh ordered cap from PO.
+                prev.orderedQuantity = Math.max(ordered, received);
+                prev.productId = fresh.productId || prev.productId;
+                prev.productVariantId =
+                    fresh.productVariantId || prev.productVariantId;
+                prev.trackingType = fresh.trackingType || prev.trackingType;
+                prev.sku = fresh.sku || prev.sku;
+                prev.barcode = fresh.barcode || prev.barcode;
+                prev.productName = fresh.productName || prev.productName;
+                prev.variantLabel = fresh.variantLabel || prev.variantLabel;
+                prev.purchasePrice =
+                    Number(fresh.purchasePrice) || Number(prev.purchasePrice) || 0;
+                if (damaged > received) prev.damagedQuantity = received;
+                if (
+                    prev.trackingType === "IMEI" &&
+                    Array.isArray(prev.imeis) &&
+                    prev.imeis.length
+                ) {
+                    const accepted = Math.max(
+                        received - Math.max(Number(prev.damagedQuantity) || 0, 0),
+                        0
+                    );
+                    if (prev.imeis.length > accepted) {
+                        prev.imeis = prev.imeis.slice(0, accepted);
+                    }
+                }
+                merged.push(prev);
+                byPoItem.delete(key);
+            } else {
+                merged.push(fresh);
             }
         }
-        if (dirty) await existingOpen.save();
+
+        // Keep lines that still have received qty even if PO pending is gone
+        for (const leftover of byPoItem.values()) {
+            if ((Number(leftover.receivedQuantity) || 0) > 0) {
+                merged.push(leftover);
+            }
+        }
+
+        existingOpen.items = merged;
+        recalculateGrn(existingOpen);
+        await existingOpen.save();
         const reused = await populateGrn(GRN.findById(existingOpen._id));
         const plain = enrichGrnDoc(reused);
         plain.reusedExisting = true;
@@ -937,12 +1014,52 @@ const getGrns = async (query = {}) => {
     };
 };
 
-const getGrnById = async (id) => {
+const getGrnById = async (id, query = {}) => {
+    const trashMode = isTrashQuery(query);
+    const filter = trashMode
+        ? { _id: id, isDeleted: true }
+        : { _id: id, ...NOT_DELETED };
+    const grn = await populateGrn(GRN.findOne(filter));
+    if (!grn) throw new AppError("GRN not found.", 404);
+    return enrichGrnDoc(grn);
+};
+
+const getGrnDeleteCheck = async (id) => {
     const grn = await populateGrn(
         GRN.findOne({ _id: id, ...NOT_DELETED })
     );
     if (!grn) throw new AppError("GRN not found.", 404);
-    return enrichGrnDoc(grn);
+
+    const canDelete =
+        !grn.inventoryUpdated &&
+        ["Draft", "Cancelled"].includes(grn.status);
+
+    let reason = "";
+    if (grn.inventoryUpdated || grn.status === "Completed") {
+        reason =
+            "This GRN already updated inventory. It cannot be trashed. Reverse stock via sales return or adjustment if needed.";
+    } else if (grn.status === "Pending Approval") {
+        reason =
+            "Pending Approval GRNs cannot be trashed. Reject (returns to Draft) or Cancel first, then trash.";
+    } else if (!canDelete) {
+        reason = `Status "${grn.status}" cannot move to trash.`;
+    }
+
+    return {
+        canDelete,
+        status: grn.status,
+        inventoryUpdated: !!grn.inventoryUpdated,
+        grnNumber: grn.grnNumber || "",
+        purchaseOrderId: grn.purchaseOrderId?._id || grn.purchaseOrderId || null,
+        purchaseOrderNo:
+            grn.purchaseOrderId?.purchaseOrderNo ||
+            grn.purchaseOrderNo ||
+            "",
+        reason,
+        how: canDelete
+            ? "Safe to move to trash. You can restore later from GRN Trash."
+            : reason
+    };
 };
 
 const getGrnStats = async () => {
@@ -1045,7 +1162,9 @@ const updateGrn = async (id, payload = {}, actorId = null) => {
                     ...new Set(patch.imeis.map(normalizeImei).filter(Boolean))
                 ];
                 if (line.trackingType === "IMEI" && line.imeis.length) {
-                    line.receivedQuantity = line.imeis.length;
+                    const damaged = Math.max(Number(line.damagedQuantity) || 0, 0);
+                    // IMEIs represent accepted units; received = accepted + damaged.
+                    line.receivedQuantity = line.imeis.length + damaged;
                 }
             }
             if (patch.barcode !== undefined) {
@@ -1123,7 +1242,12 @@ const scanImei = async (id, payload = {}, actorId = null) => {
         );
     }
 
-    const exists = await ItemTrack.findOne({ imei }).select("_id").lean();
+    const exists = await ItemTrack.findOne({
+        imei,
+        status: { $ne: "deleted" }
+    })
+        .select("_id")
+        .lean();
     if (exists) throw new AppError(`Duplicate IMEI: ${imei}`, 400);
 
     const onThis = (grn.items || []).some((i) =>
@@ -1163,15 +1287,17 @@ const scanImei = async (id, payload = {}, actorId = null) => {
         );
     }
 
-    if ((line.imeis || []).length >= Number(line.orderedQuantity || 0)) {
+    const damaged = Math.max(Number(line.damagedQuantity) || 0, 0);
+    const maxAccepted = Math.max(Number(line.orderedQuantity) || 0, 0);
+    if ((line.imeis || []).length >= maxAccepted) {
         throw new AppError(
-            `Cannot scan more than qty (${line.orderedQuantity}) for this line.`,
+            `Cannot scan more accepted IMEIs than qty (${maxAccepted}) for this line.`,
             400
         );
     }
 
     line.imeis = [...(line.imeis || []), imei];
-    line.receivedQuantity = line.imeis.length;
+    line.receivedQuantity = line.imeis.length + damaged;
     recalculateGrn(grn);
     grn.updatedBy = toObjectId(actorId) || grn.updatedBy;
     await grn.save();
@@ -1241,7 +1367,8 @@ const bulkAddImeis = async (id, payload = {}, actorId = null) => {
     }
 
     line.imeis = merged;
-    line.receivedQuantity = merged.length;
+    const damaged = Math.max(Number(line.damagedQuantity) || 0, 0);
+    line.receivedQuantity = merged.length + damaged;
     recalculateGrn(grn);
     grn.updatedBy = toObjectId(actorId) || grn.updatedBy;
     await grn.save();
@@ -1257,7 +1384,8 @@ const removeImei = async (id, payload = {}, actorId = null) => {
     const line = findGrnLine(grn, payload);
     if (!line) throw new AppError("GRN line not found.", 404);
     line.imeis = (line.imeis || []).filter((e) => normalizeImei(e) !== imei);
-    line.receivedQuantity = line.imeis.length;
+    const damaged = Math.max(Number(line.damagedQuantity) || 0, 0);
+    line.receivedQuantity = line.imeis.length + damaged;
     recalculateGrn(grn);
     grn.updatedBy = toObjectId(actorId) || grn.updatedBy;
     await grn.save();
@@ -1357,15 +1485,13 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
 
         await session.commitTransaction();
 
-        // Refresh product stock summaries outside txn (must not be silent forever)
+        // Refresh product stock summaries outside txn — never fail the GRN response.
         const refreshErrors = [];
         for (const pid of productIds) {
             try {
                 await productService.refreshStockSummary(pid);
             } catch (err) {
-                refreshErrors.push(
-                    `${pid}: ${err?.message || err}`
-                );
+                refreshErrors.push(`${pid}: ${err?.message || err}`);
                 console.error(
                     "[GRN] refreshStockSummary failed:",
                     pid,
@@ -1373,17 +1499,18 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
                 );
             }
         }
-        if (refreshErrors.length && productIds.length === refreshErrors.length) {
-            // Inventory already committed — surface a clear follow-up error
-            throw new AppError(
-                `GRN completed and inventory updated, but product stock summary failed to refresh: ${refreshErrors.join("; ")}. Open product and use Refresh Stock, or retry refresh.`,
-                500
-            );
-        }
 
-        return populateGrn(GRN.findById(grn._id));
+        const populated = await populateGrn(GRN.findById(grn._id));
+        const plain = enrichGrnDoc(populated);
+        plain.stockSummaryRefresh = {
+            ok: refreshErrors.length === 0,
+            errors: refreshErrors
+        };
+        return plain;
     } catch (err) {
-        await session.abortTransaction();
+        if (session.inTransaction()) {
+            await session.abortTransaction();
+        }
         throw err;
     } finally {
         session.endSession();
@@ -1419,6 +1546,7 @@ module.exports = {
     createGrnFromPurchaseOrder,
     getGrns,
     getGrnById,
+    getGrnDeleteCheck,
     getGrnStats,
     updateGrn,
     scanImei,

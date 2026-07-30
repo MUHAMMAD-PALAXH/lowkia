@@ -27,8 +27,13 @@ exports.getGrns = asyncHandler(async (req, res) => {
 });
 
 exports.getGrnById = asyncHandler(async (req, res) => {
-    const grn = await grnService.getGrnById(req.params.id);
+    const grn = await grnService.getGrnById(req.params.id, req.query);
     return success(res, "GRN retrieved successfully.", grn);
+});
+
+exports.getGrnDeleteCheck = asyncHandler(async (req, res) => {
+    const data = await grnService.getGrnDeleteCheck(req.params.id);
+    return success(res, "GRN delete check retrieved.", data);
 });
 
 exports.createGrnFromPurchaseOrder = asyncHandler(async (req, res) => {
