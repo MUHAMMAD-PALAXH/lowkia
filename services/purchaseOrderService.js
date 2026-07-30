@@ -807,7 +807,10 @@ const markOrdered = async (id, actorId = null, payload = {}) => {
         po.supplierResponseNote = "";
         po.supplierExpectedDeliveryDate = null;
         po.supplierDeliveryType = "";
+        po.supplierPaymentType = "";
+        po.supplierPaymentMethod = "";
         po.supplierPartialSchedule = [];
+        po.supplierPaymentSchedule = [];
     } else {
         // No supplier selected — classic Ordered path (no accept step)
         po.status = "Ordered";
@@ -839,9 +842,37 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
     const deliveryType = String(payload.deliveryType || "").trim();
     if (!["Full", "Partial"].includes(deliveryType)) {
         throw new AppError(
-            "deliveryType must be Full or Partial when accepting.",
+            "deliveryType must be Full (complete) or Partial when accepting.",
             400
         );
+    }
+
+    const paymentType = String(payload.paymentType || "").trim();
+    const allowedPaymentTypes = [
+        "Advance Full",
+        "Advance Partial",
+        "Cash on Delivery",
+        "After Delivery"
+    ];
+    if (!allowedPaymentTypes.includes(paymentType)) {
+        throw new AppError(
+            "paymentType must be Advance Full, Advance Partial, Cash on Delivery, or After Delivery.",
+            400
+        );
+    }
+
+    const paymentMethod = String(payload.paymentMethod || "").trim();
+    const allowedMethods = [
+        "Cash",
+        "Bank",
+        "Mobile Banking",
+        "Cheque",
+        "Card",
+        "Other",
+        "Cash on Delivery"
+    ];
+    if (paymentMethod && !allowedMethods.includes(paymentMethod)) {
+        throw new AppError("Invalid paymentMethod.", 400);
     }
 
     const expectedRaw =
@@ -854,44 +885,194 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
         );
     }
 
+    const poLines = po.items || [];
+    const mapAllocation = (row, idx) => {
+        const quantity = Number(row.quantity) || 0;
+        if (quantity < 0) {
+            throw new AppError(
+                `lineAllocations[${idx}].quantity cannot be negative.`,
+                400
+            );
+        }
+        return {
+            productId: toObjectId(row.productId) || null,
+            productVariantId: toObjectId(row.productVariantId) || null,
+            productName: String(row.productName || "").trim(),
+            variantLabel: String(row.variantLabel || "").trim(),
+            sku: String(row.sku || "").trim(),
+            quantity
+        };
+    };
+
     let partialSchedule = [];
     if (deliveryType === "Partial") {
         const raw = Array.isArray(payload.partialSchedule)
             ? payload.partialSchedule
-            : [];
+            : Array.isArray(payload.deliverySchedule)
+              ? payload.deliverySchedule
+              : [];
         if (!raw.length) {
             throw new AppError(
-                "partialSchedule is required for Partial delivery (amount + days).",
+                "partialSchedule is required for Partial delivery (phases with day range + line qty).",
                 400
             );
         }
         partialSchedule = raw.map((row, idx) => {
+            const daysFrom = Math.max(0, parseInt(row.daysFrom ?? row.days, 10) || 0);
+            const daysTo = Math.max(
+                daysFrom,
+                parseInt(row.daysTo ?? row.daysFrom ?? row.days, 10) || daysFrom
+            );
+            const amountType =
+                String(row.amountType || "Fixed") === "Percentage"
+                    ? "Percentage"
+                    : "Fixed";
             const amount = Number(row.amount) || 0;
-            const days = Math.max(0, parseInt(row.days, 10) || 0);
-            if (amount <= 0) {
+            if (amount < 0) {
                 throw new AppError(
-                    `partialSchedule[${idx}].amount must be greater than 0.`,
+                    `partialSchedule[${idx}].amount cannot be negative.`,
                     400
                 );
             }
             const dueDate = new Date(expectedDeliveryDate);
-            dueDate.setDate(dueDate.getDate() + days);
+            dueDate.setDate(dueDate.getDate() + daysTo);
+            const allocations = Array.isArray(row.lineAllocations)
+                ? row.lineAllocations.map(mapAllocation)
+                : [];
+            if (!allocations.length) {
+                throw new AppError(
+                    `partialSchedule[${idx}] must include lineAllocations (product/variant qty).`,
+                    400
+                );
+            }
             return {
+                phase: Number(row.phase) || idx + 1,
                 amount,
-                days,
+                amountType,
+                daysFrom,
+                daysTo,
+                days: daysTo,
                 dueDate,
-                note: String(row.note || "").trim()
+                note: String(row.note || "").trim(),
+                lineAllocations: allocations
             };
         });
+    } else {
+        // Full delivery — one phase with all ordered lines
+        partialSchedule = [
+            {
+                phase: 1,
+                amount: Number(po.grandTotal) || 0,
+                amountType: "Fixed",
+                daysFrom: 0,
+                daysTo: 0,
+                days: 0,
+                dueDate: expectedDeliveryDate,
+                note: "Complete delivery",
+                lineAllocations: poLines.map((i) => ({
+                    productId: i.productId || null,
+                    productVariantId: i.productVariantId || null,
+                    productName: i.productName || "",
+                    variantLabel: i.variantLabel || "",
+                    sku: i.sku || "",
+                    quantity: Number(i.quantity) || 0
+                }))
+            }
+        ];
+    }
+
+    let paymentSchedule = [];
+    const needsPaymentPhases =
+        paymentType === "Advance Partial" || paymentType === "Advance Full";
+    if (needsPaymentPhases) {
+        const rawPay = Array.isArray(payload.paymentSchedule)
+            ? payload.paymentSchedule
+            : [];
+        if (paymentType === "Advance Partial" && !rawPay.length) {
+            throw new AppError(
+                "paymentSchedule is required for Advance Partial (phase amounts).",
+                400
+            );
+        }
+        if (paymentType === "Advance Full" && !rawPay.length) {
+            paymentSchedule = [
+                {
+                    phase: 1,
+                    amount: Number(po.grandTotal) || 0,
+                    amountType: "Fixed",
+                    days: 0,
+                    dueDate: expectedDeliveryDate,
+                    method: paymentMethod || "Bank",
+                    note: "Full advance"
+                }
+            ];
+        } else {
+            paymentSchedule = rawPay.map((row, idx) => {
+                const amountType =
+                    String(row.amountType || "Fixed") === "Percentage"
+                        ? "Percentage"
+                        : "Fixed";
+                const amount = Number(row.amount) || 0;
+                if (amount <= 0) {
+                    throw new AppError(
+                        `paymentSchedule[${idx}].amount must be greater than 0.`,
+                        400
+                    );
+                }
+                const days = Math.max(0, parseInt(row.days, 10) || 0);
+                const dueDate = new Date(expectedDeliveryDate);
+                dueDate.setDate(dueDate.getDate() + days);
+                const method = String(row.method || paymentMethod || "").trim();
+                return {
+                    phase: Number(row.phase) || idx + 1,
+                    amount,
+                    amountType,
+                    days,
+                    dueDate,
+                    method,
+                    note: String(row.note || "").trim()
+                };
+            });
+        }
+    } else if (paymentType === "Cash on Delivery") {
+        paymentSchedule = [
+            {
+                phase: 1,
+                amount: Number(po.grandTotal) || 0,
+                amountType: "Fixed",
+                days: 0,
+                dueDate: expectedDeliveryDate,
+                method: "Cash on Delivery",
+                note: "Pay on delivery"
+            }
+        ];
+    } else if (paymentType === "After Delivery") {
+        paymentSchedule = [
+            {
+                phase: 1,
+                amount: Number(po.grandTotal) || 0,
+                amountType: "Fixed",
+                days: 0,
+                dueDate: expectedDeliveryDate,
+                method: paymentMethod || "Bank",
+                note: "Pay after delivery complete"
+            }
+        ];
     }
 
     po.status = "Supplier Accepted";
     po.supplierAcceptanceStatus = "Accepted";
     po.supplierRespondedAt = new Date();
-    po.supplierResponseNote = String(payload.note || payload.responseNote || "").trim();
+    po.supplierResponseNote = String(
+        payload.note || payload.responseNote || ""
+    ).trim();
     po.supplierExpectedDeliveryDate = expectedDeliveryDate;
     po.supplierDeliveryType = deliveryType;
+    po.supplierPaymentType = paymentType;
+    po.supplierPaymentMethod = paymentMethod ||
+        (paymentType === "Cash on Delivery" ? "Cash on Delivery" : "");
     po.supplierPartialSchedule = partialSchedule;
+    po.supplierPaymentSchedule = paymentSchedule;
     if (!po.expectedDeliveryDate) {
         po.expectedDeliveryDate = expectedDeliveryDate;
     }

@@ -467,8 +467,9 @@ const getSupplierDetails = async (id, query = {}) => {
             isDeleted: { $ne: true }
         })
             .select(
-                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPartialSchedule isFullyReceived totalReceivedAmount"
+                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule isFullyReceived totalReceivedAmount"
             )
+            .populate("items.productId", "name productCode productType trackingType sku barcode")
             .sort({ orderDate: -1, createdAt: -1 })
             .limit(poLimit)
             .lean(),
@@ -1268,23 +1269,56 @@ const getSupplierDetails = async (id, query = {}) => {
             supplierResponseNote: po.supplierResponseNote || "",
             supplierExpectedDeliveryDate: po.supplierExpectedDeliveryDate || null,
             supplierDeliveryType: po.supplierDeliveryType || "",
+            supplierPaymentType: po.supplierPaymentType || "",
+            supplierPaymentMethod: po.supplierPaymentMethod || "",
             supplierPartialSchedule: (po.supplierPartialSchedule || []).map((s) => ({
+                phase: Number(s.phase) || 1,
                 amount: Number(s.amount) || 0,
+                amountType: s.amountType || "Fixed",
+                daysFrom: Number(s.daysFrom ?? s.days) || 0,
+                daysTo: Number(s.daysTo ?? s.days) || 0,
                 days: Number(s.days) || 0,
                 dueDate: s.dueDate || null,
+                note: s.note || "",
+                lineAllocations: (s.lineAllocations || []).map((a) => ({
+                    productId: a.productId || null,
+                    productVariantId: a.productVariantId || null,
+                    productName: a.productName || "",
+                    variantLabel: a.variantLabel || "",
+                    sku: a.sku || "",
+                    quantity: Number(a.quantity) || 0
+                }))
+            })),
+            supplierPaymentSchedule: (po.supplierPaymentSchedule || []).map((s) => ({
+                phase: Number(s.phase) || 1,
+                amount: Number(s.amount) || 0,
+                amountType: s.amountType || "Fixed",
+                days: Number(s.days) || 0,
+                dueDate: s.dueDate || null,
+                method: s.method || "",
                 note: s.note || ""
             })),
-            items: items.map((i) => ({
-                productId: i.productId || null,
-                productName: i.productName || "",
-                sku: i.sku || "",
-                variantLabel: i.variantLabel || "",
-                quantity: Number(i.quantity) || 0,
-                receivedQuantity: Number(i.receivedQuantity) || 0,
-                purchasePrice: Number(i.purchasePrice) || 0,
-                total: Number(i.total) || 0,
-                trackingType: i.trackingType || ""
-            }))
+            items: items.map((i) => {
+                const p = i.productId && typeof i.productId === "object"
+                    ? i.productId
+                    : null;
+                return {
+                    productId: p?._id || i.productId || null,
+                    productVariantId: i.productVariantId || null,
+                    productName: i.productName || p?.name || "",
+                    productCode: p?.productCode || "",
+                    productType: p?.productType || "Simple",
+                    sku: i.sku || p?.sku || "",
+                    barcode: p?.barcode || "",
+                    variantLabel: i.variantLabel || "",
+                    variantAttributes: i.variantAttributes || [],
+                    quantity: Number(i.quantity) || 0,
+                    receivedQuantity: Number(i.receivedQuantity) || 0,
+                    purchasePrice: Number(i.purchasePrice) || 0,
+                    total: Number(i.total) || 0,
+                    trackingType: i.trackingType || p?.trackingType || "Non-IMEI"
+                };
+            })
         };
     });
 

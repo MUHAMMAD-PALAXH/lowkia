@@ -516,11 +516,92 @@ const purchaseOrderSchema = new mongoose.Schema(
             default: ""
         },
 
+        supplierPaymentType: {
+            type: String,
+            enum: [
+                "",
+                "Advance Full",
+                "Advance Partial",
+                "Cash on Delivery",
+                "After Delivery"
+            ],
+            default: ""
+        },
+
+        supplierPaymentMethod: {
+            type: String,
+            enum: [
+                "",
+                "Cash",
+                "Bank",
+                "Mobile Banking",
+                "Cheque",
+                "Card",
+                "Other"
+            ],
+            default: ""
+        },
+
         supplierPartialSchedule: [
             {
+                phase: { type: Number, default: 1, min: 1 },
                 amount: { type: Number, default: 0, min: 0 },
+                amountType: {
+                    type: String,
+                    enum: ["Fixed", "Percentage"],
+                    default: "Fixed"
+                },
+                daysFrom: { type: Number, default: 0, min: 0 },
+                daysTo: { type: Number, default: 0, min: 0 },
                 days: { type: Number, default: 0, min: 0 },
                 dueDate: { type: Date, default: null },
+                note: { type: String, default: "", trim: true },
+                lineAllocations: [
+                    {
+                        productId: {
+                            type: mongoose.Schema.Types.ObjectId,
+                            ref: "Product",
+                            default: null
+                        },
+                        productVariantId: {
+                            type: mongoose.Schema.Types.ObjectId,
+                            ref: "ProductVariant",
+                            default: null
+                        },
+                        productName: { type: String, default: "" },
+                        variantLabel: { type: String, default: "" },
+                        sku: { type: String, default: "" },
+                        quantity: { type: Number, default: 0, min: 0 }
+                    }
+                ]
+            }
+        ],
+
+        supplierPaymentSchedule: [
+            {
+                phase: { type: Number, default: 1, min: 1 },
+                amount: { type: Number, default: 0, min: 0 },
+                amountType: {
+                    type: String,
+                    enum: ["Fixed", "Percentage"],
+                    default: "Fixed"
+                },
+                days: { type: Number, default: 0, min: 0 },
+                dueDate: { type: Date, default: null },
+                method: {
+                    type: String,
+                    enum: [
+                        "",
+                        "Cash",
+                        "Bank",
+                        "Mobile Banking",
+                        "Cheque",
+                        "Card",
+                        "Other",
+                        "Cash on Delivery"
+                    ],
+                    default: ""
+                },
                 note: { type: String, default: "", trim: true }
             }
         ],
