@@ -522,7 +522,9 @@ const purchaseOrderSchema = new mongoose.Schema(
                 "",
                 "Advance Full",
                 "Advance Partial",
+                "Partial",
                 "Cash on Delivery",
+                "Cash on Delivery Partially",
                 "After Delivery"
             ],
             default: ""
@@ -537,7 +539,8 @@ const purchaseOrderSchema = new mongoose.Schema(
                 "Mobile Banking",
                 "Cheque",
                 "Card",
-                "Other"
+                "Other",
+                "Cash on Delivery"
             ],
             default: ""
         },
@@ -554,6 +557,8 @@ const purchaseOrderSchema = new mongoose.Schema(
                 daysFrom: { type: Number, default: 0, min: 0 },
                 daysTo: { type: Number, default: 0, min: 0 },
                 days: { type: Number, default: 0, min: 0 },
+                dateFrom: { type: Date, default: null },
+                dateTo: { type: Date, default: null },
                 dueDate: { type: Date, default: null },
                 note: { type: String, default: "", trim: true },
                 lineAllocations: [

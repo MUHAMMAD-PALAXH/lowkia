@@ -467,7 +467,7 @@ const getSupplierDetails = async (id, query = {}) => {
             isDeleted: { $ne: true }
         })
             .select(
-                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule isFullyReceived totalReceivedAmount"
+                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus subtotal discount discountType tax taxType shippingCost shippingType otherCharges grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule isFullyReceived totalReceivedAmount"
             )
             .populate("items.productId", "name productCode productType trackingType sku barcode")
             .sort({ orderDate: -1, createdAt: -1 })
@@ -1251,6 +1251,14 @@ const getSupplierDetails = async (id, query = {}) => {
             expectedDeliveryDate: po.expectedDeliveryDate || null,
             status: po.status || "",
             paymentStatus: po.paymentStatus || "",
+            subtotal: Number(po.subtotal) || 0,
+            discount: Number(po.discount) || 0,
+            discountType: po.discountType || "Fixed",
+            tax: Number(po.tax) || 0,
+            taxType: po.taxType || "Fixed",
+            shippingCost: Number(po.shippingCost) || 0,
+            shippingType: po.shippingType || "Fixed",
+            otherCharges: Number(po.otherCharges) || 0,
             grandTotal: Number(po.grandTotal) || 0,
             paidAmount: Number(po.paidAmount) || 0,
             dueAmount: Number(po.dueAmount) || 0,
@@ -1278,6 +1286,8 @@ const getSupplierDetails = async (id, query = {}) => {
                 daysFrom: Number(s.daysFrom ?? s.days) || 0,
                 daysTo: Number(s.daysTo ?? s.days) || 0,
                 days: Number(s.days) || 0,
+                dateFrom: s.dateFrom || null,
+                dateTo: s.dateTo || null,
                 dueDate: s.dueDate || null,
                 note: s.note || "",
                 lineAllocations: (s.lineAllocations || []).map((a) => ({
@@ -1315,6 +1325,8 @@ const getSupplierDetails = async (id, query = {}) => {
                     quantity: Number(i.quantity) || 0,
                     receivedQuantity: Number(i.receivedQuantity) || 0,
                     purchasePrice: Number(i.purchasePrice) || 0,
+                    discount: Number(i.discount) || 0,
+                    tax: Number(i.tax) || 0,
                     total: Number(i.total) || 0,
                     trackingType: i.trackingType || p?.trackingType || "Non-IMEI"
                 };

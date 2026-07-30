@@ -847,16 +847,23 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
         );
     }
 
-    const paymentType = String(payload.paymentType || "").trim();
+    const paymentTypeRaw = String(payload.paymentType || "").trim();
+    // Normalize labels from UI ("Partial") while keeping legacy "Advance Partial"
+    const paymentType =
+        paymentTypeRaw === "Partial" || paymentTypeRaw === "Advance Partial"
+            ? "Partial"
+            : paymentTypeRaw;
     const allowedPaymentTypes = [
         "Advance Full",
+        "Partial",
         "Advance Partial",
         "Cash on Delivery",
+        "Cash on Delivery Partially",
         "After Delivery"
     ];
-    if (!allowedPaymentTypes.includes(paymentType)) {
+    if (!allowedPaymentTypes.includes(paymentTypeRaw)) {
         throw new AppError(
-            "paymentType must be Advance Full, Advance Partial, Cash on Delivery, or After Delivery.",
+            "paymentType must be Advance Full, Partial, Cash on Delivery, Cash on Delivery Partially, or After Delivery.",
             400
         );
     }
@@ -913,29 +920,56 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
               : [];
         if (!raw.length) {
             throw new AppError(
-                "partialSchedule is required for Partial delivery (phases with day range + line qty).",
+                "partialSchedule is required for Partial delivery (phases with delivery dates + line qty).",
                 400
             );
         }
+        const dayMs = 24 * 60 * 60 * 1000;
+        const daysBetween = (from, to) => {
+            if (!from || !to || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+                return 0;
+            }
+            return Math.max(0, Math.round((to.getTime() - from.getTime()) / dayMs));
+        };
         partialSchedule = raw.map((row, idx) => {
-            const daysFrom = Math.max(0, parseInt(row.daysFrom ?? row.days, 10) || 0);
-            const daysTo = Math.max(
-                daysFrom,
-                parseInt(row.daysTo ?? row.daysFrom ?? row.days, 10) || daysFrom
-            );
-            const amountType =
-                String(row.amountType || "Fixed") === "Percentage"
-                    ? "Percentage"
-                    : "Fixed";
-            const amount = Number(row.amount) || 0;
-            if (amount < 0) {
+            let dateFrom = row.dateFrom ? new Date(row.dateFrom) : null;
+            let dateTo = row.dateTo ? new Date(row.dateTo) : null;
+            if (row.dueDate && !dateTo) {
+                dateTo = new Date(row.dueDate);
+            }
+            if ((!dateFrom || Number.isNaN(dateFrom.getTime())) &&
+                (row.daysFrom != null || row.days != null)) {
+                dateFrom = new Date(expectedDeliveryDate);
+                dateFrom.setDate(
+                    dateFrom.getDate() +
+                        Math.max(0, parseInt(row.daysFrom ?? row.days, 10) || 0)
+                );
+            }
+            if ((!dateTo || Number.isNaN(dateTo.getTime())) &&
+                (row.daysTo != null || row.daysFrom != null || row.days != null)) {
+                dateTo = new Date(expectedDeliveryDate);
+                dateTo.setDate(
+                    dateTo.getDate() +
+                        Math.max(
+                            0,
+                            parseInt(row.daysTo ?? row.daysFrom ?? row.days, 10) || 0
+                        )
+                );
+            }
+            if (!dateFrom || Number.isNaN(dateFrom.getTime())) {
+                dateFrom = new Date(expectedDeliveryDate);
+            }
+            if (!dateTo || Number.isNaN(dateTo.getTime())) {
+                dateTo = new Date(dateFrom);
+            }
+            if (dateTo < dateFrom) {
                 throw new AppError(
-                    `partialSchedule[${idx}].amount cannot be negative.`,
+                    `partialSchedule[${idx}]: dateTo cannot be before dateFrom.`,
                     400
                 );
             }
-            const dueDate = new Date(expectedDeliveryDate);
-            dueDate.setDate(dueDate.getDate() + daysTo);
+            const daysFrom = daysBetween(expectedDeliveryDate, dateFrom);
+            const daysTo = daysBetween(expectedDeliveryDate, dateTo);
             const allocations = Array.isArray(row.lineAllocations)
                 ? row.lineAllocations.map(mapAllocation)
                 : [];
@@ -947,12 +981,14 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
             }
             return {
                 phase: Number(row.phase) || idx + 1,
-                amount,
-                amountType,
+                amount: 0,
+                amountType: "Fixed",
                 daysFrom,
                 daysTo,
                 days: daysTo,
-                dueDate,
+                dateFrom,
+                dateTo,
+                dueDate: dateTo,
                 note: String(row.note || "").trim(),
                 lineAllocations: allocations
             };
@@ -967,6 +1003,8 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
                 daysFrom: 0,
                 daysTo: 0,
                 days: 0,
+                dateFrom: expectedDeliveryDate,
+                dateTo: expectedDeliveryDate,
                 dueDate: expectedDeliveryDate,
                 note: "Complete delivery",
                 lineAllocations: poLines.map((i) => ({
@@ -983,14 +1021,21 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
 
     let paymentSchedule = [];
     const needsPaymentPhases =
-        paymentType === "Advance Partial" || paymentType === "Advance Full";
+        paymentType === "Partial" ||
+        paymentType === "Advance Partial" ||
+        paymentType === "Cash on Delivery Partially" ||
+        paymentType === "Advance Full";
     if (needsPaymentPhases) {
         const rawPay = Array.isArray(payload.paymentSchedule)
             ? payload.paymentSchedule
             : [];
-        if (paymentType === "Advance Partial" && !rawPay.length) {
+        const isMultiPartial =
+            paymentType === "Partial" ||
+            paymentType === "Advance Partial" ||
+            paymentType === "Cash on Delivery Partially";
+        if (isMultiPartial && !rawPay.length) {
             throw new AppError(
-                "paymentSchedule is required for Advance Partial (phase amounts).",
+                "paymentSchedule is required for partial payment (phase amounts).",
                 400
             );
         }
@@ -1007,22 +1052,55 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
                 }
             ];
         } else {
+            const grand = Number(po.grandTotal) || 0;
+            let sumFixed = 0;
+            let sumPct = 0;
+            let scheduleAmountType = null;
             paymentSchedule = rawPay.map((row, idx) => {
                 const amountType =
                     String(row.amountType || "Fixed") === "Percentage"
                         ? "Percentage"
                         : "Fixed";
-                const amount = Number(row.amount) || 0;
-                if (amount <= 0) {
+                if (scheduleAmountType == null) scheduleAmountType = amountType;
+                if (scheduleAmountType !== amountType) {
                     throw new AppError(
-                        `paymentSchedule[${idx}].amount must be greater than 0.`,
+                        "All payment phases must use the same amount type (Fixed or Percentage).",
                         400
                     );
                 }
-                const days = Math.max(0, parseInt(row.days, 10) || 0);
-                const dueDate = new Date(expectedDeliveryDate);
-                dueDate.setDate(dueDate.getDate() + days);
-                const method = String(row.method || paymentMethod || "").trim();
+                const amount = Number(row.amount) || 0;
+                if (amount < 0) {
+                    throw new AppError(
+                        `paymentSchedule[${idx}].amount cannot be negative.`,
+                        400
+                    );
+                }
+                if (amountType === "Percentage") {
+                    sumPct += amount;
+                } else {
+                    sumFixed += amount;
+                }
+                let dueDate = row.dueDate ? new Date(row.dueDate) : null;
+                let days = Math.max(0, parseInt(row.days, 10) || 0);
+                if (dueDate && !Number.isNaN(dueDate.getTime())) {
+                    days = Math.max(
+                        0,
+                        Math.round(
+                            (dueDate.getTime() - expectedDeliveryDate.getTime()) /
+                                (24 * 60 * 60 * 1000)
+                        )
+                    );
+                } else {
+                    dueDate = new Date(expectedDeliveryDate);
+                    dueDate.setDate(dueDate.getDate() + days);
+                }
+                const method = String(
+                    row.method ||
+                        paymentMethod ||
+                        (paymentType === "Cash on Delivery Partially"
+                            ? "Cash on Delivery"
+                            : "")
+                ).trim();
                 return {
                     phase: Number(row.phase) || idx + 1,
                     amount,
@@ -1033,6 +1111,28 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
                     note: String(row.note || "").trim()
                 };
             });
+            if (isMultiPartial) {
+                if (scheduleAmountType === "Percentage") {
+                    if (Math.abs(sumPct - 100) > 0.05) {
+                        throw new AppError(
+                            `Partial payment percentages must total 100% (got ${sumPct.toFixed(2)}%).`,
+                            400
+                        );
+                    }
+                } else if (grand > 0 && Math.abs(sumFixed - grand) > 0.05) {
+                    throw new AppError(
+                        `Partial payment fixed amounts must total PO grand total (${grand}).`,
+                        400
+                    );
+                }
+                const positiveCount = paymentSchedule.filter((p) => p.amount > 0).length;
+                if (positiveCount < 1) {
+                    throw new AppError(
+                        "At least one payment phase must have an amount greater than 0.",
+                        400
+                    );
+                }
+            }
         }
     } else if (paymentType === "Cash on Delivery") {
         paymentSchedule = [
@@ -1069,8 +1169,12 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
     po.supplierExpectedDeliveryDate = expectedDeliveryDate;
     po.supplierDeliveryType = deliveryType;
     po.supplierPaymentType = paymentType;
-    po.supplierPaymentMethod = paymentMethod ||
-        (paymentType === "Cash on Delivery" ? "Cash on Delivery" : "");
+    po.supplierPaymentMethod =
+        paymentMethod ||
+        (paymentType === "Cash on Delivery" ||
+        paymentType === "Cash on Delivery Partially"
+            ? "Cash on Delivery"
+            : "");
     po.supplierPartialSchedule = partialSchedule;
     po.supplierPaymentSchedule = paymentSchedule;
     if (!po.expectedDeliveryDate) {
