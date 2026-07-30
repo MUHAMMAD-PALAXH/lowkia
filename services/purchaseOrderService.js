@@ -546,6 +546,9 @@ const getPurchaseOrderStats = async () => {
         pendingApproval: 0,
         approved: 0,
         ordered: 0,
+        awaitingSupplier: 0,
+        supplierAccepted: 0,
+        supplierRejected: 0,
         partiallyReceived: 0,
         completed: 0,
         cancelled: 0,
@@ -568,6 +571,15 @@ const getPurchaseOrderStats = async () => {
                 break;
             case "Ordered":
                 stats.ordered = row.count;
+                break;
+            case "Awaiting Supplier":
+                stats.awaitingSupplier = row.count;
+                break;
+            case "Supplier Accepted":
+                stats.supplierAccepted = row.count;
+                break;
+            case "Supplier Rejected":
+                stats.supplierRejected = row.count;
                 break;
             case "Partially Received":
                 stats.partiallyReceived = row.count;

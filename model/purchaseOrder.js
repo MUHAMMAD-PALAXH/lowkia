@@ -790,7 +790,7 @@ purchaseOrderSchema.methods.reject = function (userId, reason) {
     return this.save();
 };
 
-// Receive Update
+// Receive Update — never overwrite supplier-acceptance statuses with Ordered
 purchaseOrderSchema.methods.updateReceivingStatus = function () {
 
     let totalQuantity = 0;
@@ -803,11 +803,23 @@ purchaseOrderSchema.methods.updateReceivingStatus = function () {
     });
 
     if (receivedQuantity === 0) {
-
-        this.status = "Ordered";
+        // Keep approval / supplier-acceptance workflow statuses until GRN starts
+        const keep = [
+            "Draft",
+            "Pending Approval",
+            "Approved",
+            "Awaiting Supplier",
+            "Supplier Accepted",
+            "Supplier Rejected"
+        ];
+        if (!keep.includes(this.status)) {
+            this.status = this.supplierId ? "Ordered" : "Ordered";
+        }
+        this.isFullyReceived = false;
     } else if (receivedQuantity < totalQuantity) {
 
         this.status = "Partially Received";
+        this.isFullyReceived = false;
     } else {
 
         this.status = "Completed";

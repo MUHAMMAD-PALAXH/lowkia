@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Supplier = require("../model/supplier");
+const PurchaseOrder = require("../model/purchaseOrder");
 const { generateSupplierCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
@@ -265,7 +266,7 @@ const bulkPermanentDeleteSuppliers = (payload) =>
     trash.bulkPermanentDelete(payload);
 
 const getSupplierStats = async () => {
-    const [[rows], trashCount] = await Promise.all([
+    const [[rows], trashCount, awaitingPurchaseOrders] = await Promise.all([
         Supplier.aggregate([
             { $match: { isDeleted: false } },
             {
@@ -293,7 +294,11 @@ const getSupplierStats = async () => {
                 }
             }
         ]),
-        trash.trashCount()
+        trash.trashCount(),
+        PurchaseOrder.countDocuments({
+            isDeleted: { $ne: true },
+            status: "Awaiting Supplier"
+        })
     ]);
 
     return {
@@ -306,7 +311,8 @@ const getSupplierStats = async () => {
             pendingApproval: 0,
             dueAmount: 0
         }),
-        trashCount
+        trashCount,
+        awaitingPurchaseOrders
     };
 };
 
