@@ -158,6 +158,12 @@ const createTrashOps = (Model, options = {}) => {
     const bulkSoftDelete = async (payload = {}, actorId = null) => {
         const filter = buildScopeFilter(payload, false);
         const docs = await Model.find(filter);
+        if (!docs.length) {
+            throw new AppError(
+                `No matching active ${label.toLowerCase()} found for the selected trash action.`,
+                404
+            );
+        }
         let deleted = 0;
         const errors = [];
         for (const doc of docs) {
@@ -173,6 +179,9 @@ const createTrashOps = (Model, options = {}) => {
                     message: e?.message || "Failed"
                 });
             }
+        }
+        if (deleted === 0 && errors.length) {
+            throw new AppError(errors.map((e) => e.message).join(" | "), 400);
         }
         return { deleted, failed: errors.length, errors };
     };
