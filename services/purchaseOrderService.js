@@ -1275,12 +1275,6 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             400
         );
     }
-    if (transferDaysMax < 1 && transferDaysMin < 1) {
-        throw new AppError(
-            "Enter how many days (min/max) the transfer will take.",
-            400
-        );
-    }
 
     const deliveryType = po.supplierDeliveryType === "Partial" ? "Partial" : "Full";
     const rawLines = Array.isArray(payload.lines) ? payload.lines : [];
