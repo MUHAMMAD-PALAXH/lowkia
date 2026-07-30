@@ -243,32 +243,71 @@ const populateProduct = (query) =>
         .populate("primarySupplierId", "supplierCode name phone email status")
         .populate("warehouseStock.warehouseId", "warehouseCode warehouseName city");
 
-// Purchase Order module is not built yet, so this stays defensive.
-const hasOpenPurchaseOrder = async (productId) => {
-    try {
-        const PurchaseOrderModel = mongoose.models.PurchaseOrder;
-        if (!PurchaseOrderModel) return false;
+// Terminal / finished POs do not block product trash.
+const CLOSED_PO_STATUSES = [
+    "Cancelled",
+    "Completed",
+    "Closed",
+    "Rejected",
+    "Received"
+];
 
-        const count = await PurchaseOrderModel.countDocuments({
-            "items.productId": productId,
-            status: { $nin: ["Cancelled", "Completed", "Closed", "Rejected"] },
-            isDeleted: { $ne: true }
-        });
+// POs we can auto-cancel then soft-delete when force-trashing a product.
+const AUTO_RESOLVE_PO_STATUSES = [
+    "Draft",
+    "Pending Approval",
+    "Approved",
+    "Ordered",
+    "Cancelled"
+];
 
-        return count > 0;
-    } catch (error) {
-        return false;
-    }
+const poCanAutoResolve = (status) =>
+    AUTO_RESOLVE_PO_STATUSES.includes(String(status || ""));
+
+const mapOpenPurchaseOrder = (doc) => {
+    const status = doc.status || "";
+    return {
+        id: String(doc._id),
+        purchaseOrderNo: doc.purchaseOrderNo || "",
+        status,
+        orderDate: doc.orderDate || null,
+        canAutoResolve: poCanAutoResolve(status),
+        canCancel: !["Received", "Completed", "Partially Received", "Cancelled"].includes(
+            status
+        ),
+        canTrash: ["Draft", "Cancelled"].includes(status),
+        supplier: doc.supplierId
+            ? {
+                  id: String(doc.supplierId._id || ""),
+                  supplierCode: doc.supplierId.supplierCode || "",
+                  name: doc.supplierId.name || ""
+              }
+            : null,
+        warehouse: doc.warehouseId
+            ? {
+                  id: String(doc.warehouseId._id || ""),
+                  warehouseCode: doc.warehouseId.warehouseCode || "",
+                  warehouseName: doc.warehouseId.warehouseName || ""
+              }
+            : null,
+        branch: doc.branchId
+            ? {
+                  id: String(doc.branchId._id || ""),
+                  branchCode: doc.branchId.branchCode || "",
+                  name: doc.branchId.name || ""
+              }
+            : null
+    };
 };
 
-const getOpenPurchaseOrders = async (productId, limit = 10) => {
+const getBlockingPurchaseOrders = async (productId, limit = 20) => {
     try {
         const PurchaseOrderModel = mongoose.models.PurchaseOrder;
         if (!PurchaseOrderModel) return [];
 
         const docs = await PurchaseOrderModel.find({
             "items.productId": productId,
-            status: { $nin: ["Cancelled", "Completed", "Closed", "Rejected"] },
+            status: { $nin: CLOSED_PO_STATUSES },
             isDeleted: { $ne: true }
         })
             .select(
@@ -281,42 +320,21 @@ const getOpenPurchaseOrders = async (productId, limit = 10) => {
             .limit(limit)
             .lean();
 
-        return docs.map((doc) => ({
-            id: String(doc._id),
-            purchaseOrderNo: doc.purchaseOrderNo || "",
-            status: doc.status || "",
-            orderDate: doc.orderDate || null,
-            supplier: doc.supplierId
-                ? {
-                      id: String(doc.supplierId._id || ""),
-                      supplierCode: doc.supplierId.supplierCode || "",
-                      name: doc.supplierId.name || ""
-                  }
-                : null,
-            warehouse: doc.warehouseId
-                ? {
-                      id: String(doc.warehouseId._id || ""),
-                      warehouseCode: doc.warehouseId.warehouseCode || "",
-                      warehouseName: doc.warehouseId.warehouseName || ""
-                  }
-                : null,
-            branch: doc.branchId
-                ? {
-                      id: String(doc.branchId._id || ""),
-                      branchCode: doc.branchId.branchCode || "",
-                      name: doc.branchId.name || ""
-                  }
-                : null
-        }));
+        return docs.map(mapOpenPurchaseOrder);
     } catch (error) {
         return [];
     }
 };
 
+const hasOpenPurchaseOrder = async (productId) => {
+    const rows = await getBlockingPurchaseOrders(productId, 1);
+    return rows.length > 0;
+};
+
 const beforeProductSoftDelete = async (doc) => {
     if ((Number(doc.totalStock) || 0) > 0) {
         throw new AppError(
-            'Cannot delete product while stock exists. Go to Inventory -> Warehouse Stock and use "Clear Stock" for this product first.',
+            'Cannot delete product while stock exists. Clear stock first (or use "Resolve & trash").',
             400
         );
     }
@@ -328,29 +346,38 @@ const beforeProductSoftDelete = async (doc) => {
 
     if (imeiCount > 0) {
         throw new AppError(
-            `Cannot delete product while ${imeiCount} IMEI record(s) exist.`,
+            `Cannot delete product while ${imeiCount} IMEI record(s) exist. Clear stock / IMEIs first (or use "Resolve & trash").`,
             400
         );
     }
 
-    const openOrder = await hasOpenPurchaseOrder(doc._id);
-    if (openOrder) {
+    const openOrders = await getBlockingPurchaseOrders(doc._id, 5);
+    if (openOrders.length) {
+        const labels = openOrders
+            .map((o) => `${o.purchaseOrderNo || o.id} (${o.status})`)
+            .join(", ");
         throw new AppError(
-            "Cannot delete product while it is on an open purchase order.",
+            `Cannot delete product while it is on open purchase order(s): ${labels}. Cancel/trash those POs first (or use "Resolve & trash").`,
             400
         );
     }
 };
 
 const getProductDeleteCheck = async (id) => {
-    const product = await populateProduct(Product.findOne({ _id: id, ...NOT_DELETED }));
+    const product = await populateProduct(
+        Product.findOne({ _id: id, ...NOT_DELETED })
+    );
     if (!product) throw new AppError("Product not found.", 404);
 
     const imeiCount = await ItemTrack.countDocuments({
         productId: product._id,
         status: { $ne: "deleted" }
     });
-    const openPurchaseOrders = await getOpenPurchaseOrders(product._id);
+    const blockedImeiCount = await ItemTrack.countDocuments({
+        productId: product._id,
+        status: { $in: ["sold", "repairing", "in-transit"] }
+    });
+    const openPurchaseOrders = await getBlockingPurchaseOrders(product._id);
 
     const stock = {
         total: Number(product.totalStock) || 0,
@@ -358,13 +385,31 @@ const getProductDeleteCheck = async (id) => {
         reserved: Number(product.reservedStock) || 0
     };
 
+    const canAutoResolvePos =
+        openPurchaseOrders.length > 0 &&
+        openPurchaseOrders.every((o) => o.canAutoResolve);
+    const canClearStock =
+        stock.total > 0 &&
+        stock.reserved <= 0 &&
+        blockedImeiCount <= 0;
+    const canDelete =
+        stock.total <= 0 &&
+        imeiCount <= 0 &&
+        openPurchaseOrders.length === 0;
+    const canForceTrash =
+        canDelete ||
+        ((stock.total <= 0 || canClearStock) &&
+            (openPurchaseOrders.length === 0 || canAutoResolvePos) &&
+            blockedImeiCount <= 0);
+
     return {
-        canDelete:
-            stock.total <= 0 &&
-            imeiCount <= 0 &&
-            (!openPurchaseOrders || openPurchaseOrders.length === 0),
+        canDelete,
+        canForceTrash,
+        canClearStock,
+        canAutoResolvePos,
         stock,
         imeiCount,
+        blockedImeiCount,
         warehouseStock: (product.warehouseStock || []).map((row) => ({
             warehouseId: row.warehouseId?._id || row.warehouseId || null,
             warehouseCode: row.warehouseId?.warehouseCode || "",
@@ -374,6 +419,109 @@ const getProductDeleteCheck = async (id) => {
             reservedQuantity: Number(row.reservedQuantity) || 0
         })),
         openPurchaseOrders
+    };
+};
+
+/**
+ * Clears resolvable blockers (stock + draft/open POs) then soft-deletes.
+ * Used by the friendly "Resolve & trash" product UI.
+ */
+const prepareAndTrashProduct = async (id, actorId = null) => {
+    const product = await findProductOrFail(id);
+    const steps = [];
+
+    // 1) Clear warehouse / available IMEI stock when possible
+    const stockTotal = Number(product.totalStock) || 0;
+    const reserved = Number(product.reservedStock) || 0;
+    const blockedImeiCount = await ItemTrack.countDocuments({
+        productId: product._id,
+        status: { $in: ["sold", "repairing", "in-transit"] }
+    });
+
+    if (stockTotal > 0 || reserved > 0) {
+        if (reserved > 0) {
+            throw new AppError(
+                "Cannot clear reserved stock automatically. Unreserve first, then retry.",
+                400
+            );
+        }
+        if (blockedImeiCount > 0) {
+            throw new AppError(
+                `Cannot clear stock: ${blockedImeiCount} IMEI(s) are sold, repairing, or in-transit.`,
+                400
+            );
+        }
+        const inventoryService = require("./inventoryService");
+        const cleared = await inventoryService.clearProductStock(
+            product._id,
+            actorId
+        );
+        steps.push({
+            action: "clearStock",
+            clearedQty: cleared.clearedQty || 0,
+            clearedImeis: cleared.clearedImeis || 0
+        });
+    } else if (
+        (await ItemTrack.countDocuments({
+            productId: product._id,
+            status: "available"
+        })) > 0
+    ) {
+        const inventoryService = require("./inventoryService");
+        const cleared = await inventoryService.clearProductStock(
+            product._id,
+            actorId
+        );
+        steps.push({
+            action: "clearStock",
+            clearedQty: cleared.clearedQty || 0,
+            clearedImeis: cleared.clearedImeis || 0
+        });
+    }
+
+    // 2) Cancel + soft-delete linked open POs that are auto-resolvable
+    const openPos = await getBlockingPurchaseOrders(product._id, 50);
+    const locked = openPos.filter((o) => !o.canAutoResolve);
+    if (locked.length) {
+        throw new AppError(
+            `Cannot auto-resolve purchase order(s): ${locked
+                .map((o) => `${o.purchaseOrderNo} (${o.status})`)
+                .join(", ")}. Finish or cancel them manually first.`,
+            400
+        );
+    }
+
+    const purchaseOrderService = require("./purchaseOrderService");
+    for (const po of openPos) {
+        if (po.status !== "Cancelled" && po.status !== "Draft") {
+            await purchaseOrderService.cancelPurchaseOrder(
+                po.id,
+                actorId,
+                "Auto-cancelled to trash linked product"
+            );
+            steps.push({
+                action: "cancelPo",
+                purchaseOrderNo: po.purchaseOrderNo,
+                id: po.id
+            });
+        }
+        // Soft-delete Draft / Cancelled POs so product guard passes
+        await purchaseOrderService.deletePurchaseOrder(po.id, actorId);
+        steps.push({
+            action: "trashPo",
+            purchaseOrderNo: po.purchaseOrderNo,
+            id: po.id
+        });
+    }
+
+    // 3) Soft-delete the product
+    const deleted = await deleteProduct(id, actorId);
+    steps.push({ action: "trashProduct", id: String(deleted._id) });
+
+    return {
+        productId: String(deleted._id),
+        productName: deleted.name || "",
+        steps
     };
 };
 
@@ -1984,6 +2132,7 @@ module.exports = {
     getProducts,
     getProductById,
     getProductDeleteCheck,
+    prepareAndTrashProduct,
     getApprovedProducts,
     getPendingApprovals,
     getLowStockProducts,

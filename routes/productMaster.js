@@ -27,6 +27,10 @@ router.get("/", listProductValidator, validate, productController.getProducts);
 router.get("/stats", productController.getProductStats);
 
 router.post("/bulk-delete", productController.bulkDeleteProducts);
+router.post(
+    "/bulk-prepare-trash",
+    productController.bulkPrepareAndTrashProducts
+);
 router.post("/bulk-restore", productController.bulkRestoreProducts);
 router.post(
     "/bulk-permanent-delete",
@@ -55,6 +59,13 @@ router.get(
     idValidator,
     validate,
     productController.getProductDeleteCheck
+);
+
+router.post(
+    "/:id/prepare-trash",
+    idValidator,
+    validate,
+    productController.prepareAndTrashProduct
 );
 
 router.get("/:id", idValidator, validate, productController.getProductById);

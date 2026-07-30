@@ -68,6 +68,58 @@ exports.getProductDeleteCheck = asyncHandler(async (req, res) => {
     return success(res, "Product delete check retrieved successfully.", data);
 });
 
+exports.prepareAndTrashProduct = asyncHandler(async (req, res) => {
+    const data = await productService.prepareAndTrashProduct(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Product blockers cleared and moved to trash.", data);
+});
+
+exports.bulkPrepareAndTrashProducts = asyncHandler(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (!ids.length) {
+        const err = new Error("Select at least one product.");
+        err.statusCode = 400;
+        err.isOperational = true;
+        throw err;
+    }
+
+    let deleted = 0;
+    const errors = [];
+    const results = [];
+    for (const id of ids) {
+        try {
+            const data = await productService.prepareAndTrashProduct(
+                id,
+                getActorId(req)
+            );
+            deleted += 1;
+            results.push(data);
+        } catch (e) {
+            errors.push({
+                id: String(id),
+                message: e?.message || "Failed"
+            });
+        }
+    }
+
+    if (deleted === 0 && errors.length) {
+        const err = new Error(errors.map((e) => e.message).join(" | "));
+        err.statusCode = 400;
+        err.isOperational = true;
+        err.errors = errors;
+        throw err;
+    }
+
+    return success(res, "Products moved to trash.", {
+        deleted,
+        failed: errors.length,
+        errors,
+        results
+    });
+});
+
 exports.updateProduct = asyncHandler(async (req, res) => {
     const product = await productService.updateProduct(
         req.params.id,
