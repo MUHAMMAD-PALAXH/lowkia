@@ -594,10 +594,31 @@ const trash = createTrashOps(Product, {
     label: "Product",
     nameField: "name",
     softDeleteExtra: (doc) => {
+        // Keep prior status/publish so restore does not wipe them.
+        if (doc.statusBeforeTrash == null) {
+            doc.statusBeforeTrash = doc.status || "Draft";
+        }
+        if (doc.isPublishedBeforeTrash == null) {
+            doc.isPublishedBeforeTrash = !!doc.isPublished;
+        }
         doc.status = "Archived";
         doc.isPublished = false;
     },
-    restoreStatus: "Inactive",
+    // Do not force a fixed status on restore — restoreExtra puts the snapshot back.
+    restoreStatus: null,
+    restoreExtra: (doc) => {
+        const allowed = ["Draft", "Active", "Inactive", "Archived"];
+        const prev = doc.statusBeforeTrash;
+        doc.status = allowed.includes(prev) ? prev : "Draft";
+        if (doc.isPublishedBeforeTrash != null) {
+            doc.isPublished = !!doc.isPublishedBeforeTrash;
+            if (doc.isPublished && !doc.publishedAt) {
+                doc.publishedAt = new Date();
+            }
+        }
+        doc.statusBeforeTrash = null;
+        doc.isPublishedBeforeTrash = null;
+    },
     beforeSoftDelete: beforeProductSoftDelete,
     beforePermanent: async (doc) => {
         await ProductVariant.deleteMany({ productId: doc._id });

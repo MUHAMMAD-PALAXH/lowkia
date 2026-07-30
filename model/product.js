@@ -1005,6 +1005,18 @@ const productSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
             default: null
+        },
+
+        // Snapshot taken on soft-delete so restore can put status/publish back.
+        statusBeforeTrash: {
+            type: String,
+            enum: ["Draft", "Active", "Inactive", "Archived"],
+            default: null
+        },
+
+        isPublishedBeforeTrash: {
+            type: Boolean,
+            default: null
         }
     },
     {
