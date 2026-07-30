@@ -452,7 +452,7 @@ const getSupplierDetails = async (id, query = {}) => {
             ]
         })
             .select(
-                "name productCode sku barcode trackingType availableStock totalStock sellingPrice purchasePrice lastPurchasePrice primarySupplierId suppliers status isPublished"
+                "name productCode sku barcode trackingType productType availableStock totalStock reservedStock sellingPrice purchasePrice costPrice wholesalePrice minimumSellingPrice maximumSellingPrice offerPrice lastPurchasePrice primarySupplierId suppliers status isPublished productVariants"
             )
             .sort({ name: 1 })
             .limit(productLimit)
@@ -828,6 +828,46 @@ const getSupplierDetails = async (id, query = {}) => {
         const isPrimary =
             !!link?.isPrimary ||
             String(p.primarySupplierId || "") === String(supplierId);
+        const variants = (p.productVariants || []).map((v) => {
+            const labels = [];
+            for (const attr of v.attributes || []) {
+                const type =
+                    (attr.variantTypeId &&
+                        (attr.variantTypeId.name ||
+                            attr.variantTypeId.type ||
+                            attr.variantTypeId)) ||
+                    "";
+                const value =
+                    (attr.variantId &&
+                        (attr.variantId.name ||
+                            attr.variantId.value ||
+                            attr.variantId)) ||
+                    "";
+                const label = [type, value]
+                    .map((x) => String(x || "").trim())
+                    .filter(Boolean)
+                    .join(": ");
+                if (label) labels.push(label);
+            }
+            return {
+                id: v._id,
+                sku: v.sku || "",
+                barcode: v.barcode || "",
+                label:
+                    v.combinationString ||
+                    (labels.length ? labels.join(" / ") : "Variant"),
+                purchasePrice: Number(v.purchasePrice) || 0,
+                costPrice: Number(v.costPrice) || 0,
+                sellingPrice: Number(v.sellingPrice || v.price) || 0,
+                wholesalePrice: Number(v.wholesalePrice) || 0,
+                offerPrice: Number(v.offerPrice) || 0,
+                stockCurrent: Number(v.stockCurrent) || 0,
+                stockAvailable: Number(v.stockAvailable || v.quantity) || 0,
+                stockReserved: Number(v.stockReserved) || 0,
+                status: v.status || "",
+                isDefaultVariant: !!v.isDefaultVariant
+            };
+        });
         return {
             productId: p._id,
             productCode: p.productCode || "",
@@ -835,6 +875,7 @@ const getSupplierDetails = async (id, query = {}) => {
             sku: p.sku || "",
             barcode: p.barcode || "",
             trackingType: p.trackingType || "Non-IMEI",
+            productType: p.productType || "Simple",
             status: p.status || "",
             isPublished: !!p.isPublished,
             isPrimary,
@@ -844,10 +885,19 @@ const getSupplierDetails = async (id, query = {}) => {
                 Number(p.lastPurchasePrice) ||
                 Number(p.purchasePrice) ||
                 0,
+            purchasePrice: Number(p.purchasePrice) || 0,
+            costPrice: Number(p.costPrice) || 0,
+            sellingPrice: Number(p.sellingPrice) || 0,
+            wholesalePrice: Number(p.wholesalePrice) || 0,
+            minimumSellingPrice: Number(p.minimumSellingPrice) || 0,
+            maximumSellingPrice: Number(p.maximumSellingPrice) || 0,
+            offerPrice: Number(p.offerPrice) || 0,
             leadTimeDays: Number(link?.leadTimeDays) || 0,
             availableStock: Number(p.availableStock) || 0,
             totalStock: Number(p.totalStock) || 0,
-            sellingPrice: Number(p.sellingPrice) || 0
+            reservedStock: Number(p.reservedStock) || 0,
+            variantCount: variants.length,
+            variants
         };
     });
 
