@@ -427,6 +427,7 @@ const getSupplierDetails = async (id, query = {}) => {
     const ItemTrack = require("../model/itemTrack");
     const PurchaseOrder = require("../model/purchaseOrder");
     const GRN = require("../model/grn");
+    const SalesOrder = require("../model/salesOrder");
 
     const supplier = await Supplier.findOne({
         _id: supplierId,
@@ -836,7 +837,7 @@ const getSupplierDetails = async (id, query = {}) => {
               .lean()
         : [];
 
-    const [invRows, imeiRows, productInvRows, productImeiRows] =
+    const [invRows, imeiRows, productInvRows, productImeiRows, soldRows] =
         linkedProductIds.length
             ? await Promise.all([
                   Inventory.aggregate([
@@ -912,9 +913,87 @@ const getSupplierDetails = async (id, query = {}) => {
                               count: { $sum: 1 }
                           }
                       }
+                  ]),
+                  SalesOrder.aggregate([
+                      {
+                          $match: {
+                              isDeleted: { $ne: true },
+                              $or: [
+                                  { status: "Completed" },
+                                  {
+                                      stockUpdated: true,
+                                      status: {
+                                          $nin: [
+                                              "Draft",
+                                              "Cancelled",
+                                              "Pending Approval"
+                                          ]
+                                      }
+                                  }
+                              ]
+                          }
+                      },
+                      { $unwind: "$items" },
+                      {
+                          $match: {
+                              "items.productId": { $in: linkedProductIds }
+                          }
+                      },
+                      {
+                          $group: {
+                              _id: {
+                                  productId: "$items.productId",
+                                  variantId: "$items.productVariantId"
+                              },
+                              soldQty: {
+                                  $sum: {
+                                      $max: [
+                                          0,
+                                          {
+                                              $subtract: [
+                                                  {
+                                                      $cond: [
+                                                          {
+                                                              $gt: [
+                                                                  {
+                                                                      $ifNull: [
+                                                                          "$items.deliveredQuantity",
+                                                                          0
+                                                                      ]
+                                                                  },
+                                                                  0
+                                                              ]
+                                                          },
+                                                          {
+                                                              $ifNull: [
+                                                                  "$items.deliveredQuantity",
+                                                                  0
+                                                              ]
+                                                          },
+                                                          {
+                                                              $ifNull: [
+                                                                  "$items.quantity",
+                                                                  0
+                                                              ]
+                                                          }
+                                                      ]
+                                                  },
+                                                  {
+                                                      $ifNull: [
+                                                          "$items.returnedQuantity",
+                                                          0
+                                                      ]
+                                                  }
+                                              ]
+                                          }
+                                      ]
+                                  }
+                              }
+                          }
+                      }
                   ])
               ])
-            : [[], [], [], []];
+            : [[], [], [], [], []];
 
     const invKey = (productId, variantId) =>
         `${String(productId)}::${variantId ? String(variantId) : "null"}`;
@@ -934,6 +1013,20 @@ const getSupplierDetails = async (id, query = {}) => {
     const productImeiMap = new Map(
         productImeiRows.map((r) => [String(r._id), r.count || 0])
     );
+    const soldMap = new Map(
+        soldRows.map((r) => [
+            invKey(r._id.productId, r._id.variantId),
+            Number(r.soldQty) || 0
+        ])
+    );
+    const productSoldMap = new Map();
+    for (const r of soldRows) {
+        const pid = String(r._id.productId);
+        productSoldMap.set(
+            pid,
+            (productSoldMap.get(pid) || 0) + (Number(r.soldQty) || 0)
+        );
+    }
 
     const variantsByProduct = new Map();
     for (const v of variantDocs) {
@@ -974,6 +1067,7 @@ const getSupplierDetails = async (id, query = {}) => {
                 reservedStock: 0
             };
             const imeiCount = imeiMap.get(key) || 0;
+            const soldQty = soldMap.get(key) || 0;
             const catalogQty = Number(v.quantity) || 0;
             const fromInv =
                 Number(inv.availableStock) || Number(inv.currentStock) || 0;
@@ -1019,11 +1113,13 @@ const getSupplierDetails = async (id, query = {}) => {
                 stockReserved,
                 quantity: liveQty,
                 imeiAvailableCount: imeiCount,
+                soldQty,
                 status: v.status || "",
                 isDefaultVariant: !!v.isDefaultVariant
             };
         });
 
+        const totalSold = productSoldMap.get(pid) || 0;
         const invAvailable = Number(productInv.availableStock) || 0;
         const invCurrent = Number(productInv.currentStock) || 0;
         const invReserved = Number(productInv.reservedStock) || 0;
@@ -1127,6 +1223,7 @@ const getSupplierDetails = async (id, query = {}) => {
             reorderLevel: Number(p.reorderLevel) || 0,
             grossProfit,
             profitMarginPercent,
+            totalSold,
             variantCount: variants.length,
             variants
         };
