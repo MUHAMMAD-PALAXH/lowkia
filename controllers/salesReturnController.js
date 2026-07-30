@@ -19,7 +19,11 @@ exports.getReturns = asyncHandler(async (req, res) => {
 });
 
 exports.getReturnById = asyncHandler(async (req, res) => {
-    const doc = await salesReturnService.getReturnById(req.params.id);
+    const includeDeleted =
+        req.query.deleted === "true" || req.query.trash === "true";
+    const doc = await salesReturnService.getReturnById(req.params.id, {
+        includeDeleted
+    });
     return success(res, "Sales return retrieved.", doc);
 });
 

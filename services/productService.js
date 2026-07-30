@@ -1026,14 +1026,15 @@ const getProducts = async (query = {}) => {
     };
 };
 
-const getProductById = async (id) => {
+const getProductById = async (id, { includeDeleted = false } = {}) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
         throw new AppError("Invalid product id.", 400);
     }
 
-    const product = await populateProduct(
-        Product.findOne({ _id: id, ...NOT_DELETED })
-    );
+    const filter = { _id: id };
+    if (!includeDeleted) Object.assign(filter, NOT_DELETED);
+
+    const product = await populateProduct(Product.findOne(filter));
 
     if (!product) throw new AppError("Product not found.", 404);
 

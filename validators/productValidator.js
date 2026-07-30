@@ -228,7 +228,24 @@ const listProductValidator = [
     query("proSubCategoryId").optional().isMongoId(),
     query("proBrandId").optional().isMongoId(),
     query("supplierId").optional().isMongoId(),
-    query("search").optional().isString().trim()
+    query("search").optional().isString().trim(),
+    query("deleted").optional().isIn(["true", "false"]),
+    query("trash").optional().isIn(["true", "false"]),
+    query("sort")
+        .optional()
+        .isIn([
+            "newest",
+            "oldest",
+            "alpha",
+            "alphabetical",
+            "name",
+            "items_asc",
+            "items_desc",
+            "count_asc",
+            "count_desc",
+            "low",
+            "high"
+        ])
 ];
 
 const poSourceLinesValidator = [query("search").optional().isString().trim()];

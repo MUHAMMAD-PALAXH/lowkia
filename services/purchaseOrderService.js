@@ -517,10 +517,10 @@ const getPurchaseOrders = async (query = {}) => {
     };
 };
 
-const getPurchaseOrderById = async (id) => {
-    const po = await populatePo(
-        PurchaseOrder.findOne({ _id: id, ...NOT_DELETED })
-    );
+const getPurchaseOrderById = async (id, { includeDeleted = false } = {}) => {
+    const filter = { _id: id };
+    if (!includeDeleted) Object.assign(filter, NOT_DELETED);
+    const po = await populatePo(PurchaseOrder.findOne(filter));
     if (!po) throw new AppError("Purchase order not found.", 404);
     return po;
 };

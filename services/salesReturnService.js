@@ -516,10 +516,10 @@ const getReturns = async (query = {}) => {
     };
 };
 
-const getReturnById = async (id) => {
-    const doc = await populateReturn(
-        SalesReturn.findOne({ _id: id, ...NOT_DELETED })
-    );
+const getReturnById = async (id, { includeDeleted = false } = {}) => {
+    const filter = { _id: id };
+    if (!includeDeleted) Object.assign(filter, NOT_DELETED);
+    const doc = await populateReturn(SalesReturn.findOne(filter));
     if (!doc) throw new AppError("Sales return not found.", 404);
     return doc;
 };

@@ -55,7 +55,11 @@ exports.getProductByBarcode = asyncHandler(async (req, res) => {
 });
 
 exports.getProductById = asyncHandler(async (req, res) => {
-    const product = await productService.getProductById(req.params.id);
+    const includeDeleted =
+        req.query.deleted === "true" || req.query.trash === "true";
+    const product = await productService.getProductById(req.params.id, {
+        includeDeleted
+    });
     return success(res, "Product retrieved successfully.", product);
 });
 

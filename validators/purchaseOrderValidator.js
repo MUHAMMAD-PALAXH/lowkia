@@ -102,12 +102,30 @@ const productIdValidator = [
 
 const listValidator = [
     query("page").optional().isInt({ min: 1 }),
-    query("limit").optional().isInt({ min: 1, max: 100 }),
+    query("limit").optional().isInt({ min: 1, max: 200 }),
     query("status").optional().isString(),
     query("purchaseType").optional().isIn(["Existing", "New"]),
     query("supplierId").optional().isMongoId(),
     query("warehouseId").optional().isMongoId(),
-    query("branchId").optional().isMongoId()
+    query("branchId").optional().isMongoId(),
+    query("search").optional().isString().trim(),
+    query("deleted").optional().isIn(["true", "false"]),
+    query("trash").optional().isIn(["true", "false"]),
+    query("sort")
+        .optional()
+        .isIn([
+            "newest",
+            "oldest",
+            "alpha",
+            "alphabetical",
+            "name",
+            "items_asc",
+            "items_desc",
+            "count_asc",
+            "count_desc",
+            "low",
+            "high"
+        ])
 ];
 
 module.exports = {

@@ -34,7 +34,11 @@ exports.getPurchaseOrderStats = asyncHandler(async (req, res) => {
 });
 
 exports.getPurchaseOrderById = asyncHandler(async (req, res) => {
-    const po = await purchaseOrderService.getPurchaseOrderById(req.params.id);
+    const includeDeleted =
+        req.query.deleted === "true" || req.query.trash === "true";
+    const po = await purchaseOrderService.getPurchaseOrderById(req.params.id, {
+        includeDeleted
+    });
     return success(res, "Purchase order retrieved successfully.", po);
 });
 
