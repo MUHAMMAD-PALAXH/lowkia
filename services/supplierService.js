@@ -266,7 +266,7 @@ const bulkPermanentDeleteSuppliers = (payload) =>
     trash.bulkPermanentDelete(payload);
 
 const getSupplierStats = async () => {
-    const [[rows], trashCount, awaitingPurchaseOrders] = await Promise.all([
+    const [[rows], trashCount, awaitingPurchaseOrders, acceptedPurchaseOrders, rejectedPurchaseOrders] = await Promise.all([
         Supplier.aggregate([
             { $match: { isDeleted: false } },
             {
@@ -298,6 +298,20 @@ const getSupplierStats = async () => {
         PurchaseOrder.countDocuments({
             isDeleted: { $ne: true },
             status: "Awaiting Supplier"
+        }),
+        PurchaseOrder.countDocuments({
+            isDeleted: { $ne: true },
+            status: {
+                $in: [
+                    "Supplier Accepted",
+                    "Partially Delivered",
+                    "Completely Delivered"
+                ]
+            }
+        }),
+        PurchaseOrder.countDocuments({
+            isDeleted: { $ne: true },
+            status: "Supplier Rejected"
         })
     ]);
 
@@ -312,7 +326,9 @@ const getSupplierStats = async () => {
             dueAmount: 0
         }),
         trashCount,
-        awaitingPurchaseOrders
+        awaitingPurchaseOrders,
+        acceptedPurchaseOrders,
+        rejectedPurchaseOrders
     };
 };
 
@@ -473,7 +489,7 @@ const getSupplierDetails = async (id, query = {}) => {
             isDeleted: { $ne: true }
         })
             .select(
-                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus subtotal discount discountType tax taxType shippingCost shippingType otherCharges grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule isFullyReceived totalReceivedAmount"
+                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus subtotal discount discountType tax taxType shippingCost shippingType otherCharges grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule supplierShipments isFullyReceived totalReceivedAmount"
             )
             .populate("items.productId", "name productCode productType trackingType sku barcode")
             .sort({ orderDate: -1, createdAt: -1 })
@@ -1296,13 +1312,16 @@ const getSupplierDetails = async (id, query = {}) => {
                 dateTo: s.dateTo || null,
                 dueDate: s.dueDate || null,
                 note: s.note || "",
+                isCompleted: !!s.isCompleted,
+                completedAt: s.completedAt || null,
                 lineAllocations: (s.lineAllocations || []).map((a) => ({
                     productId: a.productId || null,
                     productVariantId: a.productVariantId || null,
                     productName: a.productName || "",
                     variantLabel: a.variantLabel || "",
                     sku: a.sku || "",
-                    quantity: Number(a.quantity) || 0
+                    quantity: Number(a.quantity) || 0,
+                    sentQuantity: Number(a.sentQuantity) || 0
                 }))
             })),
             supplierPaymentSchedule: (po.supplierPaymentSchedule || []).map((s) => ({
@@ -1313,6 +1332,25 @@ const getSupplierDetails = async (id, query = {}) => {
                 dueDate: s.dueDate || null,
                 method: s.method || "",
                 note: s.note || ""
+            })),
+            supplierShipments: (po.supplierShipments || []).map((s) => ({
+                id: s._id || null,
+                sentAt: s.sentAt || null,
+                transferDaysMin: Number(s.transferDaysMin) || 0,
+                transferDaysMax: Number(s.transferDaysMax) || 0,
+                deliveryMode: s.deliveryMode || "Full",
+                phase: s.phase == null ? null : Number(s.phase),
+                varianceReason: s.varianceReason || "",
+                note: s.note || "",
+                lines: (s.lines || []).map((a) => ({
+                    productId: a.productId || null,
+                    productVariantId: a.productVariantId || null,
+                    productName: a.productName || "",
+                    variantLabel: a.variantLabel || "",
+                    sku: a.sku || "",
+                    quantity: Number(a.quantity) || 0,
+                    expectedQuantity: Number(a.expectedQuantity) || 0
+                }))
             })),
             items: items.map((i) => {
                 const p = i.productId && typeof i.productId === "object"
@@ -1330,6 +1368,7 @@ const getSupplierDetails = async (id, query = {}) => {
                     variantAttributes: i.variantAttributes || [],
                     quantity: Number(i.quantity) || 0,
                     receivedQuantity: Number(i.receivedQuantity) || 0,
+                    supplierSentQuantity: Number(i.supplierSentQuantity) || 0,
                     purchasePrice: Number(i.purchasePrice) || 0,
                     discount: Number(i.discount) || 0,
                     tax: Number(i.tax) || 0,

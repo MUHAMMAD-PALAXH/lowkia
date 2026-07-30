@@ -80,6 +80,13 @@ const purchaseItemSchema = new mongoose.Schema(
             min: 0
         },
 
+        // Qty supplier marked as sent (before warehouse GRN)
+        supplierSentQuantity: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
         // Remaining Quantity
         pendingQuantity: {
 
@@ -391,6 +398,8 @@ const purchaseOrderSchema = new mongoose.Schema(
                 "Awaiting Supplier",
                 "Supplier Accepted",
                 "Supplier Rejected",
+                "Partially Delivered",
+                "Completely Delivered",
                 "Partially Received",
                 "Received",
                 "Completed",
@@ -561,6 +570,8 @@ const purchaseOrderSchema = new mongoose.Schema(
                 dateTo: { type: Date, default: null },
                 dueDate: { type: Date, default: null },
                 note: { type: String, default: "", trim: true },
+                isCompleted: { type: Boolean, default: false },
+                completedAt: { type: Date, default: null },
                 lineAllocations: [
                     {
                         productId: {
@@ -576,7 +587,43 @@ const purchaseOrderSchema = new mongoose.Schema(
                         productName: { type: String, default: "" },
                         variantLabel: { type: String, default: "" },
                         sku: { type: String, default: "" },
-                        quantity: { type: Number, default: 0, min: 0 }
+                        quantity: { type: Number, default: 0, min: 0 },
+                        sentQuantity: { type: Number, default: 0, min: 0 }
+                    }
+                ]
+            }
+        ],
+
+        supplierShipments: [
+            {
+                sentAt: { type: Date, default: Date.now },
+                transferDaysMin: { type: Number, default: 0, min: 0 },
+                transferDaysMax: { type: Number, default: 0, min: 0 },
+                deliveryMode: {
+                    type: String,
+                    enum: ["Full", "Partial"],
+                    default: "Full"
+                },
+                phase: { type: Number, default: null },
+                varianceReason: { type: String, default: "", trim: true },
+                note: { type: String, default: "", trim: true },
+                lines: [
+                    {
+                        productId: {
+                            type: mongoose.Schema.Types.ObjectId,
+                            ref: "Product",
+                            default: null
+                        },
+                        productVariantId: {
+                            type: mongoose.Schema.Types.ObjectId,
+                            ref: "ProductVariant",
+                            default: null
+                        },
+                        productName: { type: String, default: "" },
+                        variantLabel: { type: String, default: "" },
+                        sku: { type: String, default: "" },
+                        quantity: { type: Number, default: 0, min: 0 },
+                        expectedQuantity: { type: Number, default: 0, min: 0 }
                     }
                 ]
             }
@@ -810,7 +857,9 @@ purchaseOrderSchema.methods.updateReceivingStatus = function () {
             "Approved",
             "Awaiting Supplier",
             "Supplier Accepted",
-            "Supplier Rejected"
+            "Supplier Rejected",
+            "Partially Delivered",
+            "Completely Delivered"
         ];
         if (!keep.includes(this.status)) {
             this.status = this.supplierId ? "Ordered" : "Ordered";

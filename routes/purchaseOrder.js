@@ -127,6 +127,13 @@ router.patch(
     purchaseOrderController.supplierRejectPurchaseOrder
 );
 
+router.post(
+    "/:id/supplier-send",
+    idValidator,
+    validate,
+    purchaseOrderController.supplierSendPurchaseOrder
+);
+
 router.patch(
     "/:id/cancel",
     idValidator,

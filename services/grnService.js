@@ -30,7 +30,13 @@ const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
-const RECEIVABLE_PO = ["Ordered", "Supplier Accepted", "Partially Received"];
+const RECEIVABLE_PO = [
+    "Ordered",
+    "Supplier Accepted",
+    "Partially Delivered",
+    "Completely Delivered",
+    "Partially Received"
+];
 const EDITABLE_GRN = ["Draft", "Pending Approval"];
 
 const trash = createTrashOps(GRN, {

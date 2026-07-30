@@ -163,6 +163,15 @@ exports.supplierRejectPurchaseOrder = asyncHandler(async (req, res) => {
     return success(res, "Purchase order rejected by supplier.", po);
 });
 
+exports.supplierSendPurchaseOrder = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.supplierSendPurchaseOrder(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(res, "Supplier shipment recorded successfully.", po);
+});
+
 exports.cancelPurchaseOrder = asyncHandler(async (req, res) => {
     const po = await purchaseOrderService.cancelPurchaseOrder(
         req.params.id,

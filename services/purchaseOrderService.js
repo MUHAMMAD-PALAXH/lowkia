@@ -549,6 +549,8 @@ const getPurchaseOrderStats = async () => {
         awaitingSupplier: 0,
         supplierAccepted: 0,
         supplierRejected: 0,
+        partiallyDelivered: 0,
+        completelyDelivered: 0,
         partiallyReceived: 0,
         completed: 0,
         cancelled: 0,
@@ -580,6 +582,12 @@ const getPurchaseOrderStats = async () => {
                 break;
             case "Supplier Rejected":
                 stats.supplierRejected = row.count;
+                break;
+            case "Partially Delivered":
+                stats.partiallyDelivered = row.count;
+                break;
+            case "Completely Delivered":
+                stats.completelyDelivered = row.count;
                 break;
             case "Partially Received":
                 stats.partiallyReceived = row.count;
@@ -1228,6 +1236,284 @@ const supplierRejectPurchaseOrder = async (id, actorId = null, payload = {}) => 
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
+const lineMatchKey = (row) =>
+    `${row.productId || ""}|${row.productVariantId || ""}|${row.sku || ""}|${row.variantLabel || ""}`;
+
+/**
+ * Supplier marks goods as sent (full or one partial phase).
+ * Stores sentAt + transfer day range. Updates supplierSentQuantity and status.
+ */
+const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    if (!po.supplierId) {
+        throw new AppError("This purchase order has no supplier.", 400);
+    }
+    const sendable = ["Supplier Accepted", "Partially Delivered"];
+    if (!sendable.includes(po.status)) {
+        throw new AppError(
+            "Only Supplier Accepted or Partially Delivered POs can be sent.",
+            400
+        );
+    }
+
+    const transferDaysMin = Math.max(
+        0,
+        parseInt(payload.transferDaysMin ?? payload.daysMin, 10) || 0
+    );
+    const transferDaysMax = Math.max(
+        transferDaysMin,
+        parseInt(payload.transferDaysMax ?? payload.daysMax, 10) || transferDaysMin
+    );
+    if (
+        payload.transferDaysMin == null &&
+        payload.daysMin == null &&
+        payload.transferDaysMax == null &&
+        payload.daysMax == null
+    ) {
+        throw new AppError(
+            "transferDaysMin and transferDaysMax are required (transit time).",
+            400
+        );
+    }
+    if (transferDaysMax < 1 && transferDaysMin < 1) {
+        throw new AppError(
+            "Enter how many days (min/max) the transfer will take.",
+            400
+        );
+    }
+
+    const deliveryType = po.supplierDeliveryType === "Partial" ? "Partial" : "Full";
+    const rawLines = Array.isArray(payload.lines) ? payload.lines : [];
+    if (!rawLines.length) {
+        throw new AppError("At least one product/variant qty line is required.", 400);
+    }
+
+    const varianceReason = String(payload.varianceReason || "").trim();
+    const note = String(payload.note || "").trim();
+    const sentAt = payload.sentAt ? new Date(payload.sentAt) : new Date();
+    if (Number.isNaN(sentAt.getTime())) {
+        throw new AppError("Invalid sentAt date/time.", 400);
+    }
+
+    let phaseIndex = -1;
+    let expectedByKey = new Map();
+
+    if (deliveryType === "Full") {
+        for (const item of po.items || []) {
+            const remaining =
+                Math.max(0, Number(item.quantity) || 0) -
+                Math.max(0, Number(item.supplierSentQuantity) || 0);
+            if (remaining <= 0) continue;
+            expectedByKey.set(lineMatchKey(item), {
+                item,
+                expected: remaining,
+                productName: item.productName || "",
+                variantLabel: item.variantLabel || "",
+                sku: item.sku || ""
+            });
+        }
+        if (!expectedByKey.size) {
+            throw new AppError("All ordered quantities are already sent.", 400);
+        }
+    } else {
+        const schedule = po.supplierPartialSchedule || [];
+        phaseIndex = schedule.findIndex((p) => !p.isCompleted);
+        if (phaseIndex < 0) {
+            throw new AppError("All partial delivery phases are already completed.", 400);
+        }
+        const phase = schedule[phaseIndex];
+        const requestedPhase = payload.phase != null ? Number(payload.phase) : null;
+        if (
+            requestedPhase != null &&
+            !Number.isNaN(requestedPhase) &&
+            requestedPhase !== Number(phase.phase)
+        ) {
+            throw new AppError(
+                `Only phase ${phase.phase} can be sent now. Complete it before later phases.`,
+                400
+            );
+        }
+        for (const alloc of phase.lineAllocations || []) {
+            const expected =
+                Math.max(0, Number(alloc.quantity) || 0) -
+                Math.max(0, Number(alloc.sentQuantity) || 0);
+            if (expected <= 0) continue;
+            expectedByKey.set(lineMatchKey(alloc), {
+                alloc,
+                expected,
+                productName: alloc.productName || "",
+                variantLabel: alloc.variantLabel || "",
+                sku: alloc.sku || ""
+            });
+        }
+        if (!expectedByKey.size) {
+            throw new AppError("This phase has no remaining quantity to send.", 400);
+        }
+    }
+
+    let hasVariance = false;
+    const shipmentLines = [];
+    const seen = new Set();
+
+    for (const raw of rawLines) {
+        const key = lineMatchKey(raw);
+        const meta = expectedByKey.get(key);
+        if (!meta) {
+            // try softer match by product+variant only
+            let soft = null;
+            for (const [k, v] of expectedByKey.entries()) {
+                const pid = String(raw.productId || "");
+                const vid = String(raw.productVariantId || "");
+                if (
+                    k.startsWith(`${pid}|${vid}|`) ||
+                    (pid && k.startsWith(`${pid}|`))
+                ) {
+                    soft = { key: k, meta: v };
+                    break;
+                }
+            }
+            if (!soft) {
+                throw new AppError(
+                    `Unexpected line in send payload: ${raw.productName || key}`,
+                    400
+                );
+            }
+            if (seen.has(soft.key)) continue;
+            const qty = Number(raw.quantity);
+            if (!Number.isFinite(qty) || qty < 0) {
+                throw new AppError("Send quantity cannot be negative.", 400);
+            }
+            if (Math.abs(qty - soft.meta.expected) > 0.0001) hasVariance = true;
+            seen.add(soft.key);
+            shipmentLines.push({
+                key: soft.key,
+                meta: soft.meta,
+                quantity: qty,
+                expectedQuantity: soft.meta.expected
+            });
+            continue;
+        }
+        if (seen.has(key)) continue;
+        const qty = Number(raw.quantity);
+        if (!Number.isFinite(qty) || qty < 0) {
+            throw new AppError("Send quantity cannot be negative.", 400);
+        }
+        if (Math.abs(qty - meta.expected) > 0.0001) hasVariance = true;
+        seen.add(key);
+        shipmentLines.push({
+            key,
+            meta,
+            quantity: qty,
+            expectedQuantity: meta.expected
+        });
+    }
+
+    // Require every expected line to be present (0 allowed only with variance reason)
+    for (const [key, meta] of expectedByKey.entries()) {
+        if (seen.has(key)) continue;
+        hasVariance = true;
+        shipmentLines.push({
+            key,
+            meta,
+            quantity: 0,
+            expectedQuantity: meta.expected
+        });
+    }
+
+    if (hasVariance && varianceReason.length < 3) {
+        throw new AppError(
+            "Sent qty differs from expected. Explain why you sent less/more (varianceReason).",
+            400
+        );
+    }
+
+    const positive = shipmentLines.filter((l) => l.quantity > 0);
+    if (!positive.length) {
+        throw new AppError("Enter at least one quantity greater than 0.", 400);
+    }
+
+    // Apply sent quantities onto PO items
+    for (const row of shipmentLines) {
+        if (row.quantity <= 0) continue;
+        const item =
+            row.meta.item ||
+            (po.items || []).find((i) => lineMatchKey(i) === row.key) ||
+            (po.items || []).find(
+                (i) =>
+                    String(i.productId || "") ===
+                        String(row.meta.alloc?.productId || "") &&
+                    String(i.productVariantId || "") ===
+                        String(row.meta.alloc?.productVariantId || "")
+            );
+        if (item) {
+            item.supplierSentQuantity =
+                Math.max(0, Number(item.supplierSentQuantity) || 0) + row.quantity;
+        }
+        if (row.meta.alloc) {
+            row.meta.alloc.sentQuantity =
+                Math.max(0, Number(row.meta.alloc.sentQuantity) || 0) + row.quantity;
+        }
+    }
+
+    if (deliveryType === "Partial" && phaseIndex >= 0) {
+        const phase = po.supplierPartialSchedule[phaseIndex];
+        phase.isCompleted = true;
+        phase.completedAt = sentAt;
+    }
+
+    if (!Array.isArray(po.supplierShipments)) po.supplierShipments = [];
+    po.supplierShipments.push({
+        sentAt,
+        transferDaysMin,
+        transferDaysMax,
+        deliveryMode: deliveryType,
+        phase:
+            deliveryType === "Partial" && phaseIndex >= 0
+                ? Number(po.supplierPartialSchedule[phaseIndex].phase) ||
+                  phaseIndex + 1
+                : null,
+        varianceReason,
+        note,
+        lines: shipmentLines.map((row) => ({
+            productId: row.meta.item?.productId || row.meta.alloc?.productId || null,
+            productVariantId:
+                row.meta.item?.productVariantId ||
+                row.meta.alloc?.productVariantId ||
+                null,
+            productName: row.meta.productName || "",
+            variantLabel: row.meta.variantLabel || "",
+            sku: row.meta.sku || "",
+            quantity: row.quantity,
+            expectedQuantity: row.expectedQuantity
+        }))
+    });
+
+    // Derive status from remaining send qty
+    let totalOrdered = 0;
+    let totalSent = 0;
+    for (const item of po.items || []) {
+        totalOrdered += Number(item.quantity) || 0;
+        totalSent += Number(item.supplierSentQuantity) || 0;
+    }
+    if (totalSent <= 0) {
+        po.status = "Supplier Accepted";
+    } else if (totalSent + 0.0001 >= totalOrdered) {
+        po.status = "Completely Delivered";
+        if (deliveryType === "Partial") {
+            for (const p of po.supplierPartialSchedule || []) {
+                p.isCompleted = true;
+                if (!p.completedAt) p.completedAt = sentAt;
+            }
+        }
+    } else {
+        po.status = "Partially Delivered";
+    }
+
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
 const cancelPurchaseOrder = async (id, actorId = null, reason = "") => {
     const po = await findPoOrFail(id);
     if (po.status === "Cancelled") {
@@ -1403,6 +1689,7 @@ module.exports = {
     markOrdered,
     supplierAcceptPurchaseOrder,
     supplierRejectPurchaseOrder,
+    supplierSendPurchaseOrder,
     cancelPurchaseOrder,
     getPurchaseOrderDeleteCheck,
     getProductPurchaseContext,
