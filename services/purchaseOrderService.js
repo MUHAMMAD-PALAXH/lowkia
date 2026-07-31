@@ -1013,6 +1013,65 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
                 lineAllocations: allocations
             };
         });
+
+        // Phase date chain: phase 1 from ≥ today; phase N from ≥ previous dateTo
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        for (let i = 0; i < partialSchedule.length; i++) {
+            const phase = partialSchedule[i];
+            const minFrom =
+                i === 0
+                    ? startOfToday
+                    : partialSchedule[i - 1].dateTo ||
+                      partialSchedule[i - 1].dateFrom;
+            if (phase.dateFrom < minFrom) {
+                throw new AppError(
+                    i === 0
+                        ? `partialSchedule[0]: dateFrom cannot be before today.`
+                        : `partialSchedule[${i}]: dateFrom cannot be before previous phase dateTo.`,
+                    400
+                );
+            }
+        }
+
+        // Qty across phases must equal ordered qty per PO line
+        const allocKey = (a) =>
+            `${String(a.productId || "")}|${String(a.productVariantId || "")}|${String(a.sku || "")}|${String(a.variantLabel || "")}`;
+        const orderedByKey = new Map();
+        for (const line of poLines) {
+            const key = allocKey(line);
+            orderedByKey.set(
+                key,
+                (orderedByKey.get(key) || 0) + (Number(line.quantity) || 0)
+            );
+        }
+        const allocatedByKey = new Map();
+        for (const phase of partialSchedule) {
+            for (const a of phase.lineAllocations || []) {
+                const key = allocKey(a);
+                allocatedByKey.set(
+                    key,
+                    (allocatedByKey.get(key) || 0) + (Number(a.quantity) || 0)
+                );
+            }
+        }
+        for (const [key, orderedQty] of orderedByKey.entries()) {
+            const allocated = allocatedByKey.get(key) || 0;
+            if (Math.abs(allocated - orderedQty) > 0.0001) {
+                throw new AppError(
+                    `Partial delivery quantities must total ordered qty for each line (got ${allocated}, expected ${orderedQty}).`,
+                    400
+                );
+            }
+        }
+        for (const [key, allocated] of allocatedByKey.entries()) {
+            if (!orderedByKey.has(key) && allocated > 0) {
+                throw new AppError(
+                    `Partial delivery includes unknown line allocation (${key}).`,
+                    400
+                );
+            }
+        }
     } else {
         // Full delivery — one phase with all ordered lines
         partialSchedule = [
