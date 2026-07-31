@@ -1436,7 +1436,13 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             if (!Number.isFinite(qty) || qty < 0) {
                 throw new AppError("Send quantity cannot be negative.", 400);
             }
-            if (Math.abs(qty - soft.meta.expected) > 0.0001) hasVariance = true;
+            if (qty > soft.meta.expected + 0.0001) {
+                throw new AppError(
+                    `Send quantity cannot exceed PO remaining ${soft.meta.expected} for ${soft.meta.productName || soft.key}.`,
+                    400
+                );
+            }
+            if (qty < soft.meta.expected - 0.0001) hasVariance = true;
             seen.add(soft.key);
             shipmentLines.push({
                 key: soft.key,
@@ -1451,7 +1457,13 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         if (!Number.isFinite(qty) || qty < 0) {
             throw new AppError("Send quantity cannot be negative.", 400);
         }
-        if (Math.abs(qty - meta.expected) > 0.0001) hasVariance = true;
+        if (qty > meta.expected + 0.0001) {
+            throw new AppError(
+                `Send quantity cannot exceed PO remaining ${meta.expected} for ${meta.productName || key}.`,
+                400
+            );
+        }
+        if (qty < meta.expected - 0.0001) hasVariance = true;
         seen.add(key);
         shipmentLines.push({
             key,
@@ -1475,7 +1487,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
 
     if (hasVariance && varianceReason.length < 3) {
         throw new AppError(
-            "Sent qty differs from expected. Explain why you sent less/more (varianceReason).",
+            "Sent qty is less than expected. Explain why (varianceReason).",
             400
         );
     }
