@@ -266,7 +266,14 @@ const bulkPermanentDeleteSuppliers = (payload) =>
     trash.bulkPermanentDelete(payload);
 
 const getSupplierStats = async () => {
-    const [[rows], trashCount, awaitingPurchaseOrders, acceptedPurchaseOrders, rejectedPurchaseOrders] = await Promise.all([
+    const [
+        [rows],
+        trashCount,
+        awaitingPurchaseOrders,
+        acceptedPurchaseOrders,
+        rejectedPurchaseOrders,
+        awaitingBySupplierRows
+    ] = await Promise.all([
         Supplier.aggregate([
             { $match: { isDeleted: false } },
             {
@@ -312,8 +319,29 @@ const getSupplierStats = async () => {
         PurchaseOrder.countDocuments({
             isDeleted: { $ne: true },
             status: "Supplier Rejected"
-        })
+        }),
+        PurchaseOrder.aggregate([
+            {
+                $match: {
+                    isDeleted: { $ne: true },
+                    status: "Awaiting Supplier",
+                    supplierId: { $ne: null }
+                }
+            },
+            {
+                $group: {
+                    _id: "$supplierId",
+                    count: { $sum: 1 }
+                }
+            }
+        ])
     ]);
+
+    const awaitingBySupplier = {};
+    for (const row of awaitingBySupplierRows || []) {
+        if (!row?._id) continue;
+        awaitingBySupplier[String(row._id)] = row.count || 0;
+    }
 
     return {
         ...(rows || {
@@ -328,7 +356,8 @@ const getSupplierStats = async () => {
         trashCount,
         awaitingPurchaseOrders,
         acceptedPurchaseOrders,
-        rejectedPurchaseOrders
+        rejectedPurchaseOrders,
+        awaitingBySupplier
     };
 };
 
