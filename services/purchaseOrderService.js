@@ -34,6 +34,11 @@ const CANCEL_AND_TRASH_STATUSES = [
     "Completely Delivered"
 ];
 
+const poHasRecordedPayments = (po) =>
+    (po?.supplierPaymentSchedule || []).some(
+        (p) => p.isPaid === true || Math.max(Number(p.paidAmount) || 0, 0) > 0
+    );
+
 const applyBuyerWithdrawalNotice = (po, { reason = "", forTrash = true } = {}) => {
     const no = po.purchaseOrderNo || "this purchase order";
     const hadSupplier = Boolean(po.supplierId);
@@ -100,6 +105,12 @@ const trash = createTrashOps(PurchaseOrder, {
         if (!NO_STOCK_IMPACT_STATUSES.includes(doc.status)) {
             throw new AppError(
                 `Only Draft or Cancelled purchase orders can move to trash directly. This PO is "${doc.status}". Use Cancel & trash to withdraw from the supplier and archive it.`,
+                400
+            );
+        }
+        if (poHasRecordedPayments(doc)) {
+            throw new AppError(
+                "Cannot trash — supplier payments have been recorded on this purchase order. Keep it as payment history.",
                 400
             );
         }
@@ -959,6 +970,13 @@ const prepareAndTrashPurchaseOrder = async (
     if (stockedGrn) {
         throw new AppError(
             `Cannot trash — GRN ${stockedGrn.grnNumber || ""} already updated inventory. Keep this PO as history.`,
+            400
+        );
+    }
+
+    if (poHasRecordedPayments(po)) {
+        throw new AppError(
+            "Cannot trash — supplier payments have been recorded on this purchase order. Keep it as payment history.",
             400
         );
     }
@@ -1885,6 +1903,148 @@ const cancelPurchaseOrder = async (id, actorId = null, reason = "") => {
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
+const plannedPaymentAmount = (phase, grandTotal) => {
+    const raw = Math.max(Number(phase?.amount) || 0, 0);
+    if (String(phase?.amountType || "Fixed") === "Percentage") {
+        return Math.max(((Number(grandTotal) || 0) * raw) / 100, 0);
+    }
+    return raw;
+};
+
+const recomputePoPaymentFromSchedule = (po) => {
+    const schedule = Array.isArray(po.supplierPaymentSchedule)
+        ? po.supplierPaymentSchedule
+        : [];
+    const totalPaid = schedule.reduce(
+        (sum, p) => sum + Math.max(Number(p.paidAmount) || 0, 0),
+        0
+    );
+    const grand = Math.max(Number(po.grandTotal) || 0, 0);
+    po.paidAmount = totalPaid;
+    po.dueAmount = Math.max(grand - totalPaid, 0);
+    if (totalPaid <= 0) po.paymentStatus = "Pending";
+    else if (totalPaid + 0.0001 >= grand) po.paymentStatus = "Paid";
+    else po.paymentStatus = "Partial";
+};
+
+const poHasReceivedQty = (po) =>
+    (po.items || []).some(
+        (i) => Math.max(Number(i.receivedQuantity) || 0, 0) > 0
+    );
+
+/**
+ * Settle a supplier payment-schedule phase and refresh paid/due/status.
+ */
+const recordSupplierPayment = async (id, payload = {}, actorId = null) => {
+    const po = await findPoOrFail(id);
+    if (!po.supplierId) {
+        throw new AppError("This purchase order has no supplier.", 400);
+    }
+    if (
+        [
+            "Draft",
+            "Pending Approval",
+            "Approved",
+            "Awaiting Supplier",
+            "Supplier Rejected",
+            "Cancelled"
+        ].includes(po.status)
+    ) {
+        throw new AppError(
+            `Cannot record supplier payment while PO status is "${po.status}".`,
+            400
+        );
+    }
+
+    const schedule = Array.isArray(po.supplierPaymentSchedule)
+        ? po.supplierPaymentSchedule
+        : [];
+    if (!schedule.length) {
+        throw new AppError(
+            "No supplier payment schedule on this purchase order.",
+            400
+        );
+    }
+
+    const phaseNo = Math.max(parseInt(payload.phase, 10) || 0, 0);
+    const phase =
+        schedule.find((p) => Number(p.phase) === phaseNo) ||
+        (phaseNo > 0 ? null : schedule[0]);
+    if (!phase) {
+        throw new AppError(`Payment phase ${phaseNo || "?"} not found.`, 400);
+    }
+
+    const payType = String(po.supplierPaymentType || "").trim();
+    const advanceTypes = ["Advance Full", "Partial", "Advance Partial"];
+    const postReceiveTypes = [
+        "Cash on Delivery",
+        "Cash on Delivery Partially",
+        "After Delivery"
+    ];
+
+    if (postReceiveTypes.includes(payType)) {
+        const receivedOk =
+            poHasReceivedQty(po) ||
+            ["Partially Received", "Received", "Completed"].includes(po.status);
+        if (!receivedOk) {
+            throw new AppError(
+                `${payType} payments can be recorded after goods are received (GRN complete).`,
+                400
+            );
+        }
+    } else if (advanceTypes.includes(payType)) {
+        // Payable any time after Supplier Accepted (current status already past that).
+    } else if (!payType) {
+        throw new AppError(
+            "Supplier payment type is missing. Accept the PO with payment terms first.",
+            400
+        );
+    }
+
+    const planned = plannedPaymentAmount(phase, po.grandTotal);
+    if (planned <= 0) {
+        throw new AppError("This payment phase has no planned amount.", 400);
+    }
+
+    const already = Math.max(Number(phase.paidAmount) || 0, 0);
+    const remaining = Math.max(planned - already, 0);
+    if (remaining <= 0 || phase.isPaid) {
+        throw new AppError("This payment phase is already fully paid.", 400);
+    }
+
+    let payNow = payload.paidAmount != null
+        ? Math.max(Number(payload.paidAmount) || 0, 0)
+        : remaining;
+    if (payNow <= 0) {
+        throw new AppError("paidAmount must be greater than 0.", 400);
+    }
+    if (payNow > remaining + 0.0001) {
+        throw new AppError(
+            `Cannot pay more than remaining ${remaining.toFixed(2)} for this phase.`,
+            400
+        );
+    }
+
+    phase.paidAmount = already + payNow;
+    phase.isPaid = phase.paidAmount + 0.0001 >= planned;
+    phase.paidAt = new Date();
+    phase.paidBy = toObjectId(actorId);
+    phase.paymentRef = String(payload.paymentRef || payload.reference || "")
+        .trim()
+        .slice(0, 120);
+    phase.paymentNote = String(payload.note || payload.paymentNote || "")
+        .trim()
+        .slice(0, 500);
+    if (payload.method) {
+        phase.method = String(payload.method).trim();
+    }
+
+    recomputePoPaymentFromSchedule(po);
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
 /** Friendly trash guidance + Cancel & trash eligibility */
 const getPurchaseOrderDeleteCheck = async (id) => {
     const po = await PurchaseOrder.findOne({ _id: id, ...NOT_DELETED })
@@ -1900,11 +2060,15 @@ const getPurchaseOrderDeleteCheck = async (id) => {
         .select("grnNumber")
         .lean();
 
-    const canTrashDirect = NO_STOCK_IMPACT_STATUSES.includes(po.status);
+    const hasPayments = poHasRecordedPayments(po);
+    const canTrashDirect =
+        NO_STOCK_IMPACT_STATUSES.includes(po.status) && !hasPayments;
     const canCancelAndTrash =
         !TRASH_LOCKED_STATUSES.includes(po.status) &&
         !stockedGrn &&
-        (canTrashDirect || CANCEL_AND_TRASH_STATUSES.includes(po.status));
+        !hasPayments &&
+        (NO_STOCK_IMPACT_STATUSES.includes(po.status) ||
+            CANCEL_AND_TRASH_STATUSES.includes(po.status));
 
     const products = [];
     const seen = new Set();
@@ -1941,7 +2105,10 @@ const getPurchaseOrderDeleteCheck = async (id) => {
     let tip = "Draft and Cancelled POs can move to trash directly.";
     let supplierNotice = "";
 
-    if (stockedGrn || TRASH_LOCKED_STATUSES.includes(po.status)) {
+    if (hasPayments) {
+        tip =
+            "Supplier payments have been recorded on this purchase order, so it stays as payment history and cannot be trashed.";
+    } else if (stockedGrn || TRASH_LOCKED_STATUSES.includes(po.status)) {
         tip =
             "This purchase order is complete (or already has stocked receipts), so it stays as purchase history and cannot be trashed. " +
             "To remove a catalog product linked here: open Products → Resolve & trash.";
@@ -1950,7 +2117,8 @@ const getPurchaseOrderDeleteCheck = async (id) => {
             "Use Cancel & trash. This cancels the PO, notifies the supplier in-app that the order was withdrawn, " +
             "archives open draft GRNs, then moves the PO to trash. " +
             "Restore brings it back as Cancelled with a restore notice for the supplier. " +
-            "Permanent delete removes it forever (blocked if any GRN already updated inventory).";
+            "Permanent delete removes it forever (blocked if any GRN already updated inventory). " +
+            "Create GRN only after the supplier sends goods.";
         if (hasSupplier) {
             supplierNotice =
                 `Supplier will see: “Purchase order ${po.purchaseOrderNo || ""} was cancelled by the buyer and moved to trash.”`;
@@ -1965,6 +2133,7 @@ const getPurchaseOrderDeleteCheck = async (id) => {
         canTrash: canTrashDirect,
         canCancelAndTrash,
         hasSupplier,
+        hasPayments,
         status: po.status,
         purchaseOrderNo: po.purchaseOrderNo || "",
         tip,
@@ -2071,6 +2240,7 @@ module.exports = {
     supplierSendPurchaseOrder,
     cancelPurchaseOrder,
     prepareAndTrashPurchaseOrder,
+    recordSupplierPayment,
     getPurchaseOrderDeleteCheck,
     getProductPurchaseContext,
     LOCKED_AFTER

@@ -141,6 +141,13 @@ router.post(
     purchaseOrderController.supplierSendPurchaseOrder
 );
 
+router.post(
+    "/:id/supplier-payments",
+    idValidator,
+    validate,
+    purchaseOrderController.recordSupplierPayment
+);
+
 router.patch(
     "/:id/cancel",
     idValidator,

@@ -195,6 +195,15 @@ exports.cancelPurchaseOrder = asyncHandler(async (req, res) => {
     return success(res, "Purchase order cancelled.", po);
 });
 
+exports.recordSupplierPayment = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.recordSupplierPayment(
+        req.params.id,
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Supplier payment recorded.", po);
+});
+
 exports.getPurchaseOrderDeleteCheck = asyncHandler(async (req, res) => {
     const data = await purchaseOrderService.getPurchaseOrderDeleteCheck(
         req.params.id

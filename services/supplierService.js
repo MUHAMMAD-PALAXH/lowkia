@@ -1390,7 +1390,12 @@ const getSupplierDetails = async (id, query = {}) => {
                 days: Number(s.days) || 0,
                 dueDate: s.dueDate || null,
                 method: s.method || "",
-                note: s.note || ""
+                note: s.note || "",
+                isPaid: !!s.isPaid,
+                paidAmount: Number(s.paidAmount) || 0,
+                paidAt: s.paidAt || null,
+                paymentRef: s.paymentRef || "",
+                paymentNote: s.paymentNote || ""
             })),
             supplierShipments: (po.supplierShipments || []).map((s) => ({
                 id: s._id || null,

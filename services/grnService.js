@@ -34,7 +34,18 @@ const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const RECEIVABLE_PO = [
     "Ordered",
-    "Supplier Accepted",
+    "Partially Delivered",
+    "Completely Delivered",
+    "Partially Received"
+];
+/** Supplier POs: GRN only after goods have been sent (not merely accepted). */
+const SUPPLIER_GRN_READY = [
+    "Partially Delivered",
+    "Completely Delivered",
+    "Partially Received"
+];
+const NO_SUPPLIER_GRN_READY = [
+    "Ordered",
     "Partially Delivered",
     "Completely Delivered",
     "Partially Received"
@@ -165,13 +176,23 @@ const loadProductMeta = async (productId) => {
 
 /** Build draft GRN lines from pending PO quantities */
 const buildLinesFromPo = async (po) => {
+    const hasSupplier = Boolean(po.supplierId);
     const lines = [];
     for (const item of po.items || []) {
-        const pending = Math.max(
-            Number(item.quantity || 0) - Number(item.receivedQuantity || 0),
-            0
-        );
-        if (pending <= 0) continue;
+        const ordered = Math.max(Number(item.quantity) || 0, 0);
+        const received = Math.max(Number(item.receivedQuantity) || 0, 0);
+        const orderedPending = Math.max(ordered - received, 0);
+        if (orderedPending <= 0) continue;
+
+        // With supplier: only receive what was shipped but not yet received.
+        // Without supplier: classic ordered − received.
+        let receivable = orderedPending;
+        if (hasSupplier) {
+            const sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
+            const sentPending = Math.max(sent - received, 0);
+            receivable = Math.min(orderedPending, sentPending);
+        }
+        if (receivable <= 0) continue;
 
         const product = await loadProductMeta(item.productId);
         const trackingType = item.trackingType
@@ -187,8 +208,8 @@ const buildLinesFromPo = async (po) => {
             barcode: product?.barcode || item.barcode || "",
             productName: item.productName,
             variantLabel: item.variantLabel || "",
-            // Cap for THIS GRN = remaining pending on PO (supports partial receive)
-            orderedQuantity: pending,
+            // Cap for THIS GRN = shipped-not-yet-received (or ordered pending)
+            orderedQuantity: receivable,
             receivedQuantity: 0,
             damagedQuantity: 0,
             acceptedQuantity: 0,
@@ -795,7 +816,6 @@ const applyPoReceiving = async (grn, session) => {
 
 const listReceivablePurchaseOrders = async (query = {}) => {
     // Only POs where Create / Continue GRN has already started (a GRN doc exists).
-    // Supplier Accepted alone must NOT appear here — start GRN from PO details first.
     const startedPoIds = await GRN.distinct("purchaseOrderId", {
         ...NOT_DELETED,
         purchaseOrderId: { $ne: null }
@@ -843,12 +863,16 @@ const listReceivablePurchaseOrders = async (query = {}) => {
         items: items
             .map((po) => {
                 const open = openByPo.get(String(po._id));
-                const pendingLines = (po.items || []).filter(
-                    (i) =>
-                        Number(i.quantity || 0) -
-                            Number(i.receivedQuantity || 0) >
-                        0
-                ).length;
+                const hasSupplier = Boolean(po.supplierId);
+                const pendingLines = (po.items || []).filter((i) => {
+                    const ordered = Math.max(Number(i.quantity) || 0, 0);
+                    const received = Math.max(Number(i.receivedQuantity) || 0, 0);
+                    const orderedPending = Math.max(ordered - received, 0);
+                    if (orderedPending <= 0) return false;
+                    if (!hasSupplier) return true;
+                    const sent = Math.max(Number(i.supplierSentQuantity) || 0, 0);
+                    return sent - received > 0;
+                }).length;
                 return {
                     ...po,
                     pendingLines,
@@ -873,28 +897,28 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     const po = await PurchaseOrder.findOne({ _id: poId, ...NOT_DELETED });
     if (!po) throw new AppError("Purchase order not found.", 404);
 
-    // With supplier: GRN only after supplier accepted terms (or later receive stages).
+    // With supplier: GRN only after goods are sent (not merely accepted).
     // Without supplier: Ordered / receive stages.
-    const supplierReady = [
-        "Supplier Accepted",
-        "Partially Delivered",
-        "Completely Delivered",
-        "Partially Received"
-    ];
-    const noSupplierReady = [
-        "Ordered",
-        "Partially Delivered",
-        "Completely Delivered",
-        "Partially Received"
-    ];
-    const allowed = po.supplierId ? supplierReady : noSupplierReady;
+    const allowed = po.supplierId ? SUPPLIER_GRN_READY : NO_SUPPLIER_GRN_READY;
     if (!allowed.includes(po.status)) {
         throw new AppError(
             po.supplierId
-                ? "GRN can only be created after the supplier accepts this purchase order (with delivery & payment terms), or when receiving has already started."
+                ? "GRN can only be created after the supplier sends goods (Partially/Completely Delivered), or when receiving has already started."
                 : "GRN can only be created from Ordered or Partially Received purchase orders.",
             400
         );
+    }
+
+    if (po.supplierId) {
+        const anySent = (po.items || []).some(
+            (i) => Math.max(Number(i.supplierSentQuantity) || 0, 0) > 0
+        );
+        if (!anySent) {
+            throw new AppError(
+                "Supplier has not sent any products yet. Wait until goods are sent, then create GRN.",
+                400
+            );
+        }
     }
 
     // One open GRN per PO — reopen Draft / Pending instead of creating duplicates
@@ -991,7 +1015,12 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
 
     const lines = await buildLinesFromPo(po);
     if (!lines.length) {
-        throw new AppError("This purchase order has nothing left to receive.", 400);
+        throw new AppError(
+            po.supplierId
+                ? "Supplier has not sent remaining qty yet. Wait for a shipment, then create GRN."
+                : "This purchase order has nothing left to receive.",
+            400
+        );
     }
 
     const owner = isOwnerActor(payload);

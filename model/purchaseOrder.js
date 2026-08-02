@@ -654,7 +654,17 @@ const purchaseOrderSchema = new mongoose.Schema(
                     ],
                     default: ""
                 },
-                note: { type: String, default: "", trim: true }
+                note: { type: String, default: "", trim: true },
+                isPaid: { type: Boolean, default: false },
+                paidAmount: { type: Number, default: 0, min: 0 },
+                paidAt: { type: Date, default: null },
+                paidBy: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "AdminUser",
+                    default: null
+                },
+                paymentRef: { type: String, default: "", trim: true },
+                paymentNote: { type: String, default: "", trim: true }
             }
         ],
 
