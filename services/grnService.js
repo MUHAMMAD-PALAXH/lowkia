@@ -1,14 +1,15 @@
 /**
  * GRN Service
  * Locked decisions:
- * - Create only from Ordered / Supplier Accepted / Partially Received PO (no manual GRN)
- * - First GRN start is from Purchase Order → Create / Continue GRN
- * - GRN "Receive from PO" list only shows POs that already have a GRN started
- * - Partial receive allowed (multiple GRNs per PO)
+ * - Create only from Ordered / shipped / Partially Received PO (no manual GRN)
+ * - First GRN start is from Purchase Order → Create GRN
+ * - ONE GRN document per PO (Continue / Receive always reuses it)
+ * - Partial receive batches stock inventory but GRN stays Draft until PO fully received
+ * - GRN "Receive from PO" only lists POs with an open (not Completed) GRN
  * - IMEI: scan one-by-one + bulk paste
  * - Owner completes freely; Employee needs approval before stock increases
  * - Non-IMEI: received qty (barcode optional)
- * - Stock increases ONLY on GRN completion (Mongo transaction)
+ * - Stock increases on each receive batch; header status Completed only when PO is fully received
  */
 
 const mongoose = require("mongoose");
@@ -58,9 +59,14 @@ const trash = createTrashOps(GRN, {
     statusField: "status",
     restoreStatus: "Draft",
     beforeSoftDelete: async (doc) => {
-        if (doc.inventoryUpdated || doc.status === "Completed") {
+        if (
+            doc.inventoryUpdated ||
+            doc.status === "Completed" ||
+            doc.purchaseStatus === "Partially Received" ||
+            doc.purchaseStatus === "Completed"
+        ) {
             throw new AppError(
-                "Completed GRNs already updated inventory and cannot be trashed.",
+                "GRNs that have stocked inventory (or are completed) cannot be trashed.",
                 400
             );
         }
@@ -815,20 +821,29 @@ const applyPoReceiving = async (grn, session) => {
 // ==========================================================
 
 const listReceivablePurchaseOrders = async (query = {}) => {
-    // Only POs where Create / Continue GRN has already started (a GRN doc exists).
-    const startedPoIds = await GRN.distinct("purchaseOrderId", {
+    // Only POs with an OPEN GRN (not Completed) — one GRN per PO lifecycle.
+    const openGrns = await GRN.find({
         ...NOT_DELETED,
-        purchaseOrderId: { $ne: null }
-    });
+        purchaseOrderId: { $ne: null },
+        status: { $in: EDITABLE_GRN },
+        inventoryUpdated: { $ne: true }
+    })
+        .select("grnNumber purchaseOrderId status purchaseStatus")
+        .lean();
 
-    if (!startedPoIds.length) {
+    if (!openGrns.length) {
         return { items: [] };
     }
+
+    const openByPo = new Map(
+        openGrns.map((g) => [String(g.purchaseOrderId), g])
+    );
+    const openPoIds = [...openByPo.keys()].map((id) => toObjectId(id)).filter(Boolean);
 
     const filter = {
         ...NOT_DELETED,
         status: { $in: RECEIVABLE_PO },
-        _id: { $in: startedPoIds }
+        _id: { $in: openPoIds }
     };
     if (query.search) {
         const search = escapeRegex(String(query.search).trim());
@@ -845,19 +860,6 @@ const listReceivablePurchaseOrders = async (query = {}) => {
         .populate("supplierId", "supplierCode name")
         .populate("warehouseId", "warehouseCode warehouseName")
         .lean();
-
-    const poIds = items.map((p) => p._id);
-    const openGrns = await GRN.find({
-        purchaseOrderId: { $in: poIds },
-        ...NOT_DELETED,
-        status: { $in: EDITABLE_GRN },
-        inventoryUpdated: { $ne: true }
-    })
-        .select("grnNumber purchaseOrderId status")
-        .lean();
-    const openByPo = new Map(
-        openGrns.map((g) => [String(g.purchaseOrderId), g])
-    );
 
     return {
         items: items
@@ -878,10 +880,11 @@ const listReceivablePurchaseOrders = async (query = {}) => {
                     pendingLines,
                     openGrnId: open?._id || null,
                     openGrnNumber: open?.grnNumber || null,
-                    hasOpenGrn: Boolean(open)
+                    hasOpenGrn: Boolean(open),
+                    grnPurchaseStatus: open?.purchaseStatus || "Pending"
                 };
             })
-            .filter((po) => po.pendingLines > 0)
+            .filter((po) => po.pendingLines > 0 && po.hasOpenGrn)
     };
 };
 
@@ -921,7 +924,7 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
         }
     }
 
-    // One open GRN per PO — reopen Draft / Pending instead of creating duplicates
+    // ONE GRN per PO — always reuse the existing document when present.
     const existingOpen = await GRN.findOne({
         purchaseOrderId: poId,
         ...NOT_DELETED,
@@ -929,11 +932,14 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
         inventoryUpdated: { $ne: true }
     }).sort({ createdAt: -1 });
 
-    if (existingOpen) {
-        // Refresh pending caps / missing lines from current PO state
+    const refreshAndReturn = async (grnDoc, { reopen = false } = {}) => {
         const freshLines = await buildLinesFromPo(po);
+        if (!freshLines.length && !reopen) {
+            // Still allow opening an empty-remaining GRN for view; but block new work.
+        }
+
         const byPoItem = new Map();
-        for (const line of existingOpen.items || []) {
+        for (const line of grnDoc.items || []) {
             const key = String(line.purchaseOrderItemId || "");
             if (key) byPoItem.set(key, line);
         }
@@ -942,11 +948,10 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
         for (const fresh of freshLines) {
             const key = String(fresh.purchaseOrderItemId || "");
             const prev = key ? byPoItem.get(key) : null;
-            if (prev) {
+            if (prev && !reopen) {
                 const received = Math.max(Number(prev.receivedQuantity) || 0, 0);
                 const damaged = Math.max(Number(prev.damagedQuantity) || 0, 0);
                 const ordered = Math.max(Number(fresh.orderedQuantity) || 0, 0);
-                // Keep work-in-progress receive data; refresh ordered cap from PO.
                 prev.orderedQuantity = Math.max(ordered, received);
                 prev.productId = fresh.productId || prev.productId;
                 prev.productVariantId =
@@ -979,27 +984,70 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
             }
         }
 
-        // Keep lines that still have received qty even if PO pending is gone
-        for (const leftover of byPoItem.values()) {
-            if ((Number(leftover.receivedQuantity) || 0) > 0) {
-                merged.push(leftover);
+        if (!reopen) {
+            for (const leftover of byPoItem.values()) {
+                if ((Number(leftover.receivedQuantity) || 0) > 0) {
+                    merged.push(leftover);
+                }
             }
         }
 
-        existingOpen.items = merged;
-        recalculateGrn(existingOpen);
-        await existingOpen.save();
+        grnDoc.items = merged;
+        recalculateGrn(grnDoc);
+        await grnDoc.save();
 
         if (!Array.isArray(po.grnIds)) po.grnIds = [];
-        if (!po.grnIds.some((id) => String(id) === String(existingOpen._id))) {
-            po.grnIds.push(existingOpen._id);
+        if (!po.grnIds.some((id) => String(id) === String(grnDoc._id))) {
+            po.grnIds.push(grnDoc._id);
             await po.save();
         }
 
-        const reused = await populateGrn(GRN.findById(existingOpen._id));
+        const reused = await populateGrn(GRN.findById(grnDoc._id));
         const plain = enrichGrnDoc(reused);
         plain.reusedExisting = true;
         return plain;
+    };
+
+    if (existingOpen) {
+        return refreshAndReturn(existingOpen);
+    }
+
+    // Legacy / race: a Completed GRN may exist while PO still has pending qty.
+    // Never create a second GRN — reopen the same document for remaining receive.
+    const existingAny = await GRN.findOne({
+        purchaseOrderId: poId,
+        ...NOT_DELETED,
+        status: { $ne: "Cancelled" }
+    }).sort({ createdAt: -1 });
+
+    if (existingAny) {
+        if (existingAny.status === "Completed" && po.isFullyReceived) {
+            throw new AppError(
+                "This purchase order already has a completed GRN and is fully received. Only one GRN is allowed per PO.",
+                400
+            );
+        }
+
+        // Reopen for remaining qty (one GRN lifecycle).
+        existingAny.status = "Draft";
+        existingAny.inventoryUpdated = false;
+        existingAny.inventoryUpdatedAt = null;
+        existingAny.inventoryUpdatedBy = null;
+        existingAny.purchaseStatus =
+            po.isFullyReceived
+                ? "Completed"
+                : (Number(
+                      (po.items || []).reduce(
+                          (s, i) => s + (Number(i.receivedQuantity) || 0),
+                          0
+                      )
+                  ) > 0
+                      ? "Partially Received"
+                      : "Pending");
+        existingAny.requiresApproval = !isOwnerActor(payload)
+            ? existingAny.requiresApproval
+            : false;
+        return refreshAndReturn(existingAny, { reopen: true });
     }
 
     const warehouseId =
@@ -1527,7 +1575,7 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
     session.startTransaction();
     try {
         const grn = await findGrnOrFail(id, session);
-        if (grn.inventoryUpdated || grn.status === "Completed") {
+        if (grn.status === "Completed" && grn.inventoryUpdated) {
             throw new AppError("GRN already completed.", 400);
         }
         if (!["Draft", "Pending Approval"].includes(grn.status)) {
@@ -1555,13 +1603,29 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
             toObjectId(actorId),
             session
         );
-        await applyPoReceiving(grn, session);
+        const po = await applyPoReceiving(grn, session);
+        const fullyReceived = po.isFullyReceived === true;
 
-        grn.status = "Completed";
-        grn.inventoryUpdated = true;
-        grn.inventoryUpdatedAt = new Date();
-        grn.inventoryUpdatedBy = toObjectId(actorId);
-        grn.qualityStatus = "Passed";
+        if (fullyReceived) {
+            // PO products fully received — close the single GRN.
+            grn.status = "Completed";
+            grn.inventoryUpdated = true;
+            grn.inventoryUpdatedAt = new Date();
+            grn.inventoryUpdatedBy = toObjectId(actorId);
+            grn.purchaseStatus = "Completed";
+            grn.qualityStatus = "Passed";
+        } else {
+            // Partial batch stocked — keep the SAME GRN open for remaining qty.
+            const remainingLines = await buildLinesFromPo(po);
+            grn.status = "Draft";
+            grn.inventoryUpdated = false;
+            grn.purchaseStatus = "Partially Received";
+            grn.qualityStatus = "Pending";
+            grn.items = remainingLines;
+            recalculateGrn(grn);
+            grn.receivedDate = new Date();
+        }
+
         if (opts.approvedBy || wasPending) {
             grn.approvedBy = toObjectId(opts.approvedBy || actorId);
             grn.approvedAt = new Date();
@@ -1592,6 +1656,8 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
             ok: refreshErrors.length === 0,
             errors: refreshErrors
         };
+        plain.partialReceive = !fullyReceived;
+        plain.fullyReceived = fullyReceived;
         return plain;
     } catch (err) {
         if (session.inTransaction()) {
@@ -1607,6 +1673,15 @@ const cancelGrn = async (id, actorId = null, reason = "") => {
     const grn = await findGrnOrFail(id);
     if (grn.inventoryUpdated || grn.status === "Completed") {
         throw new AppError("Completed GRNs cannot be cancelled.", 400);
+    }
+    if (
+        grn.purchaseStatus === "Partially Received" ||
+        grn.purchaseStatus === "Completed"
+    ) {
+        throw new AppError(
+            "This GRN already stocked inventory for a partial receive and cannot be cancelled.",
+            400
+        );
     }
     if (grn.status === "Cancelled") {
         throw new AppError("GRN already cancelled.", 400);
