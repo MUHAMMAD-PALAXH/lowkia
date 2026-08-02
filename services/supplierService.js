@@ -516,12 +516,28 @@ const getSupplierDetails = async (id, query = {}) => {
         PurchaseOrder.find({
             supplierId,
             $or: [
-                { isDeleted: { $ne: true } },
-                // Keep buyer-cancelled / trashed POs visible to supplier (red, disabled)
+                // Visible only after "Send to Supplier" (Awaiting+) — not Draft/Approved drafts
                 {
-                    isDeleted: true,
+                    isDeleted: { $ne: true },
+                    status: {
+                        $in: [
+                            "Awaiting Supplier",
+                            "Supplier Accepted",
+                            "Supplier Rejected",
+                            "Partially Delivered",
+                            "Completely Delivered",
+                            "Partially Received",
+                            "Received",
+                            "Completed"
+                        ]
+                    }
+                },
+                // Buyer cancelled / trashed after the order was already sent to supplier
+                {
                     status: "Cancelled",
-                    supplierAcceptanceStatus: "Withdrawn"
+                    supplierAcceptanceStatus: {
+                        $in: ["Pending", "Accepted", "Rejected", "Withdrawn"]
+                    }
                 }
             ]
         })
