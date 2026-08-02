@@ -1858,30 +1858,43 @@ const cancelPurchaseOrder = async (id, actorId = null, reason = "") => {
     if (po.status === "Cancelled") {
         throw new AppError("Purchase order is already cancelled.", 400);
     }
-    if (["Received", "Completed", "Partially Received"].includes(po.status)) {
+    if (TRASH_LOCKED_STATUSES.includes(po.status)) {
         throw new AppError(
             "Fully received / completed / partially received purchase orders cannot be cancelled.",
             400
         );
     }
 
-    po.status = "Cancelled";
-    po.cancelledBy = toObjectId(actorId);
+    const actor = toObjectId(actorId);
+    po.cancelledBy = actor;
     po.cancelledAt = new Date();
-    if (reason) po.rejectionReason = String(reason).trim();
-    po.updatedBy = toObjectId(actorId);
+    po.updatedBy = actor;
+    applyBuyerWithdrawalNotice(po, { reason, forTrash: false });
     await po.save();
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
-/** Friendly trash guidance for Partially Received / locked POs */
+/** Friendly trash guidance + Cancel & trash eligibility */
 const getPurchaseOrderDeleteCheck = async (id) => {
     const po = await PurchaseOrder.findOne({ _id: id, ...NOT_DELETED })
         .populate("items.productId", "name productCode status trackingType")
         .lean();
     if (!po) throw new AppError("Purchase order not found.", 404);
 
-    const canTrash = ["Draft", "Cancelled"].includes(po.status);
+    const stockedGrn = await GRN.findOne({
+        purchaseOrderId: po._id,
+        ...NOT_DELETED,
+        inventoryUpdated: true
+    })
+        .select("grnNumber")
+        .lean();
+
+    const canTrashDirect = NO_STOCK_IMPACT_STATUSES.includes(po.status);
+    const canCancelAndTrash =
+        !TRASH_LOCKED_STATUSES.includes(po.status) &&
+        !stockedGrn &&
+        (canTrashDirect || CANCEL_AND_TRASH_STATUSES.includes(po.status));
+
     const products = [];
     const seen = new Set();
     for (const item of po.items || []) {
@@ -1901,12 +1914,11 @@ const getPurchaseOrderDeleteCheck = async (id) => {
 
     let grns = [];
     try {
-        const Grn = mongoose.models.Grn || require("../model/grn");
-        grns = await Grn.find({
+        grns = await GRN.find({
             purchaseOrderId: po._id,
             isDeleted: { $ne: true }
         })
-            .select("grnNumber status createdAt")
+            .select("grnNumber status inventoryUpdated createdAt")
             .sort({ createdAt: -1 })
             .limit(20)
             .lean();
@@ -1914,28 +1926,45 @@ const getPurchaseOrderDeleteCheck = async (id) => {
         grns = [];
     }
 
-    let tip =
-        "Only Draft or Cancelled purchase orders can move to trash.";
-    if (po.status === "Partially Received" || po.status === "Ordered") {
+    const hasSupplier = Boolean(po.supplierId);
+    let tip = "Draft and Cancelled POs can move to trash directly.";
+    let supplierNotice = "";
+
+    if (stockedGrn || TRASH_LOCKED_STATUSES.includes(po.status)) {
         tip =
-            "This PO already has (or expects) receipts, so it stays as purchase history and cannot be trashed. " +
-            "To remove a catalog product linked here: open Products → Resolve & trash. " +
-            "That unlinks the product from this PO and keeps the PO/GRN history intact.";
-    } else if (["Received", "Completed"].includes(po.status)) {
+            "This PO already has stocked receipts (or is fully received), so it stays as purchase history and cannot be trashed. " +
+            "To remove a catalog product linked here: open Products → Resolve & trash.";
+    } else if (canCancelAndTrash && !canTrashDirect) {
         tip =
-            "Fully received/completed POs are permanent history and cannot be trashed.";
+            "Use Cancel & trash. This cancels the PO, notifies the supplier in-app that the order was withdrawn, " +
+            "archives open draft GRNs, then moves the PO to trash. " +
+            "Restore brings it back as Cancelled with a restore notice for the supplier. " +
+            "Permanent delete removes it forever (blocked if any GRN already updated inventory).";
+        if (hasSupplier) {
+            supplierNotice =
+                `Supplier will see: “Purchase order ${po.purchaseOrderNo || ""} was cancelled by the buyer and moved to trash.”`;
+        }
+    } else if (canTrashDirect) {
+        tip =
+            "This PO can move to trash now. Restore returns Draft (or Cancelled with a supplier notice if it was withdrawn). " +
+            "Permanent delete cannot be undone.";
     }
 
     return {
-        canTrash,
+        canTrash: canTrashDirect,
+        canCancelAndTrash,
+        hasSupplier,
         status: po.status,
         purchaseOrderNo: po.purchaseOrderNo || "",
         tip,
+        supplierNotice,
+        stockedGrnNumber: stockedGrn?.grnNumber || "",
         products,
         grns: grns.map((g) => ({
             id: String(g._id),
             grnNumber: g.grnNumber || "",
-            status: g.status || ""
+            status: g.status || "",
+            inventoryUpdated: g.inventoryUpdated === true
         }))
     };
 };
@@ -2030,6 +2059,7 @@ module.exports = {
     supplierRejectPurchaseOrder,
     supplierSendPurchaseOrder,
     cancelPurchaseOrder,
+    prepareAndTrashPurchaseOrder,
     getPurchaseOrderDeleteCheck,
     getProductPurchaseContext,
     LOCKED_AFTER

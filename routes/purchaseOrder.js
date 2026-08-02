@@ -51,6 +51,13 @@ router.get(
 );
 
 router.post(
+    "/:id/prepare-trash",
+    idValidator,
+    validate,
+    purchaseOrderController.prepareAndTrashPurchaseOrder
+);
+
+router.post(
     "/",
     createPurchaseOrderValidator,
     validate,

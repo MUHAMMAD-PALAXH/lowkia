@@ -61,9 +61,23 @@ exports.updatePurchaseOrder = asyncHandler(async (req, res) => {
 exports.deletePurchaseOrder = asyncHandler(async (req, res) => {
     const result = await purchaseOrderService.deletePurchaseOrder(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.body || {}
     );
     return success(res, "Purchase order moved to trash.", result);
+});
+
+exports.prepareAndTrashPurchaseOrder = asyncHandler(async (req, res) => {
+    const result = await purchaseOrderService.prepareAndTrashPurchaseOrder(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(
+        res,
+        "Purchase order cancelled, supplier notified, and moved to trash.",
+        result
+    );
 });
 
 exports.restorePurchaseOrder = asyncHandler(async (req, res) => {
