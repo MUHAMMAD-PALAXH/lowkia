@@ -1,7 +1,9 @@
 /**
  * GRN Service
  * Locked decisions:
- * - Create only from Ordered / Partially Received PO (no manual GRN)
+ * - Create only from Ordered / Supplier Accepted / Partially Received PO (no manual GRN)
+ * - First GRN start is from Purchase Order → Create / Continue GRN
+ * - GRN "Receive from PO" list only shows POs that already have a GRN started
  * - Partial receive allowed (multiple GRNs per PO)
  * - IMEI: scan one-by-one + bulk paste
  * - Owner completes freely; Employee needs approval before stock increases
@@ -792,14 +794,27 @@ const applyPoReceiving = async (grn, session) => {
 // ==========================================================
 
 const listReceivablePurchaseOrders = async (query = {}) => {
+    // Only POs where Create / Continue GRN has already started (a GRN doc exists).
+    // Supplier Accepted alone must NOT appear here — start GRN from PO details first.
+    const startedPoIds = await GRN.distinct("purchaseOrderId", {
+        ...NOT_DELETED,
+        purchaseOrderId: { $ne: null }
+    });
+
+    if (!startedPoIds.length) {
+        return { items: [] };
+    }
+
     const filter = {
         ...NOT_DELETED,
-        status: { $in: RECEIVABLE_PO }
+        status: { $in: RECEIVABLE_PO },
+        _id: { $in: startedPoIds }
     };
     if (query.search) {
         const search = escapeRegex(String(query.search).trim());
         filter.$or = [
             { purchaseOrderNo: { $regex: search, $options: "i" } },
+            { referenceNumber: { $regex: search, $options: "i" } },
             { referenceNo: { $regex: search, $options: "i" } }
         ];
     }
@@ -825,21 +840,24 @@ const listReceivablePurchaseOrders = async (query = {}) => {
     );
 
     return {
-        items: items.map((po) => {
-            const open = openByPo.get(String(po._id));
-            return {
-                ...po,
-                pendingLines: (po.items || []).filter(
+        items: items
+            .map((po) => {
+                const open = openByPo.get(String(po._id));
+                const pendingLines = (po.items || []).filter(
                     (i) =>
                         Number(i.quantity || 0) -
                             Number(i.receivedQuantity || 0) >
                         0
-                ).length,
-                openGrnId: open?._id || null,
-                openGrnNumber: open?.grnNumber || null,
-                hasOpenGrn: Boolean(open)
-            };
-        })
+                ).length;
+                return {
+                    ...po,
+                    pendingLines,
+                    openGrnId: open?._id || null,
+                    openGrnNumber: open?.grnNumber || null,
+                    hasOpenGrn: Boolean(open)
+                };
+            })
+            .filter((po) => po.pendingLines > 0)
     };
 };
 
@@ -929,6 +947,13 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
         existingOpen.items = merged;
         recalculateGrn(existingOpen);
         await existingOpen.save();
+
+        if (!Array.isArray(po.grnIds)) po.grnIds = [];
+        if (!po.grnIds.some((id) => String(id) === String(existingOpen._id))) {
+            po.grnIds.push(existingOpen._id);
+            await po.save();
+        }
+
         const reused = await populateGrn(GRN.findById(existingOpen._id));
         const plain = enrichGrnDoc(reused);
         plain.reusedExisting = true;
@@ -976,6 +1001,14 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
 
     recalculateGrn(grn);
     await grn.save();
+
+    // Mark PO as GRN-started so it appears in GRN → Receive from PO list.
+    if (!Array.isArray(po.grnIds)) po.grnIds = [];
+    if (!po.grnIds.some((id) => String(id) === String(grn._id))) {
+        po.grnIds.push(grn._id);
+    }
+    await po.save();
+
     return enrichGrnDoc(await populateGrn(GRN.findById(grn._id)));
 };
 
