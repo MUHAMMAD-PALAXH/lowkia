@@ -872,9 +872,27 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
 
     const po = await PurchaseOrder.findOne({ _id: poId, ...NOT_DELETED });
     if (!po) throw new AppError("Purchase order not found.", 404);
-    if (!RECEIVABLE_PO.includes(po.status)) {
+
+    // With supplier: GRN only after supplier accepted terms (or later receive stages).
+    // Without supplier: Ordered / receive stages.
+    const supplierReady = [
+        "Supplier Accepted",
+        "Partially Delivered",
+        "Completely Delivered",
+        "Partially Received"
+    ];
+    const noSupplierReady = [
+        "Ordered",
+        "Partially Delivered",
+        "Completely Delivered",
+        "Partially Received"
+    ];
+    const allowed = po.supplierId ? supplierReady : noSupplierReady;
+    if (!allowed.includes(po.status)) {
         throw new AppError(
-            "GRN can only be created from Ordered, Supplier Accepted, or Partially Received purchase orders.",
+            po.supplierId
+                ? "GRN can only be created after the supplier accepts this purchase order (with delivery & payment terms), or when receiving has already started."
+                : "GRN can only be created from Ordered or Partially Received purchase orders.",
             400
         );
     }

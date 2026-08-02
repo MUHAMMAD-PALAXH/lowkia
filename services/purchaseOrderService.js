@@ -1530,9 +1530,21 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
             : "");
     po.supplierPartialSchedule = partialSchedule;
     po.supplierPaymentSchedule = paymentSchedule;
-    if (!po.expectedDeliveryDate) {
-        po.expectedDeliveryDate = expectedDeliveryDate;
+
+    // Buyer / PO accepts supplier demand terms into the order
+    po.expectedDeliveryDate = expectedDeliveryDate;
+    if (paymentType) {
+        po.paymentTerms = paymentType;
     }
+
+    // Notify supplier: terms locked — they may send as agreed
+    const no = po.purchaseOrderNo || "";
+    po.supplierNotifiedAt = new Date();
+    po.supplierMessage =
+        `Purchase order ${no}: your delivery and payment terms were accepted. ` +
+        `You can send products as agreed (${deliveryType} delivery` +
+        `${paymentType ? `, ${paymentType}` : ""}).`;
+
     po.updatedBy = toObjectId(actorId);
     await po.save();
     return populatePo(PurchaseOrder.findById(po._id));
@@ -1932,7 +1944,7 @@ const getPurchaseOrderDeleteCheck = async (id) => {
 
     if (stockedGrn || TRASH_LOCKED_STATUSES.includes(po.status)) {
         tip =
-            "This PO already has stocked receipts (or is fully received), so it stays as purchase history and cannot be trashed. " +
+            "This purchase order is complete (or already has stocked receipts), so it stays as purchase history and cannot be trashed. " +
             "To remove a catalog product linked here: open Products → Resolve & trash.";
     } else if (canCancelAndTrash && !canTrashDirect) {
         tip =
