@@ -515,10 +515,18 @@ const getSupplierDetails = async (id, query = {}) => {
 
         PurchaseOrder.find({
             supplierId,
-            isDeleted: { $ne: true }
+            $or: [
+                { isDeleted: { $ne: true } },
+                // Keep buyer-cancelled / trashed POs visible to supplier (red, disabled)
+                {
+                    isDeleted: true,
+                    status: "Cancelled",
+                    supplierAcceptanceStatus: "Withdrawn"
+                }
+            ]
         })
             .select(
-                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus subtotal discount discountType tax taxType shippingCost shippingType otherCharges grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule supplierShipments isFullyReceived totalReceivedAmount"
+                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus subtotal discount discountType tax taxType shippingCost shippingType otherCharges grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule supplierShipments isFullyReceived totalReceivedAmount isDeleted deletedAt"
             )
             .populate("items.productId", "name productCode productType trackingType sku barcode")
             .sort({ orderDate: -1, createdAt: -1 })
@@ -1302,6 +1310,12 @@ const getSupplierDetails = async (id, query = {}) => {
             expectedDeliveryDate: po.expectedDeliveryDate || null,
             status: po.status || "",
             paymentStatus: po.paymentStatus || "",
+            isDeleted: po.isDeleted === true,
+            deletedAt: po.deletedAt || null,
+            isBuyerWithdrawn:
+                po.status === "Cancelled" &&
+                (po.supplierAcceptanceStatus === "Withdrawn" ||
+                    po.isDeleted === true),
             subtotal: Number(po.subtotal) || 0,
             discount: Number(po.discount) || 0,
             discountType: po.discountType || "Fixed",
