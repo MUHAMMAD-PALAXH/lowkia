@@ -490,7 +490,7 @@ const purchaseOrderSchema = new mongoose.Schema(
 
         supplierAcceptanceStatus: {
             type: String,
-            enum: ["Not Required", "Pending", "Accepted", "Rejected"],
+            enum: ["Not Required", "Pending", "Accepted", "Rejected", "Withdrawn"],
             default: "Not Required"
         },
 

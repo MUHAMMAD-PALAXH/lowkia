@@ -5,25 +5,101 @@ const ProductVariant = require("../model/productVariant");
 const Supplier = require("../model/supplier");
 const Warehouse = require("../model/warehouse");
 const Branch = require("../model/branch");
+const GRN = require("../model/grn");
 const { generatePurchaseOrderCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
+const OPEN_GRN_STATUSES = ["Draft", "Pending Approval"];
 
 const EDITABLE_STATUSES = ["Draft", "Pending Approval"];
 const LOCKED_AFTER = ["Ordered", "Partially Received", "Received", "Completed"];
 const NO_STOCK_IMPACT_STATUSES = ["Draft", "Cancelled"];
+/** POs that already moved stock / partial receive — keep as history */
+const TRASH_LOCKED_STATUSES = [
+    "Partially Received",
+    "Received",
+    "Completed"
+];
+/** Statuses that can cancel + trash (after supplier notify when needed) */
+const CANCEL_AND_TRASH_STATUSES = [
+    "Pending Approval",
+    "Approved",
+    "Awaiting Supplier",
+    "Supplier Accepted",
+    "Supplier Rejected",
+    "Ordered",
+    "Partially Delivered",
+    "Completely Delivered"
+];
+
+const applyBuyerWithdrawalNotice = (po, { reason = "", forTrash = true } = {}) => {
+    const no = po.purchaseOrderNo || "this purchase order";
+    const hadSupplier = Boolean(po.supplierId);
+    const supplierWasInLoop =
+        hadSupplier &&
+        (["Pending", "Accepted", "Rejected", "Withdrawn"].includes(
+            po.supplierAcceptanceStatus
+        ) ||
+            [
+                "Awaiting Supplier",
+                "Supplier Accepted",
+                "Supplier Rejected",
+                "Partially Delivered",
+                "Completely Delivered",
+                "Ordered"
+            ].includes(po.status));
+
+    po.status = "Cancelled";
+    if (reason) po.rejectionReason = String(reason).trim();
+
+    if (supplierWasInLoop) {
+        po.supplierAcceptanceStatus = "Withdrawn";
+        po.supplierNotifiedAt = new Date();
+        po.supplierMessage = forTrash
+            ? `Purchase order ${no} was cancelled by the buyer and moved to trash. It is no longer active.`
+            : `Purchase order ${no} was cancelled by the buyer. It is no longer active.`;
+        po.supplierRespondedAt = new Date();
+        po.supplierResponseNote =
+            String(reason || "").trim() || "Cancelled by buyer.";
+    }
+};
+
+const applyRestoreSupplierNotice = (po) => {
+    const no = po.purchaseOrderNo || "this purchase order";
+    const hadSupplierCycle =
+        Boolean(po.supplierId) &&
+        po.supplierAcceptanceStatus !== "Not Required";
+
+    if (hadSupplierCycle) {
+        // Stay cancelled — supplier sees it again with a restore notice
+        po.status = "Cancelled";
+        po.supplierAcceptanceStatus = "Withdrawn";
+        po.supplierNotifiedAt = new Date();
+        po.supplierMessage =
+            `Purchase order ${no} was restored from trash. ` +
+            `It remains cancelled. Contact the buyer if you need a new order.`;
+    } else {
+        po.status = "Draft";
+        po.supplierAcceptanceStatus = "Not Required";
+        po.supplierMessage = "";
+        po.supplierNotifiedAt = null;
+        po.supplierRespondedAt = null;
+        po.supplierResponseNote = "";
+    }
+};
 
 const trash = createTrashOps(PurchaseOrder, {
     label: "Purchase Order",
     nameField: "purchaseOrderNo",
     statusField: "status",
+    // Default Draft; restoreExtra overrides when supplier cycle existed
     restoreStatus: "Draft",
     beforeSoftDelete: async (doc) => {
         if (!NO_STOCK_IMPACT_STATUSES.includes(doc.status)) {
             throw new AppError(
-                `Only Draft or Cancelled purchase orders can move to trash. This PO is "${doc.status}".`,
+                `Only Draft or Cancelled purchase orders can move to trash directly. This PO is "${doc.status}". Use Cancel & trash to withdraw from the supplier and archive it.`,
                 400
             );
         }
@@ -31,11 +107,36 @@ const trash = createTrashOps(PurchaseOrder, {
     softDeleteExtra: (doc) => {
         if (doc.status !== "Cancelled") doc.status = "Cancelled";
     },
+    restoreExtra: (doc) => {
+        applyRestoreSupplierNotice(doc);
+    },
+    beforePermanent: async (doc) => {
+        const stocked = await GRN.findOne({
+            purchaseOrderId: doc._id,
+            inventoryUpdated: true
+        }).select("_id grnNumber");
+        if (stocked) {
+            throw new AppError(
+                `Cannot permanently delete — GRN ${stocked.grnNumber || ""} already updated inventory. Keep this PO in trash as history.`,
+                400
+            );
+        }
+        // Remove non-stocked GRNs tied to this PO (drafts / cancelled)
+        await GRN.deleteMany({
+            purchaseOrderId: doc._id,
+            inventoryUpdated: { $ne: true }
+        });
+    },
     scopeStatusMap: {
         draft: "Draft",
         pendingapproval: "Pending Approval",
         approved: "Approved",
+        awaitingsupplier: "Awaiting Supplier",
+        supplieraccepted: "Supplier Accepted",
+        supplierrejected: "Supplier Rejected",
         ordered: "Ordered",
+        partiallydelivered: "Partially Delivered",
+        completelydelivered: "Completely Delivered",
         partiallyreceived: "Partially Received",
         received: "Received",
         completed: "Completed",
@@ -68,6 +169,66 @@ const populatePo = (query) =>
         .populate("createdBy", "name email")
         .populate("rejectedBy", "name email")
         .populate("cancelledBy", "name email");
+
+const toPlainPo = (po) => {
+    if (!po) return po;
+    if (typeof po.toObject === "function") return po.toObject({ virtuals: true });
+    return po;
+};
+
+/** Attach hasOpenGrn / openGrnNumber / hasGrnCreated for admin UI. */
+const enrichPosWithGrnMeta = async (poOrList) => {
+    const asList = Array.isArray(poOrList);
+    const list = (asList ? poOrList : [poOrList]).filter(Boolean).map(toPlainPo);
+    if (!list.length) return poOrList;
+
+    const ids = list.map((p) => p._id).filter(Boolean);
+    const [openGrns, anyGrns] = await Promise.all([
+        GRN.find({
+            purchaseOrderId: { $in: ids },
+            ...NOT_DELETED,
+            status: { $in: OPEN_GRN_STATUSES },
+            inventoryUpdated: { $ne: true }
+        })
+            .select("grnNumber purchaseOrderId")
+            .sort({ createdAt: -1 })
+            .lean(),
+        GRN.find({
+            purchaseOrderId: { $in: ids },
+            ...NOT_DELETED
+        })
+            .select("grnNumber purchaseOrderId")
+            .lean()
+    ]);
+
+    const openByPo = new Map();
+    for (const g of openGrns) {
+        const key = String(g.purchaseOrderId);
+        if (!openByPo.has(key)) openByPo.set(key, g);
+    }
+    const anyByPo = new Map();
+    for (const g of anyGrns) {
+        const key = String(g.purchaseOrderId);
+        if (!anyByPo.has(key)) anyByPo.set(key, g);
+    }
+
+    const enriched = list.map((po) => {
+        const key = String(po._id);
+        const open = openByPo.get(key);
+        const any = anyByPo.get(key);
+        const fromIds = Array.isArray(po.grnIds) && po.grnIds.length > 0;
+        const hasGrnCreated = Boolean(open) || Boolean(any) || fromIds;
+        return {
+            ...po,
+            openGrnId: open?._id || null,
+            openGrnNumber: open?.grnNumber || any?.grnNumber || "",
+            hasOpenGrn: Boolean(open),
+            hasGrnCreated
+        };
+    });
+
+    return asList ? enriched : enriched[0];
+};
 
 const chargeType = (value) =>
     String(value || "Fixed").toLowerCase() === "percentage"
@@ -506,7 +667,7 @@ const getPurchaseOrders = async (query = {}) => {
     ]);
 
     return {
-        items,
+        items: await enrichPosWithGrnMeta(items),
         pagination: {
             page,
             limit,
@@ -522,7 +683,7 @@ const getPurchaseOrderById = async (id, { includeDeleted = false } = {}) => {
     if (!includeDeleted) Object.assign(filter, NOT_DELETED);
     const po = await populatePo(PurchaseOrder.findOne(filter));
     if (!po) throw new AppError("Purchase order not found.", 404);
-    return po;
+    return enrichPosWithGrnMeta(po);
 };
 
 const getPurchaseOrderStats = async () => {
@@ -730,15 +891,128 @@ const updatePurchaseOrder = async (id, payload = {}, actorId = null) => {
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
-const deletePurchaseOrder = (id, actorId = null) => trash.softDelete(id, actorId);
+const deletePurchaseOrder = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    if (NO_STOCK_IMPACT_STATUSES.includes(po.status)) {
+        return trash.softDelete(id, actorId);
+    }
+    return prepareAndTrashPurchaseOrder(id, actorId, payload);
+};
 const restorePurchaseOrder = (id, actorId = null) => trash.restore(id, actorId);
 const permanentDeletePurchaseOrder = (id) => trash.permanentDelete(id);
-const bulkDeletePurchaseOrders = (payload, actorId) =>
-    trash.bulkSoftDelete(payload, actorId);
+
+const bulkDeletePurchaseOrders = async (payload = {}, actorId = null) => {
+    const scope = String(payload.scope || "ids").toLowerCase();
+    if (scope === "ids") {
+        const ids = Array.isArray(payload.ids) ? payload.ids : [];
+        let deleted = 0;
+        const errors = [];
+        for (const rawId of ids) {
+            try {
+                await deletePurchaseOrder(rawId, actorId, payload);
+                deleted += 1;
+            } catch (e) {
+                errors.push({
+                    id: String(rawId),
+                    message: e.message || "Failed"
+                });
+            }
+        }
+        if (!deleted && errors.length) {
+            throw new AppError(
+                errors.map((e) => e.message).join(" · ") ||
+                    "Failed to move purchase orders to trash.",
+                400
+            );
+        }
+        return { deleted, failed: errors.length, errors };
+    }
+    // Scope-based: only soft-delete statuses that are already Draft/Cancelled
+    return trash.bulkSoftDelete(payload, actorId);
+};
 const bulkRestorePurchaseOrders = (payload, actorId) =>
     trash.bulkRestore(payload, actorId);
 const bulkPermanentDeletePurchaseOrders = (payload) =>
     trash.bulkPermanentDelete(payload);
+
+/** Cancel open draft GRNs, withdraw from supplier, cancel PO, then trash. */
+const prepareAndTrashPurchaseOrder = async (
+    id,
+    actorId = null,
+    payload = {}
+) => {
+    const po = await findPoOrFail(id);
+
+    if (TRASH_LOCKED_STATUSES.includes(po.status)) {
+        throw new AppError(
+            `Purchase orders in "${po.status}" are purchase history and cannot be trashed. ` +
+                `To remove a catalog product linked here, use Products → Resolve & trash.`,
+            400
+        );
+    }
+
+    const stockedGrn = await GRN.findOne({
+        purchaseOrderId: po._id,
+        ...NOT_DELETED,
+        inventoryUpdated: true
+    }).select("grnNumber");
+    if (stockedGrn) {
+        throw new AppError(
+            `Cannot trash — GRN ${stockedGrn.grnNumber || ""} already updated inventory. Keep this PO as history.`,
+            400
+        );
+    }
+
+    if (
+        !NO_STOCK_IMPACT_STATUSES.includes(po.status) &&
+        !CANCEL_AND_TRASH_STATUSES.includes(po.status)
+    ) {
+        throw new AppError(
+            `Cannot trash purchase order in status "${po.status}".`,
+            400
+        );
+    }
+
+    // Soft-delete open / non-stocked GRNs so Receive from PO stays clean
+    const openGrns = await GRN.find({
+        purchaseOrderId: po._id,
+        ...NOT_DELETED,
+        inventoryUpdated: { $ne: true }
+    });
+    const now = new Date();
+    const actor = toObjectId(actorId);
+    for (const g of openGrns) {
+        g.isDeleted = true;
+        g.deletedAt = now;
+        g.deletedBy = actor;
+        if (["Draft", "Pending Approval", "Cancelled"].includes(g.status) ||
+            !g.status) {
+            g.status = "Cancelled";
+        }
+        await g.save();
+    }
+
+    if (po.status !== "Cancelled") {
+        po.cancelledBy = actor;
+        po.cancelledAt = now;
+        po.updatedBy = actor;
+        applyBuyerWithdrawalNotice(po, {
+            reason: payload.reason || payload.rejectionReason || "",
+            forTrash: true
+        });
+        await po.save();
+    } else if (po.supplierId && po.supplierAcceptanceStatus !== "Not Required") {
+        // Already cancelled — refresh trash notice for supplier
+        po.supplierAcceptanceStatus = "Withdrawn";
+        po.supplierNotifiedAt = now;
+        po.supplierMessage =
+            `Purchase order ${po.purchaseOrderNo || ""} was moved to trash by the buyer. It is no longer active.`;
+        po.updatedBy = actor;
+        await po.save();
+    }
+
+    return trash.softDelete(id, actorId);
+};
 
 const submitPurchaseOrder = async (id, actorId = null) => {
     const po = await findPoOrFail(id);
