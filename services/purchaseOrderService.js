@@ -1533,9 +1533,8 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
 
     // Buyer / PO accepts supplier demand terms into the order
     po.expectedDeliveryDate = expectedDeliveryDate;
-    if (paymentType) {
-        po.paymentTerms = paymentType;
-    }
+    // Keep supplier payment type on supplierPaymentType only —
+    // paymentTerms is a separate enum (Cash / 7 Days / …).
 
     // Notify supplier: terms locked — they may send as agreed
     const no = po.purchaseOrderNo || "";
