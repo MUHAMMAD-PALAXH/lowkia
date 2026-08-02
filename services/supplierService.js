@@ -304,12 +304,13 @@ const getSupplierStats = async () => {
         trash.trashCount(),
         PurchaseOrder.countDocuments({
             isDeleted: { $ne: true },
-            status: "Awaiting Supplier"
+            status: { $in: ["Awaiting Supplier", "New Demand Sent"] }
         }),
         PurchaseOrder.countDocuments({
             isDeleted: { $ne: true },
             status: {
                 $in: [
+                    "Agreed",
                     "Supplier Accepted",
                     "Partially Delivered",
                     "Completely Delivered"
@@ -318,13 +319,19 @@ const getSupplierStats = async () => {
         }),
         PurchaseOrder.countDocuments({
             isDeleted: { $ne: true },
-            status: "Supplier Rejected"
+            $or: [
+                { status: "Supplier Rejected" },
+                {
+                    status: "Cancelled",
+                    supplierAcceptanceStatus: "Rejected"
+                }
+            ]
         }),
         PurchaseOrder.aggregate([
             {
                 $match: {
                     isDeleted: { $ne: true },
-                    status: "Awaiting Supplier",
+                    status: { $in: ["Awaiting Supplier", "New Demand Sent"] },
                     supplierId: { $ne: null }
                 }
             },
@@ -522,6 +529,10 @@ const getSupplierDetails = async (id, query = {}) => {
                     status: {
                         $in: [
                             "Awaiting Supplier",
+                            "Supplier Demand Received",
+                            "Revision Required",
+                            "New Demand Sent",
+                            "Agreed",
                             "Supplier Accepted",
                             "Supplier Rejected",
                             "Partially Delivered",
@@ -536,13 +547,20 @@ const getSupplierDetails = async (id, query = {}) => {
                 {
                     status: "Cancelled",
                     supplierAcceptanceStatus: {
-                        $in: ["Pending", "Accepted", "Rejected", "Withdrawn"]
+                        $in: [
+                            "Pending",
+                            "Demand Received",
+                            "Agreed",
+                            "Accepted",
+                            "Rejected",
+                            "Withdrawn"
+                        ]
                     }
                 }
             ]
         })
             .select(
-                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus subtotal discount discountType tax taxType shippingCost shippingType otherCharges grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule supplierShipments isFullyReceived totalReceivedAmount isDeleted deletedAt"
+                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus subtotal discount discountType tax taxType shippingCost shippingType otherCharges grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule supplierShipments negotiationRound negotiationHistory isFullyReceived totalReceivedAmount isDeleted deletedAt"
             )
             .populate("items.productId", "name productCode productType trackingType sku barcode")
             .sort({ orderDate: -1, createdAt: -1 })
@@ -1416,6 +1434,34 @@ const getSupplierDetails = async (id, query = {}) => {
                     expectedQuantity: Number(a.expectedQuantity) || 0
                 }))
             })),
+            negotiationRound: Number(po.negotiationRound) || 0,
+            negotiationHistory: (po.negotiationHistory || []).map((h) => ({
+                round: Number(h.round) || 1,
+                type: h.type || "",
+                actorRole: h.actorRole || "Buyer",
+                actorId: h.actorId || null,
+                at: h.at || null,
+                note: h.note || "",
+                expectedDeliveryDate: h.expectedDeliveryDate || null,
+                deliveryType: h.deliveryType || "",
+                paymentType: h.paymentType || "",
+                paymentMethod: h.paymentMethod || "",
+                grandTotal: Number(h.grandTotal) || 0,
+                items: (h.items || []).map((i) => ({
+                    productId: i.productId || null,
+                    productVariantId: i.productVariantId || null,
+                    productName: i.productName || "",
+                    variantLabel: i.variantLabel || "",
+                    sku: i.sku || "",
+                    quantity: Number(i.quantity) || 0,
+                    purchasePrice: Number(i.purchasePrice) || 0,
+                    warrantyType: i.warrantyType || "No Warranty",
+                    warrantyPeriod: Number(i.warrantyPeriod) || 0,
+                    total: Number(i.total) || 0
+                })),
+                partialSchedule: h.partialSchedule || [],
+                paymentSchedule: h.paymentSchedule || []
+            })),
             items: items.map((i) => {
                 const p = i.productId && typeof i.productId === "object"
                     ? i.productId
@@ -1437,7 +1483,9 @@ const getSupplierDetails = async (id, query = {}) => {
                     discount: Number(i.discount) || 0,
                     tax: Number(i.tax) || 0,
                     total: Number(i.total) || 0,
-                    trackingType: i.trackingType || p?.trackingType || "Non-IMEI"
+                    trackingType: i.trackingType || p?.trackingType || "Non-IMEI",
+                    warrantyType: i.warrantyType || "No Warranty",
+                    warrantyPeriod: Number(i.warrantyPeriod) || 0
                 };
             })
         };

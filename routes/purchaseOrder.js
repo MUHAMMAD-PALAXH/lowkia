@@ -134,6 +134,27 @@ router.patch(
     purchaseOrderController.supplierRejectPurchaseOrder
 );
 
+router.patch(
+    "/:id/buyer-accept-demand",
+    idValidator,
+    validate,
+    purchaseOrderController.buyerAcceptDemand
+);
+
+router.patch(
+    "/:id/buyer-reject-demand",
+    idValidator,
+    validate,
+    purchaseOrderController.buyerRejectDemand
+);
+
+router.patch(
+    "/:id/send-new-demand",
+    idValidator,
+    validate,
+    purchaseOrderController.sendNewDemand
+);
+
 router.post(
     "/:id/supplier-send",
     idValidator,

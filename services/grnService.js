@@ -799,7 +799,7 @@ const applyPoReceiving = async (grn, session) => {
     po.totalReceivedAmount = receivedAmount;
 
     if (receivedQty <= 0) {
-        po.status = po.supplierId ? "Supplier Accepted" : "Ordered";
+        po.status = po.supplierId ? "Agreed" : "Ordered";
         po.isFullyReceived = false;
         grn.purchaseStatus = "Pending";
     } else if (receivedQty < totalQty) {

@@ -13,7 +13,7 @@ const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const OPEN_GRN_STATUSES = ["Draft", "Pending Approval"];
 
-const EDITABLE_STATUSES = ["Draft", "Pending Approval"];
+const EDITABLE_STATUSES = ["Draft", "Pending Approval", "Revision Required"];
 const LOCKED_AFTER = ["Ordered", "Partially Received", "Received", "Completed"];
 const NO_STOCK_IMPACT_STATUSES = ["Draft", "Cancelled"];
 /** POs that already moved stock / partial receive — keep as history */
@@ -27,12 +27,104 @@ const CANCEL_AND_TRASH_STATUSES = [
     "Pending Approval",
     "Approved",
     "Awaiting Supplier",
+    "Supplier Demand Received",
+    "Revision Required",
+    "New Demand Sent",
+    "Agreed",
     "Supplier Accepted",
     "Supplier Rejected",
     "Ordered",
     "Partially Delivered",
     "Completely Delivered"
 ];
+
+/** Supplier can ship only after both sides agreed (legacy Supplier Accepted = agreed). */
+const SENDABLE_STATUSES = ["Agreed", "Supplier Accepted", "Partially Delivered"];
+
+/** Supplier may accept/reject while waiting on a (new) demand. */
+const SUPPLIER_RESPONSE_STATUSES = ["Awaiting Supplier", "New Demand Sent"];
+
+const snapshotItemsForHistory = (items = []) =>
+    (items || []).map((i) => ({
+        productId: i.productId || null,
+        productVariantId: i.productVariantId || null,
+        productName: i.productName || "",
+        variantLabel: i.variantLabel || "",
+        sku: i.sku || "",
+        quantity: Number(i.quantity) || 0,
+        purchasePrice: Number(i.purchasePrice) || 0,
+        warrantyType: i.warrantyType || "No Warranty",
+        warrantyPeriod: Number(i.warrantyPeriod) || 0,
+        total: Number(i.total) || 0
+    }));
+
+const pushNegotiationHistory = (po, entry) => {
+    if (!Array.isArray(po.negotiationHistory)) {
+        po.negotiationHistory = [];
+    }
+    po.negotiationHistory.push({
+        round: entry.round || po.negotiationRound || 1,
+        type: entry.type,
+        actorRole: entry.actorRole || "Buyer",
+        actorId: entry.actorId || null,
+        at: entry.at || new Date(),
+        note: String(entry.note || "").trim(),
+        expectedDeliveryDate:
+            entry.expectedDeliveryDate ||
+            po.supplierExpectedDeliveryDate ||
+            po.expectedDeliveryDate ||
+            null,
+        deliveryType: entry.deliveryType || po.supplierDeliveryType || "",
+        paymentType: entry.paymentType || po.supplierPaymentType || "",
+        paymentMethod: entry.paymentMethod || po.supplierPaymentMethod || "",
+        grandTotal: Number(entry.grandTotal ?? po.grandTotal) || 0,
+        items: entry.items || snapshotItemsForHistory(po.items),
+        partialSchedule: entry.partialSchedule || po.supplierPartialSchedule || [],
+        paymentSchedule: entry.paymentSchedule || po.supplierPaymentSchedule || []
+    });
+};
+
+const applyLineWarrantiesFromPayload = (po, payload = {}) => {
+    const raw = Array.isArray(payload.lineWarranties)
+        ? payload.lineWarranties
+        : Array.isArray(payload.items)
+          ? payload.items
+          : [];
+    if (!raw.length) return;
+
+    const allowedTypes = ["No Warranty", "Days", "Months", "Years", "Lifetime"];
+    const byKey = new Map();
+    for (const row of raw) {
+        const key = `${String(row.productId || "")}|${String(row.productVariantId || "")}|${String(row.sku || "")}|${String(row.variantLabel || "")}`;
+        const lineId = row.lineId || row._id || row.itemId || null;
+        if (lineId) byKey.set(`id:${String(lineId)}`, row);
+        byKey.set(key, row);
+    }
+
+    for (const line of po.items || []) {
+        const idKey = `id:${String(line._id || "")}`;
+        const lineKey = `${String(line.productId || "")}|${String(line.productVariantId || "")}|${String(line.sku || "")}|${String(line.variantLabel || "")}`;
+        const row = byKey.get(idKey) || byKey.get(lineKey);
+        if (!row) continue;
+        const wType = String(row.warrantyType || "").trim();
+        if (wType && allowedTypes.includes(wType)) {
+            line.warrantyType = wType;
+            if (wType === "No Warranty" || wType === "Lifetime") {
+                line.warrantyPeriod = 0;
+            } else if (row.warrantyPeriod != null) {
+                line.warrantyPeriod = Math.max(
+                    0,
+                    parseInt(row.warrantyPeriod, 10) || 0
+                );
+            }
+        } else if (row.warrantyPeriod != null && line.warrantyType !== "No Warranty" && line.warrantyType !== "Lifetime") {
+            line.warrantyPeriod = Math.max(
+                0,
+                parseInt(row.warrantyPeriod, 10) || 0
+            );
+        }
+    }
+};
 
 const poHasRecordedPayments = (po) =>
     (po?.supplierPaymentSchedule || []).some(
@@ -44,11 +136,20 @@ const applyBuyerWithdrawalNotice = (po, { reason = "", forTrash = true } = {}) =
     const hadSupplier = Boolean(po.supplierId);
     const supplierWasInLoop =
         hadSupplier &&
-        (["Pending", "Accepted", "Rejected", "Withdrawn"].includes(
-            po.supplierAcceptanceStatus
-        ) ||
+        ([
+            "Pending",
+            "Demand Received",
+            "Agreed",
+            "Accepted",
+            "Rejected",
+            "Withdrawn"
+        ].includes(po.supplierAcceptanceStatus) ||
             [
                 "Awaiting Supplier",
+                "Supplier Demand Received",
+                "Revision Required",
+                "New Demand Sent",
+                "Agreed",
                 "Supplier Accepted",
                 "Supplier Rejected",
                 "Partially Delivered",
@@ -143,6 +244,10 @@ const trash = createTrashOps(PurchaseOrder, {
         pendingapproval: "Pending Approval",
         approved: "Approved",
         awaitingsupplier: "Awaiting Supplier",
+        supplierdemandreceived: "Supplier Demand Received",
+        revisionrequired: "Revision Required",
+        newdemandsent: "New Demand Sent",
+        agreed: "Agreed",
         supplieraccepted: "Supplier Accepted",
         supplierrejected: "Supplier Rejected",
         ordered: "Ordered",
@@ -719,6 +824,10 @@ const getPurchaseOrderStats = async () => {
         approved: 0,
         ordered: 0,
         awaitingSupplier: 0,
+        supplierDemandReceived: 0,
+        revisionRequired: 0,
+        newDemandSent: 0,
+        agreed: 0,
         supplierAccepted: 0,
         supplierRejected: 0,
         partiallyDelivered: 0,
@@ -749,8 +858,22 @@ const getPurchaseOrderStats = async () => {
             case "Awaiting Supplier":
                 stats.awaitingSupplier = row.count;
                 break;
+            case "Supplier Demand Received":
+                stats.supplierDemandReceived = row.count;
+                break;
+            case "Revision Required":
+                stats.revisionRequired = row.count;
+                break;
+            case "New Demand Sent":
+                stats.newDemandSent = row.count;
+                break;
+            case "Agreed":
+                stats.agreed = row.count;
+                stats.supplierAccepted += row.count; // legacy dashboard tile
+                break;
             case "Supplier Accepted":
-                stats.supplierAccepted = row.count;
+                stats.supplierAccepted += row.count;
+                stats.agreed += row.count;
                 break;
             case "Supplier Rejected":
                 stats.supplierRejected = row.count;
@@ -1123,6 +1246,21 @@ const markOrdered = async (id, actorId = null, payload = {}) => {
         po.supplierPaymentMethod = "";
         po.supplierPartialSchedule = [];
         po.supplierPaymentSchedule = [];
+        po.negotiationRound = 1;
+        pushNegotiationHistory(po, {
+            round: 1,
+            type: "Initial Send",
+            actorRole: "Buyer",
+            actorId: toObjectId(actorId),
+            note: message,
+            expectedDeliveryDate: po.expectedDeliveryDate,
+            deliveryType: "",
+            paymentType: "",
+            paymentMethod: "",
+            items: snapshotItemsForHistory(po.items),
+            partialSchedule: [],
+            paymentSchedule: []
+        });
     } else {
         // No supplier selected — classic Ordered path (no accept step)
         po.status = "Ordered";
@@ -1144,9 +1282,9 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
             400
         );
     }
-    if (po.status !== "Awaiting Supplier") {
+    if (!SUPPLIER_RESPONSE_STATUSES.includes(po.status)) {
         throw new AppError(
-            "Only purchase orders awaiting supplier can be accepted.",
+            "Only purchase orders awaiting supplier (or with a new demand) can be accepted.",
             400
         );
     }
@@ -1531,8 +1669,11 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
         ];
     }
 
-    po.status = "Supplier Accepted";
-    po.supplierAcceptanceStatus = "Accepted";
+    // Supplier proposes demand — buyer must still accept before Agreed / ship
+    applyLineWarrantiesFromPayload(po, payload);
+
+    po.status = "Supplier Demand Received";
+    po.supplierAcceptanceStatus = "Demand Received";
     po.supplierRespondedAt = new Date();
     po.supplierResponseNote = String(
         payload.note || payload.responseNote || ""
@@ -1549,18 +1690,30 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
     po.supplierPartialSchedule = partialSchedule;
     po.supplierPaymentSchedule = paymentSchedule;
 
-    // Buyer / PO accepts supplier demand terms into the order
-    po.expectedDeliveryDate = expectedDeliveryDate;
-    // Keep supplier payment type on supplierPaymentType only —
-    // paymentTerms is a separate enum (Cash / 7 Days / …).
+    // Propose expected date to buyer (applied to PO header only after buyer agrees)
+    // Keep buyer expectedDeliveryDate until agreed — still surface supplier date on supplierExpectedDeliveryDate.
 
-    // Notify supplier: terms locked — they may send as agreed
     const no = po.purchaseOrderNo || "";
     po.supplierNotifiedAt = new Date();
     po.supplierMessage =
-        `Purchase order ${no}: your delivery and payment terms were accepted. ` +
-        `You can send products as agreed (${deliveryType} delivery` +
-        `${paymentType ? `, ${paymentType}` : ""}).`;
+        `Purchase order ${no}: supplier submitted delivery and payment terms ` +
+        `(${deliveryType} delivery${paymentType ? `, ${paymentType}` : ""}). ` +
+        `Awaiting purchase order manager confirmation.`;
+
+    pushNegotiationHistory(po, {
+        round: po.negotiationRound || 1,
+        type: "Supplier Demand",
+        actorRole: "Supplier",
+        actorId: toObjectId(actorId),
+        note: po.supplierResponseNote,
+        expectedDeliveryDate,
+        deliveryType,
+        paymentType,
+        paymentMethod: po.supplierPaymentMethod,
+        items: snapshotItemsForHistory(po.items),
+        partialSchedule,
+        paymentSchedule
+    });
 
     po.updatedBy = toObjectId(actorId);
     await po.save();
@@ -1575,9 +1728,9 @@ const supplierRejectPurchaseOrder = async (id, actorId = null, payload = {}) => 
             400
         );
     }
-    if (po.status !== "Awaiting Supplier") {
+    if (!SUPPLIER_RESPONSE_STATUSES.includes(po.status)) {
         throw new AppError(
-            "Only purchase orders awaiting supplier can be rejected.",
+            "Only purchase orders awaiting supplier (or with a new demand) can be rejected.",
             400
         );
     }
@@ -1587,12 +1740,31 @@ const supplierRejectPurchaseOrder = async (id, actorId = null, payload = {}) => 
         throw new AppError("A rejection note/reason is required.", 400);
     }
 
-    po.status = "Supplier Rejected";
+    // Any supplier reject is final — cancelled on both sides
+    po.status = "Cancelled";
     po.supplierAcceptanceStatus = "Rejected";
     po.supplierRespondedAt = new Date();
     po.supplierResponseNote = note;
     po.supplierDeliveryType = "";
     po.supplierPartialSchedule = [];
+    po.rejectionReason = note;
+    po.cancelledAt = new Date();
+    po.cancelledBy = toObjectId(actorId);
+
+    const no = po.purchaseOrderNo || "";
+    po.supplierMessage = `Purchase order ${no} was rejected by the supplier and cancelled.`;
+
+    pushNegotiationHistory(po, {
+        round: po.negotiationRound || 1,
+        type: "Rejected",
+        actorRole: "Supplier",
+        actorId: toObjectId(actorId),
+        note,
+        items: snapshotItemsForHistory(po.items),
+        partialSchedule: [],
+        paymentSchedule: []
+    });
+
     po.updatedBy = toObjectId(actorId);
     await po.save();
     return populatePo(PurchaseOrder.findById(po._id));
@@ -1610,10 +1782,10 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     if (!po.supplierId) {
         throw new AppError("This purchase order has no supplier.", 400);
     }
-    const sendable = ["Supplier Accepted", "Partially Delivered"];
+    const sendable = SENDABLE_STATUSES;
     if (!sendable.includes(po.status)) {
         throw new AppError(
-            "Only Supplier Accepted or Partially Delivered POs can be sent.",
+            "Only Agreed (or Partially Delivered) purchase orders can be sent. Both sides must agree first.",
             400
         );
     }
@@ -1864,7 +2036,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         totalSent += Number(item.supplierSentQuantity) || 0;
     }
     if (totalSent <= 0) {
-        po.status = "Supplier Accepted";
+        po.status = "Agreed";
     } else if (totalSent + 0.0001 >= totalOrdered) {
         po.status = "Completely Delivered";
         if (deliveryType === "Partial") {
@@ -1876,6 +2048,221 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     } else {
         po.status = "Partially Delivered";
     }
+
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
+/**
+ * Buyer accepts supplier demand terms → both Agreed; supplier may ship.
+ */
+const buyerAcceptDemand = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    if (!po.supplierId) {
+        throw new AppError("This purchase order has no supplier.", 400);
+    }
+    if (po.status !== "Supplier Demand Received") {
+        throw new AppError(
+            "Only purchase orders with a supplier demand received can be accepted by the buyer.",
+            400
+        );
+    }
+
+    const note = String(payload.note || payload.responseNote || "").trim();
+    const deliveryType = po.supplierDeliveryType || "Full";
+    const paymentType = po.supplierPaymentType || "";
+
+    po.status = "Agreed";
+    po.supplierAcceptanceStatus = "Agreed";
+    if (po.supplierExpectedDeliveryDate) {
+        po.expectedDeliveryDate = po.supplierExpectedDeliveryDate;
+    }
+
+    const no = po.purchaseOrderNo || "";
+    po.supplierNotifiedAt = new Date();
+    po.supplierMessage =
+        `Purchase order ${no}: terms were agreed by both sides. ` +
+        `You can send products as agreed (${deliveryType} delivery` +
+        `${paymentType ? `, ${paymentType}` : ""}).`;
+
+    pushNegotiationHistory(po, {
+        round: po.negotiationRound || 1,
+        type: "Agreed",
+        actorRole: "Buyer",
+        actorId: toObjectId(actorId),
+        note: note || "Buyer accepted supplier demand.",
+        expectedDeliveryDate: po.supplierExpectedDeliveryDate,
+        deliveryType,
+        paymentType,
+        paymentMethod: po.supplierPaymentMethod || "",
+        items: snapshotItemsForHistory(po.items),
+        partialSchedule: po.supplierPartialSchedule || [],
+        paymentSchedule: po.supplierPaymentSchedule || []
+    });
+
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
+/**
+ * Buyer rejects supplier demand → revision unlocked (not final cancel).
+ */
+const buyerRejectDemand = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    if (!po.supplierId) {
+        throw new AppError("This purchase order has no supplier.", 400);
+    }
+    if (po.status !== "Supplier Demand Received") {
+        throw new AppError(
+            "Only purchase orders with a supplier demand received can be rejected by the buyer.",
+            400
+        );
+    }
+
+    const note = String(payload.note || payload.responseNote || payload.reason || "").trim();
+    if (!note) {
+        throw new AppError("A rejection note/reason is required.", 400);
+    }
+
+    po.status = "Revision Required";
+    po.supplierAcceptanceStatus = "Pending";
+    po.supplierResponseNote = note;
+
+    const no = po.purchaseOrderNo || "";
+    po.supplierNotifiedAt = new Date();
+    po.supplierMessage =
+        `Purchase order ${no}: buyer rejected your demand and is preparing a revised demand.`;
+
+    pushNegotiationHistory(po, {
+        round: po.negotiationRound || 1,
+        type: "Buyer Rejected Demand",
+        actorRole: "Buyer",
+        actorId: toObjectId(actorId),
+        note,
+        items: snapshotItemsForHistory(po.items),
+        partialSchedule: po.supplierPartialSchedule || [],
+        paymentSchedule: po.supplierPaymentSchedule || []
+    });
+
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
+/**
+ * After Revision Required, buyer sends a new demand (may include full PO field updates).
+ */
+const sendNewDemand = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    if (!po.supplierId) {
+        throw new AppError("This purchase order has no supplier.", 400);
+    }
+    if (po.status !== "Revision Required") {
+        throw new AppError(
+            "New demand can only be sent when revision is required (after rejecting supplier demand).",
+            400
+        );
+    }
+
+    // Optional inline updates (qty, price, dates, delivery/payment prefs, warranties when no supplier lock — here supplier IS selected so buyer warranty ignored)
+    if (Array.isArray(payload.items) && payload.items.length) {
+        // Reuse update path lightly: map matching lines by key
+        const byKey = new Map();
+        for (const row of payload.items) {
+            const key = `${String(row.productId || "")}|${String(row.productVariantId || "")}|${String(row.sku || "")}|${String(row.variantLabel || "")}`;
+            const lineId = row.lineId || row._id || row.itemId || null;
+            if (lineId) byKey.set(`id:${String(lineId)}`, row);
+            byKey.set(key, row);
+        }
+        for (const line of po.items || []) {
+            const idKey = `id:${String(line._id || "")}`;
+            const lineKey = `${String(line.productId || "")}|${String(line.productVariantId || "")}|${String(line.sku || "")}|${String(line.variantLabel || "")}`;
+            const row = byKey.get(idKey) || byKey.get(lineKey);
+            if (!row) continue;
+            if (row.quantity != null) {
+                line.quantity = Math.max(1, Number(row.quantity) || 1);
+                line.pendingQuantity = Math.max(
+                    0,
+                    line.quantity - (Number(line.receivedQuantity) || 0)
+                );
+            }
+            if (row.purchasePrice != null) {
+                line.purchasePrice = Math.max(0, Number(row.purchasePrice) || 0);
+            }
+            if (row.discount != null) line.discount = Math.max(0, Number(row.discount) || 0);
+            if (row.tax != null) line.tax = Math.max(0, Number(row.tax) || 0);
+            if (row.remarks != null) line.remarks = String(row.remarks || "").trim();
+            // Buyer cannot set warranty when supplier is selected
+            line.total =
+                Math.max(0, line.quantity * line.purchasePrice - (Number(line.discount) || 0)) +
+                (Number(line.tax) || 0);
+        }
+        if (typeof po.calculateTotal === "function") {
+            po.calculateTotal();
+        } else {
+            po.subtotal = (po.items || []).reduce(
+                (s, i) => s + (Number(i.quantity) || 0) * (Number(i.purchasePrice) || 0),
+                0
+            );
+            po.grandTotal =
+                po.subtotal -
+                (Number(po.discount) || 0) +
+                (Number(po.tax) || 0) +
+                (Number(po.shippingCost) || 0) +
+                (Number(po.otherCharges) || 0);
+            po.dueAmount = Math.max(0, po.grandTotal - (Number(po.paidAmount) || 0));
+        }
+    }
+
+    if (payload.expectedDeliveryDate) {
+        const d = new Date(payload.expectedDeliveryDate);
+        if (!Number.isNaN(d.getTime())) po.expectedDeliveryDate = d;
+    }
+    if (payload.supplierNote != null) {
+        po.supplierNote = String(payload.supplierNote || "").trim();
+    }
+    if (payload.internalNote != null) {
+        po.internalNote = String(payload.internalNote || "").trim();
+    }
+    if (payload.paymentTerms) po.paymentTerms = payload.paymentTerms;
+
+    const message = String(
+        payload.supplierMessage || payload.message || payload.note || ""
+    ).trim();
+
+    po.negotiationRound = Math.max(1, Number(po.negotiationRound) || 1) + 1;
+    po.status = "New Demand Sent";
+    po.supplierAcceptanceStatus = "Pending";
+    po.supplierNotifiedAt = new Date();
+    po.supplierMessage =
+        message ||
+        `Purchase order ${po.purchaseOrderNo || ""}: a new demand was sent for your review (round ${po.negotiationRound}).`;
+    po.supplierRespondedAt = null;
+    po.supplierResponseNote = "";
+    // Clear previous supplier proposal so they respond fresh
+    po.supplierExpectedDeliveryDate = null;
+    po.supplierDeliveryType = "";
+    po.supplierPaymentType = "";
+    po.supplierPaymentMethod = "";
+    po.supplierPartialSchedule = [];
+    po.supplierPaymentSchedule = [];
+
+    pushNegotiationHistory(po, {
+        round: po.negotiationRound,
+        type: "Buyer Demand",
+        actorRole: "Buyer",
+        actorId: toObjectId(actorId),
+        note: message,
+        expectedDeliveryDate: po.expectedDeliveryDate,
+        deliveryType: "",
+        paymentType: "",
+        paymentMethod: "",
+        items: snapshotItemsForHistory(po.items),
+        partialSchedule: [],
+        paymentSchedule: []
+    });
 
     po.updatedBy = toObjectId(actorId);
     await po.save();
@@ -1993,7 +2380,22 @@ const recordSupplierPayment = async (id, payload = {}, actorId = null) => {
             );
         }
     } else if (advanceTypes.includes(payType)) {
-        // Payable any time after Supplier Accepted (current status already past that).
+        // Payable only after both sides Agreed (legacy Supplier Accepted included).
+        const agreedOk = [
+            "Agreed",
+            "Supplier Accepted",
+            "Partially Delivered",
+            "Completely Delivered",
+            "Partially Received",
+            "Received",
+            "Completed"
+        ].includes(po.status);
+        if (!agreedOk) {
+            throw new AppError(
+                "Advance / partial payments can be recorded after both sides have Agreed.",
+                400
+            );
+        }
     } else if (!payType) {
         throw new AppError(
             "Supplier payment type is missing. Accept the PO with payment terms first.",
@@ -2238,6 +2640,9 @@ module.exports = {
     supplierAcceptPurchaseOrder,
     supplierRejectPurchaseOrder,
     supplierSendPurchaseOrder,
+    buyerAcceptDemand,
+    buyerRejectDemand,
+    sendNewDemand,
     cancelPurchaseOrder,
     prepareAndTrashPurchaseOrder,
     recordSupplierPayment,

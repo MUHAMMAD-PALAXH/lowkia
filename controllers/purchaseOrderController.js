@@ -174,7 +174,7 @@ exports.supplierRejectPurchaseOrder = asyncHandler(async (req, res) => {
         getActorId(req),
         req.body || {}
     );
-    return success(res, "Purchase order rejected by supplier.", po);
+    return success(res, "Purchase order rejected by supplier and cancelled.", po);
 });
 
 exports.supplierSendPurchaseOrder = asyncHandler(async (req, res) => {
@@ -184,6 +184,37 @@ exports.supplierSendPurchaseOrder = asyncHandler(async (req, res) => {
         req.body || {}
     );
     return success(res, "Supplier shipment recorded successfully.", po);
+});
+
+exports.buyerAcceptDemand = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.buyerAcceptDemand(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(res, "Supplier demand accepted — purchase order is Agreed.", po);
+});
+
+exports.buyerRejectDemand = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.buyerRejectDemand(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(
+        res,
+        "Supplier demand rejected — revise the purchase order and send a new demand.",
+        po
+    );
+});
+
+exports.sendNewDemand = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.sendNewDemand(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(res, "New demand sent to supplier.", po);
 });
 
 exports.cancelPurchaseOrder = asyncHandler(async (req, res) => {

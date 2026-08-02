@@ -396,6 +396,11 @@ const purchaseOrderSchema = new mongoose.Schema(
                 "Approved",
                 "Ordered",
                 "Awaiting Supplier",
+                "Supplier Demand Received",
+                "Revision Required",
+                "New Demand Sent",
+                "Agreed",
+                // Legacy — treated as Agreed for shipping gates
                 "Supplier Accepted",
                 "Supplier Rejected",
                 "Partially Delivered",
@@ -490,9 +495,85 @@ const purchaseOrderSchema = new mongoose.Schema(
 
         supplierAcceptanceStatus: {
             type: String,
-            enum: ["Not Required", "Pending", "Accepted", "Rejected", "Withdrawn"],
+            enum: [
+                "Not Required",
+                "Pending",
+                "Demand Received",
+                "Agreed",
+                // Legacy alias of Agreed
+                "Accepted",
+                "Rejected",
+                "Withdrawn"
+            ],
             default: "Not Required"
         },
+
+        // Negotiation round counter (1 = first send to supplier)
+        negotiationRound: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        // Full negotiation history (PO ↔ supplier demands)
+        negotiationHistory: [
+            {
+                round: { type: Number, default: 1, min: 1 },
+                type: {
+                    type: String,
+                    enum: [
+                        "Initial Send",
+                        "Supplier Demand",
+                        "Buyer Demand",
+                        "Buyer Rejected Demand",
+                        "Agreed",
+                        "Rejected"
+                    ],
+                    required: true
+                },
+                actorRole: {
+                    type: String,
+                    enum: ["Buyer", "Supplier"],
+                    default: "Buyer"
+                },
+                actorId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "AdminUser",
+                    default: null
+                },
+                at: { type: Date, default: Date.now },
+                note: { type: String, default: "", trim: true },
+                expectedDeliveryDate: { type: Date, default: null },
+                deliveryType: { type: String, default: "" },
+                paymentType: { type: String, default: "" },
+                paymentMethod: { type: String, default: "" },
+                grandTotal: { type: Number, default: 0 },
+                items: [
+                    {
+                        productId: {
+                            type: mongoose.Schema.Types.ObjectId,
+                            ref: "Product",
+                            default: null
+                        },
+                        productVariantId: {
+                            type: mongoose.Schema.Types.ObjectId,
+                            ref: "ProductVariant",
+                            default: null
+                        },
+                        productName: { type: String, default: "" },
+                        variantLabel: { type: String, default: "" },
+                        sku: { type: String, default: "" },
+                        quantity: { type: Number, default: 0 },
+                        purchasePrice: { type: Number, default: 0 },
+                        warrantyType: { type: String, default: "No Warranty" },
+                        warrantyPeriod: { type: Number, default: 0 },
+                        total: { type: Number, default: 0 }
+                    }
+                ],
+                partialSchedule: { type: Array, default: [] },
+                paymentSchedule: { type: Array, default: [] }
+            }
+        ],
 
         supplierNotifiedAt: {
             type: Date,
