@@ -38,8 +38,28 @@ const CANCEL_AND_TRASH_STATUSES = [
     "Completely Delivered"
 ];
 
-/** Supplier can ship only after both sides agreed (legacy Supplier Accepted = agreed). */
-const SENDABLE_STATUSES = ["Agreed", "Supplier Accepted", "Partially Delivered"];
+/** Supplier can ship only after both sides agreed (legacy Supplier Accepted = agreed).
+ *  Partially Received stays sendable when later phases / qty remain unsent. */
+const SENDABLE_STATUSES = [
+    "Agreed",
+    "Supplier Accepted",
+    "Partially Delivered",
+    "Partially Received"
+];
+
+const poHasRemainingToSend = (po) => {
+    const itemRemaining = (po.items || []).some(
+        (i) =>
+            Math.max(0, Number(i.quantity) || 0) -
+                Math.max(0, Number(i.supplierSentQuantity) || 0) >
+            0.0001
+    );
+    if (itemRemaining) return true;
+    if (po.supplierDeliveryType === "Partial") {
+        return (po.supplierPartialSchedule || []).some((p) => !p.isCompleted);
+    }
+    return false;
+};
 
 /** Supplier may accept/reject while waiting on a (new) demand. */
 const SUPPLIER_RESPONSE_STATUSES = ["Awaiting Supplier", "New Demand Sent"];
@@ -1357,7 +1377,8 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
             productName: String(row.productName || "").trim(),
             variantLabel: String(row.variantLabel || "").trim(),
             sku: String(row.sku || "").trim(),
-            quantity
+            quantity,
+            sentQuantity: 0
         };
     };
 
@@ -1440,6 +1461,8 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
                 dateTo,
                 dueDate: dateTo,
                 note: String(row.note || "").trim(),
+                isCompleted: false,
+                completedAt: null,
                 lineAllocations: allocations
             };
         });
@@ -1522,8 +1545,11 @@ const supplierAcceptPurchaseOrder = async (id, actorId = null, payload = {}) => 
                     productName: i.productName || "",
                     variantLabel: i.variantLabel || "",
                     sku: i.sku || "",
-                    quantity: Number(i.quantity) || 0
-                }))
+                    quantity: Number(i.quantity) || 0,
+                    sentQuantity: 0
+                })),
+                isCompleted: false,
+                completedAt: null
             }
         ];
     }
@@ -1785,9 +1811,12 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     const sendable = SENDABLE_STATUSES;
     if (!sendable.includes(po.status)) {
         throw new AppError(
-            "Only Agreed (or Partially Delivered) purchase orders can be sent. Both sides must agree first.",
+            "Only Agreed, Partially Delivered, or Partially Received purchase orders can be sent (while qty remains). Both sides must agree first.",
             400
         );
+    }
+    if (!poHasRemainingToSend(po)) {
+        throw new AppError("All ordered quantities are already sent.", 400);
     }
 
     const transferDaysMin = Math.max(
@@ -1997,8 +2026,17 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
 
     if (deliveryType === "Partial" && phaseIndex >= 0) {
         const phase = po.supplierPartialSchedule[phaseIndex];
-        phase.isCompleted = true;
-        phase.completedAt = sentAt;
+        const phaseFullySent = (phase.lineAllocations || []).every((a) => {
+            const q = Math.max(0, Number(a.quantity) || 0);
+            const s = Math.max(0, Number(a.sentQuantity) || 0);
+            return q <= 0 || s + 0.0001 >= q;
+        });
+        // Close phase when fully sent, or when under-sent with an accepted variance reason
+        // so the next incomplete phase can be shipped.
+        if (phaseFullySent || hasVariance) {
+            phase.isCompleted = true;
+            phase.completedAt = sentAt;
+        }
     }
 
     if (!Array.isArray(po.supplierShipments)) po.supplierShipments = [];
@@ -2028,12 +2066,14 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         }))
     });
 
-    // Derive status from remaining send qty
+    // Derive status from remaining send qty (keep Partially Received when buyer already stocked some)
     let totalOrdered = 0;
     let totalSent = 0;
+    let totalReceived = 0;
     for (const item of po.items || []) {
         totalOrdered += Number(item.quantity) || 0;
         totalSent += Number(item.supplierSentQuantity) || 0;
+        totalReceived += Number(item.receivedQuantity) || 0;
     }
     if (totalSent <= 0) {
         po.status = "Agreed";
@@ -2045,6 +2085,9 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 if (!p.completedAt) p.completedAt = sentAt;
             }
         }
+    } else if (totalReceived > 0) {
+        // Buyer already GRN'd some qty — stay Partially Received so remaining phases stay visible/sendable
+        po.status = "Partially Received";
     } else {
         po.status = "Partially Delivered";
     }
