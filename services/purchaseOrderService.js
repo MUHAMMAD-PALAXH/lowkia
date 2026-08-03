@@ -2152,7 +2152,7 @@ const buyerRejectDemand = async (id, actorId = null, payload = {}) => {
 };
 
 /**
- * After Revision Required, buyer sends a new demand (may include full PO field updates).
+ * After Revision Required, buyer sends a new demand (full terms like supplier accept form).
  */
 const sendNewDemand = async (id, actorId = null, payload = {}) => {
     const po = await findPoOrFail(id);
@@ -2166,9 +2166,8 @@ const sendNewDemand = async (id, actorId = null, payload = {}) => {
         );
     }
 
-    // Optional inline updates (qty, price, dates, delivery/payment prefs, warranties when no supplier lock — here supplier IS selected so buyer warranty ignored)
+    // Optional inline updates (qty, price)
     if (Array.isArray(payload.items) && payload.items.length) {
-        // Reuse update path lightly: map matching lines by key
         const byKey = new Map();
         for (const row of payload.items) {
             const key = `${String(row.productId || "")}|${String(row.productVariantId || "")}|${String(row.sku || "")}|${String(row.variantLabel || "")}`;
@@ -2194,7 +2193,6 @@ const sendNewDemand = async (id, actorId = null, payload = {}) => {
             if (row.discount != null) line.discount = Math.max(0, Number(row.discount) || 0);
             if (row.tax != null) line.tax = Math.max(0, Number(row.tax) || 0);
             if (row.remarks != null) line.remarks = String(row.remarks || "").trim();
-            // Buyer cannot set warranty when supplier is selected
             line.total =
                 Math.max(0, line.quantity * line.purchasePrice - (Number(line.discount) || 0)) +
                 (Number(line.tax) || 0);
@@ -2216,10 +2214,261 @@ const sendNewDemand = async (id, actorId = null, payload = {}) => {
         }
     }
 
-    if (payload.expectedDeliveryDate) {
-        const d = new Date(payload.expectedDeliveryDate);
-        if (!Number.isNaN(d.getTime())) po.expectedDeliveryDate = d;
+    const expectedRaw =
+        payload.expectedDeliveryDate || payload.deliveryDate || null;
+    const expectedDeliveryDate = expectedRaw ? new Date(expectedRaw) : null;
+    if (expectedDeliveryDate && !Number.isNaN(expectedDeliveryDate.getTime())) {
+        po.expectedDeliveryDate = expectedDeliveryDate;
     }
+
+    const deliveryType = String(payload.deliveryType || "").trim();
+    const paymentTypeRaw = String(payload.paymentType || "").trim();
+    const paymentType =
+        paymentTypeRaw === "Partial" || paymentTypeRaw === "Advance Partial"
+            ? "Partial"
+            : paymentTypeRaw;
+    const paymentMethod = String(payload.paymentMethod || "").trim();
+
+    const poLines = po.items || [];
+    const mapAllocation = (row, idx) => {
+        const quantity = Number(row.quantity) || 0;
+        if (quantity < 0) {
+            throw new AppError(
+                `lineAllocations[${idx}].quantity cannot be negative.`,
+                400
+            );
+        }
+        return {
+            productId: toObjectId(row.productId) || null,
+            productVariantId: toObjectId(row.productVariantId) || null,
+            productName: String(row.productName || "").trim(),
+            variantLabel: String(row.variantLabel || "").trim(),
+            sku: String(row.sku || "").trim(),
+            quantity,
+            sentQuantity: 0
+        };
+    };
+
+    let partialSchedule = [];
+    let paymentSchedule = [];
+
+    if (deliveryType === "Full" || deliveryType === "Partial") {
+        const baseDate =
+            expectedDeliveryDate && !Number.isNaN(expectedDeliveryDate.getTime())
+                ? expectedDeliveryDate
+                : po.expectedDeliveryDate
+                  ? new Date(po.expectedDeliveryDate)
+                  : new Date();
+
+        if (deliveryType === "Partial") {
+            const raw = Array.isArray(payload.partialSchedule)
+                ? payload.partialSchedule
+                : Array.isArray(payload.deliverySchedule)
+                  ? payload.deliverySchedule
+                  : [];
+            if (!raw.length) {
+                throw new AppError(
+                    "partialSchedule is required for Partial delivery.",
+                    400
+                );
+            }
+            partialSchedule = raw.map((row, idx) => {
+                let dateFrom = row.dateFrom ? new Date(row.dateFrom) : null;
+                let dateTo = row.dateTo ? new Date(row.dateTo) : null;
+                if (row.dueDate && !dateTo) dateTo = new Date(row.dueDate);
+                if (!dateFrom || Number.isNaN(dateFrom.getTime())) {
+                    dateFrom = new Date(baseDate);
+                }
+                if (!dateTo || Number.isNaN(dateTo.getTime())) {
+                    dateTo = new Date(dateFrom);
+                }
+                const allocations = Array.isArray(row.lineAllocations)
+                    ? row.lineAllocations.map(mapAllocation)
+                    : [];
+                if (!allocations.length) {
+                    throw new AppError(
+                        `partialSchedule[${idx}] must include lineAllocations.`,
+                        400
+                    );
+                }
+                return {
+                    phase: Number(row.phase) || idx + 1,
+                    amount: 0,
+                    amountType: "Fixed",
+                    daysFrom: 0,
+                    daysTo: 0,
+                    days: 0,
+                    dateFrom,
+                    dateTo,
+                    dueDate: dateTo,
+                    note: String(row.note || "").trim(),
+                    isCompleted: false,
+                    completedAt: null,
+                    lineAllocations: allocations
+                };
+            });
+
+            const allocKey = (a) =>
+                `${String(a.productId || "")}|${String(a.productVariantId || "")}|${String(a.sku || "")}|${String(a.variantLabel || "")}`;
+            const orderedByKey = new Map();
+            for (const line of poLines) {
+                const key = allocKey(line);
+                orderedByKey.set(
+                    key,
+                    (orderedByKey.get(key) || 0) + (Number(line.quantity) || 0)
+                );
+            }
+            const allocatedByKey = new Map();
+            for (const phase of partialSchedule) {
+                for (const a of phase.lineAllocations || []) {
+                    const key = allocKey(a);
+                    allocatedByKey.set(
+                        key,
+                        (allocatedByKey.get(key) || 0) + (Number(a.quantity) || 0)
+                    );
+                }
+            }
+            for (const [key, orderedQty] of orderedByKey.entries()) {
+                const allocated = allocatedByKey.get(key) || 0;
+                if (Math.abs(allocated - orderedQty) > 0.0001) {
+                    throw new AppError(
+                        `Partial delivery quantities must total ordered qty for each line (got ${allocated}, expected ${orderedQty}).`,
+                        400
+                    );
+                }
+            }
+        } else {
+            partialSchedule = [
+                {
+                    phase: 1,
+                    amount: Number(po.grandTotal) || 0,
+                    amountType: "Fixed",
+                    daysFrom: 0,
+                    daysTo: 0,
+                    days: 0,
+                    dateFrom: baseDate,
+                    dateTo: baseDate,
+                    dueDate: baseDate,
+                    note: "Complete delivery",
+                    isCompleted: false,
+                    completedAt: null,
+                    lineAllocations: poLines.map((i) => ({
+                        productId: i.productId || null,
+                        productVariantId: i.productVariantId || null,
+                        productName: i.productName || "",
+                        variantLabel: i.variantLabel || "",
+                        sku: i.sku || "",
+                        quantity: Number(i.quantity) || 0,
+                        sentQuantity: 0
+                    }))
+                }
+            ];
+        }
+
+        const allowedPaymentTypes = [
+            "Advance Full",
+            "Partial",
+            "Advance Partial",
+            "Cash on Delivery",
+            "Cash on Delivery Partially",
+            "After Delivery"
+        ];
+        if (paymentTypeRaw && !allowedPaymentTypes.includes(paymentTypeRaw)) {
+            throw new AppError("Invalid paymentType.", 400);
+        }
+
+        const needsPaymentPhases =
+            paymentType === "Partial" ||
+            paymentType === "Advance Partial" ||
+            paymentType === "Cash on Delivery Partially" ||
+            paymentType === "Advance Full";
+        if (needsPaymentPhases) {
+            const rawPay = Array.isArray(payload.paymentSchedule)
+                ? payload.paymentSchedule
+                : [];
+            const isMultiPartial =
+                paymentType === "Partial" ||
+                paymentType === "Advance Partial" ||
+                paymentType === "Cash on Delivery Partially";
+            if (isMultiPartial && !rawPay.length) {
+                throw new AppError(
+                    "paymentSchedule is required for partial payment.",
+                    400
+                );
+            }
+            if (paymentType === "Advance Full" && !rawPay.length) {
+                paymentSchedule = [
+                    {
+                        phase: 1,
+                        amount: Number(po.grandTotal) || 0,
+                        amountType: "Fixed",
+                        days: 0,
+                        dueDate: baseDate,
+                        method: paymentMethod || "Bank",
+                        note: "Full advance"
+                    }
+                ];
+            } else {
+                paymentSchedule = rawPay.map((row, idx) => ({
+                    phase: Number(row.phase) || idx + 1,
+                    amount: Number(row.amount) || 0,
+                    amountType:
+                        String(row.amountType || "Fixed") === "Percentage"
+                            ? "Percentage"
+                            : "Fixed",
+                    days: Math.max(0, parseInt(row.days, 10) || 0),
+                    dueDate: row.dueDate ? new Date(row.dueDate) : baseDate,
+                    method: String(row.method || paymentMethod || "").trim(),
+                    note: String(row.note || "").trim()
+                }));
+            }
+        } else if (paymentType === "Cash on Delivery") {
+            paymentSchedule = [
+                {
+                    phase: 1,
+                    amount: Number(po.grandTotal) || 0,
+                    amountType: "Fixed",
+                    days: 0,
+                    dueDate: baseDate,
+                    method: "Cash on Delivery",
+                    note: "Pay on delivery"
+                }
+            ];
+        } else if (paymentType === "After Delivery") {
+            paymentSchedule = [
+                {
+                    phase: 1,
+                    amount: Number(po.grandTotal) || 0,
+                    amountType: "Fixed",
+                    days: 0,
+                    dueDate: baseDate,
+                    method: paymentMethod || "Bank",
+                    note: "Pay after delivery complete"
+                }
+            ];
+        }
+
+        po.supplierDeliveryType = deliveryType;
+        po.supplierPaymentType = paymentType || "";
+        po.supplierPaymentMethod =
+            paymentMethod ||
+            (paymentType === "Cash on Delivery" ||
+            paymentType === "Cash on Delivery Partially"
+                ? "Cash on Delivery"
+                : "");
+        po.supplierExpectedDeliveryDate = baseDate;
+        po.supplierPartialSchedule = partialSchedule;
+        po.supplierPaymentSchedule = paymentSchedule;
+    } else {
+        // No delivery type in payload — clear prior supplier proposal
+        po.supplierExpectedDeliveryDate = null;
+        po.supplierDeliveryType = "";
+        po.supplierPaymentType = "";
+        po.supplierPaymentMethod = "";
+        po.supplierPartialSchedule = [];
+        po.supplierPaymentSchedule = [];
+    }
+
     if (payload.supplierNote != null) {
         po.supplierNote = String(payload.supplierNote || "").trim();
     }
@@ -2241,13 +2490,6 @@ const sendNewDemand = async (id, actorId = null, payload = {}) => {
         `Purchase order ${po.purchaseOrderNo || ""}: a new demand was sent for your review (round ${po.negotiationRound}).`;
     po.supplierRespondedAt = null;
     po.supplierResponseNote = "";
-    // Clear previous supplier proposal so they respond fresh
-    po.supplierExpectedDeliveryDate = null;
-    po.supplierDeliveryType = "";
-    po.supplierPaymentType = "";
-    po.supplierPaymentMethod = "";
-    po.supplierPartialSchedule = [];
-    po.supplierPaymentSchedule = [];
 
     pushNegotiationHistory(po, {
         round: po.negotiationRound,
@@ -2256,12 +2498,12 @@ const sendNewDemand = async (id, actorId = null, payload = {}) => {
         actorId: toObjectId(actorId),
         note: message,
         expectedDeliveryDate: po.expectedDeliveryDate,
-        deliveryType: "",
-        paymentType: "",
-        paymentMethod: "",
+        deliveryType: po.supplierDeliveryType || "",
+        paymentType: po.supplierPaymentType || "",
+        paymentMethod: po.supplierPaymentMethod || "",
         items: snapshotItemsForHistory(po.items),
-        partialSchedule: [],
-        paymentSchedule: []
+        partialSchedule: po.supplierPartialSchedule || [],
+        paymentSchedule: po.supplierPaymentSchedule || []
     });
 
     po.updatedBy = toObjectId(actorId);
