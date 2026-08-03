@@ -64,6 +64,27 @@ const grnItemSchema = new mongoose.Schema(
         required:true
     },
 
+    // PO / shipment context (informational for receive UI)
+    poOrderedQuantity: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    supplierSentQuantity: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    poReceivedQuantity: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    receivableNow: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
 
     receivedQuantity:{
 
@@ -125,6 +146,51 @@ const grnItemSchema = new mongoose.Schema(
 
     _id:true
 });
+
+const receiveBatchLineSchema = new mongoose.Schema(
+    {
+        purchaseOrderItemId: {
+            type: mongoose.Schema.Types.ObjectId,
+            default: null
+        },
+        productId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Product",
+            default: null
+        },
+        productVariantId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "ProductVariant",
+            default: null
+        },
+        productName: { type: String, default: "" },
+        variantLabel: { type: String, default: "" },
+        sku: { type: String, default: "" },
+        receivedQuantity: { type: Number, default: 0, min: 0 },
+        damagedQuantity: { type: Number, default: 0, min: 0 },
+        acceptedQuantity: { type: Number, default: 0, min: 0 },
+        purchasePrice: { type: Number, default: 0, min: 0 },
+        imeis: { type: [String], default: [] }
+    },
+    { _id: false }
+);
+
+const receiveBatchSchema = new mongoose.Schema(
+    {
+        batchNo: { type: Number, default: 1, min: 1 },
+        receivedAt: { type: Date, default: Date.now },
+        receivedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null
+        },
+        note: { type: String, default: "", trim: true },
+        lines: { type: [receiveBatchLineSchema], default: [] },
+        subtotal: { type: Number, default: 0 },
+        grandTotal: { type: Number, default: 0 }
+    },
+    { _id: true }
+);
 
 
 // ==========================================================
@@ -223,6 +289,12 @@ supplierInvoiceNo:{
 items:[
     grnItemSchema
 ],
+
+/** Immutable snapshots of each receive/stock batch (partial or full). */
+receiveBatches: {
+    type: [receiveBatchSchema],
+    default: []
+},
 
 // ==========================================================
 // Summary

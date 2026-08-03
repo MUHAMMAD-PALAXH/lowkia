@@ -4,12 +4,13 @@
  * - Create only from Ordered / shipped / Partially Received PO (no manual GRN)
  * - First GRN start is from Purchase Order → Create GRN
  * - ONE GRN document per PO (Continue / Receive always reuses it)
- * - Partial receive batches stock inventory but GRN stays Draft until PO fully received
+ * - Partial receive batches stock inventory; GRN stays Draft until PO fully received
+ * - receiveBatches[] stores each receive snapshot (got / damaged / date)
  * - GRN "Receive from PO" only lists POs with an open (not Completed) GRN
  * - IMEI: scan one-by-one + bulk paste
  * - Owner completes freely; Employee needs approval before stock increases
  * - Non-IMEI: received qty (barcode optional)
- * - Stock increases on each receive batch; header status Completed only when PO is fully received
+ * - Stock increases on each receive batch; header Completed only when PO fully received
  */
 
 const mongoose = require("mongoose");
@@ -63,7 +64,8 @@ const trash = createTrashOps(GRN, {
             doc.inventoryUpdated ||
             doc.status === "Completed" ||
             doc.purchaseStatus === "Partially Received" ||
-            doc.purchaseStatus === "Completed"
+            doc.purchaseStatus === "Completed" ||
+            (Array.isArray(doc.receiveBatches) && doc.receiveBatches.length > 0)
         ) {
             throw new AppError(
                 "GRNs that have stocked inventory (or are completed) cannot be trashed.",
@@ -142,7 +144,320 @@ const populateGrn = (query) =>
         .populate("items.productVariantId", "sku combinationString barcode");
 
 /** After populate, normalize line trackingType and hydrate snapshot fields */
-const enrichGrnDoc = (grn) => {
+const plannedPaymentAmount = (phase, grandTotal) => {
+    const raw = Math.max(Number(phase?.amount) || 0, 0);
+    if (String(phase?.amountType || "Fixed") === "Percentage") {
+        return Math.max(((Number(grandTotal) || 0) * raw) / 100, 0);
+    }
+    return raw;
+};
+
+const lineMatchKey = (row = {}) =>
+    `${String(row.productId?._id || row.productId || "")}|${String(row.productVariantId?._id || row.productVariantId || "")}|${String(row.sku || "")}|${String(row.variantLabel || "")}`;
+
+const summarizePoProgress = (po, damagedByKey = {}) => {
+    let orderedQty = 0;
+    let sentQty = 0;
+    let receivedQty = 0;
+    let damagedQty = 0;
+    let orderedValue = 0;
+    let sentValue = 0;
+    let receivedValue = 0;
+    let damagedValue = 0;
+    for (const item of po.items || []) {
+        const qty = Math.max(Number(item.quantity) || 0, 0);
+        const sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
+        const recv = Math.max(Number(item.receivedQuantity) || 0, 0);
+        const price = Math.max(Number(item.purchasePrice) || 0, 0);
+        const dmg = Math.max(Number(damagedByKey[lineMatchKey(item)]) || 0, 0);
+        orderedQty += qty;
+        sentQty += sent;
+        receivedQty += recv;
+        damagedQty += dmg;
+        orderedValue += qty * price;
+        sentValue += sent * price;
+        receivedValue += recv * price;
+        damagedValue += dmg * price;
+    }
+    return {
+        orderedQty,
+        sentQty,
+        receivedQty,
+        damagedQty,
+        remainingQty: Math.max(orderedQty - receivedQty, 0),
+        sentNotReceivedQty: Math.max(sentQty - receivedQty, 0),
+        orderedValue,
+        sentValue,
+        receivedValue,
+        damagedValue,
+        remainingValue: Math.max(orderedValue - receivedValue, 0)
+    };
+};
+
+/** Aggregate damaged qty per PO line key from GRN receive batches. */
+const aggregateDamagedFromGrns = (grns = []) => {
+    const damagedByKey = {};
+    const receiveDates = [];
+    for (const grn of grns || []) {
+        if (grn.receivedDate) receiveDates.push(grn.receivedDate);
+        for (const batch of grn.receiveBatches || []) {
+            if (batch.receivedAt) receiveDates.push(batch.receivedAt);
+            for (const line of batch.lines || []) {
+                const key = lineMatchKey(line);
+                damagedByKey[key] =
+                    (damagedByKey[key] || 0) +
+                    Math.max(Number(line.damagedQuantity) || 0, 0);
+            }
+        }
+    }
+    receiveDates.sort((a, b) => new Date(a) - new Date(b));
+    return {
+        damagedByKey,
+        firstReceivedAt: receiveDates[0] || null,
+        lastReceivedAt: receiveDates.length
+            ? receiveDates[receiveDates.length - 1]
+            : null,
+        receiveDates
+    };
+};
+
+/**
+ * Build agreed delivery phases with ordered / sent / received / damaged
+ * (received+damaged allocated FIFO across phases for each line).
+ */
+const buildDeliveryPhases = (po, damagedByKey = {}) => {
+    const items = po.items || [];
+    const itemByKey = new Map();
+    for (const item of items) {
+        itemByKey.set(lineMatchKey(item), item);
+    }
+
+    const remainingRecv = {};
+    const remainingDmg = {};
+    for (const [key, item] of itemByKey.entries()) {
+        remainingRecv[key] = Math.max(Number(item.receivedQuantity) || 0, 0);
+        remainingDmg[key] = Math.max(Number(damagedByKey[key]) || 0, 0);
+    }
+
+    let phases = Array.isArray(po.supplierPartialSchedule)
+        ? po.supplierPartialSchedule
+        : [];
+
+    // Full delivery with empty schedule — synthesize one phase from PO lines
+    if (!phases.length) {
+        phases = [
+            {
+                phase: 1,
+                dateFrom: po.supplierExpectedDeliveryDate || po.expectedDeliveryDate || null,
+                dateTo: po.supplierExpectedDeliveryDate || po.expectedDeliveryDate || null,
+                dueDate: po.supplierExpectedDeliveryDate || po.expectedDeliveryDate || null,
+                note: po.supplierDeliveryType === "Partial" ? "" : "Complete delivery",
+                isCompleted: items.every(
+                    (i) =>
+                        Math.max(Number(i.supplierSentQuantity) || 0, 0) + 0.0001 >=
+                        Math.max(Number(i.quantity) || 0, 0)
+                ),
+                lineAllocations: items.map((i) => ({
+                    productId: i.productId || null,
+                    productVariantId: i.productVariantId || null,
+                    productName: i.productName || "",
+                    variantLabel: i.variantLabel || "",
+                    sku: i.sku || "",
+                    quantity: Math.max(Number(i.quantity) || 0, 0),
+                    sentQuantity: Math.max(Number(i.supplierSentQuantity) || 0, 0)
+                }))
+            }
+        ];
+    }
+
+    const shipments = Array.isArray(po.supplierShipments)
+        ? po.supplierShipments
+        : [];
+
+    return phases.map((phase, idx) => {
+        const phaseNo = Number(phase.phase) || idx + 1;
+        const phaseShipments = shipments.filter(
+            (s) => Number(s.phase) === phaseNo || (s.phase == null && phases.length === 1)
+        );
+        const lines = [];
+        let agreedQty = 0;
+        let sentQty = 0;
+        let receivedQty = 0;
+        let damagedQty = 0;
+        let agreedValue = 0;
+        let sentValue = 0;
+        let receivedValue = 0;
+        let damagedValue = 0;
+
+        for (const alloc of phase.lineAllocations || []) {
+            const key = lineMatchKey(alloc);
+            const item = itemByKey.get(key);
+            const price = Math.max(
+                Number(item?.purchasePrice) || Number(alloc.purchasePrice) || 0,
+                0
+            );
+            const agreed = Math.max(Number(alloc.quantity) || 0, 0);
+            const sent = Math.max(
+                Number(alloc.sentQuantity) != null && alloc.sentQuantity !== ""
+                    ? Number(alloc.sentQuantity)
+                    : 0,
+                0
+            );
+            // FIFO receive / damage against this phase's agreed qty
+            const recvPool = remainingRecv[key] || 0;
+            const dmgPool = remainingDmg[key] || 0;
+            const recv = Math.min(recvPool, agreed);
+            const dmg = Math.min(dmgPool, agreed);
+            remainingRecv[key] = Math.max(recvPool - recv, 0);
+            remainingDmg[key] = Math.max(dmgPool - dmg, 0);
+
+            agreedQty += agreed;
+            sentQty += sent;
+            receivedQty += recv;
+            damagedQty += dmg;
+            agreedValue += agreed * price;
+            sentValue += sent * price;
+            receivedValue += recv * price;
+            damagedValue += dmg * price;
+
+            lines.push({
+                productId: alloc.productId || item?.productId || null,
+                productVariantId:
+                    alloc.productVariantId || item?.productVariantId || null,
+                productName: alloc.productName || item?.productName || "",
+                variantLabel: alloc.variantLabel || item?.variantLabel || "",
+                sku: alloc.sku || item?.sku || "",
+                purchasePrice: price,
+                agreedQty: agreed,
+                sentQty: sent,
+                receivedQty: recv,
+                damagedQty: dmg,
+                remainingQty: Math.max(agreed - recv, 0),
+                agreedValue: agreed * price,
+                sentValue: sent * price,
+                receivedValue: recv * price,
+                damagedValue: dmg * price
+            });
+        }
+
+        const shipmentQty = phaseShipments.reduce((sum, s) => {
+            for (const l of s.lines || []) {
+                sum += Math.max(Number(l.quantity) || 0, 0);
+            }
+            return sum;
+        }, 0);
+
+        return {
+            phase: phaseNo,
+            dateFrom: phase.dateFrom || null,
+            dateTo: phase.dateTo || phase.dueDate || null,
+            dueDate: phase.dueDate || phase.dateTo || null,
+            note: phase.note || "",
+            isSentCompleted: !!phase.isCompleted,
+            completedAt: phase.completedAt || null,
+            lines,
+            shipments: phaseShipments.map((s) => ({
+                sentAt: s.sentAt || null,
+                transferDaysMin: Number(s.transferDaysMin) || 0,
+                transferDaysMax: Number(s.transferDaysMax) || 0,
+                deliveryMode: s.deliveryMode || "",
+                phase: s.phase == null ? phaseNo : Number(s.phase),
+                note: s.note || "",
+                varianceReason: s.varianceReason || "",
+                quantity: (s.lines || []).reduce(
+                    (n, l) => n + Math.max(Number(l.quantity) || 0, 0),
+                    0
+                ),
+                lines: s.lines || []
+            })),
+            totals: {
+                agreedQty,
+                sentQty: sentQty > 0 ? sentQty : shipmentQty,
+                receivedQty,
+                damagedQty,
+                remainingQty: Math.max(agreedQty - receivedQty, 0),
+                agreedValue,
+                sentValue,
+                receivedValue,
+                damagedValue,
+                remainingValue: Math.max(agreedValue - receivedValue, 0)
+            }
+        };
+    });
+};
+
+const buildPoContext = (po, grns = []) => {
+    if (!po) return null;
+    const plain = typeof po.toObject === "function" ? po.toObject() : po;
+    const supplier =
+        plain.supplierId && typeof plain.supplierId === "object"
+            ? {
+                  id: String(plain.supplierId._id || plain.supplierId.id || ""),
+                  name: plain.supplierId.name || "",
+                  supplierCode: plain.supplierId.supplierCode || ""
+              }
+            : {
+                  id: plain.supplierId ? String(plain.supplierId) : "",
+                  name: "",
+                  supplierCode: ""
+              };
+
+    const grandTotal = Math.max(Number(plain.grandTotal) || 0, 0);
+    const schedule = Array.isArray(plain.supplierPaymentSchedule)
+        ? plain.supplierPaymentSchedule.map((p) => {
+              const planned = plannedPaymentAmount(p, grandTotal);
+              const paidAmt = Math.max(Number(p.paidAmount) || 0, 0);
+              const isPaid =
+                  p.isPaid === true || (planned > 0 && paidAmt + 0.0001 >= planned);
+              return {
+                  phase: Number(p.phase) || 1,
+                  amount: Number(p.amount) || 0,
+                  amountType: p.amountType || "Fixed",
+                  plannedAmount: planned,
+                  paidAmount: paidAmt,
+                  remainingAmount: Math.max(planned - paidAmt, 0),
+                  isPaid,
+                  method: p.method || "",
+                  dueDate: p.dueDate || null,
+                  note: p.note || "",
+                  paymentRef: p.paymentRef || "",
+                  paidAt: p.paidAt || null
+              };
+          })
+        : [];
+
+    const { damagedByKey, firstReceivedAt, lastReceivedAt, receiveDates } =
+        aggregateDamagedFromGrns(grns);
+    const progress = summarizePoProgress(plain, damagedByKey);
+    const deliveryPhases = buildDeliveryPhases(plain, damagedByKey);
+
+    return {
+        purchaseOrderId: String(plain._id || plain.id || ""),
+        purchaseOrderNo: plain.purchaseOrderNo || "",
+        orderDate: plain.orderDate || null,
+        expectedDeliveryDate: plain.expectedDeliveryDate || null,
+        status: plain.status || "",
+        grandTotal,
+        paidAmount: Math.max(Number(plain.paidAmount) || 0, 0),
+        dueAmount: Math.max(Number(plain.dueAmount) || 0, 0),
+        paymentStatus: plain.paymentStatus || "Pending",
+        supplier,
+        supplierExpectedDeliveryDate: plain.supplierExpectedDeliveryDate || null,
+        supplierDeliveryType: plain.supplierDeliveryType || "",
+        supplierPaymentType: plain.supplierPaymentType || "",
+        supplierPaymentMethod: plain.supplierPaymentMethod || "",
+        supplierPartialSchedule: plain.supplierPartialSchedule || [],
+        supplierShipments: plain.supplierShipments || [],
+        supplierPaymentSchedule: schedule,
+        deliveryPhases,
+        grnReceivedDates: receiveDates,
+        firstGrnReceivedAt: firstReceivedAt,
+        lastGrnReceivedAt: lastReceivedAt,
+        progress
+    };
+};
+
+const enrichGrnDoc = (grn, poContext = null) => {
     if (!grn) return grn;
     const obj = typeof grn.toObject === "function" ? grn.toObject() : grn;
     for (const line of obj.items || []) {
@@ -158,8 +473,36 @@ const enrichGrnDoc = (grn) => {
             if (!line.barcode && variant.barcode) line.barcode = variant.barcode;
             if (!line.sku && variant.sku) line.sku = variant.sku;
         }
+        // Prefer explicit receivableNow; fall back to orderedQuantity (session cap).
+        if (line.receivableNow == null || line.receivableNow === "") {
+            line.receivableNow = Math.max(Number(line.orderedQuantity) || 0, 0);
+        }
+    }
+    if (poContext) {
+        obj.context = poContext;
     }
     return obj;
+};
+
+const loadPoForGrnContext = async (purchaseOrderId) => {
+    if (!purchaseOrderId) return null;
+    return PurchaseOrder.findOne({ _id: purchaseOrderId, ...NOT_DELETED })
+        .populate("supplierId", "supplierCode name companyName phone")
+        .lean();
+};
+
+const loadGrnsForPoContext = async (purchaseOrderId) => {
+    if (!purchaseOrderId) return [];
+    return GRN.find({ purchaseOrderId, ...NOT_DELETED })
+        .select("grnNumber status receivedDate receiveBatches")
+        .lean();
+};
+
+const buildPoContextForId = async (purchaseOrderId) => {
+    const po = await loadPoForGrnContext(purchaseOrderId);
+    if (!po) return null;
+    const grns = await loadGrnsForPoContext(purchaseOrderId);
+    return buildPoContext(po, grns);
 };
 
 const findGrnOrFail = async (id, session = null) => {
@@ -180,13 +523,14 @@ const loadProductMeta = async (productId) => {
         .lean();
 };
 
-/** Build draft GRN lines from pending PO quantities */
+/** Build draft GRN lines from pending PO quantities + shipment context */
 const buildLinesFromPo = async (po) => {
     const hasSupplier = Boolean(po.supplierId);
     const lines = [];
     for (const item of po.items || []) {
         const ordered = Math.max(Number(item.quantity) || 0, 0);
         const received = Math.max(Number(item.receivedQuantity) || 0, 0);
+        const sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
         const orderedPending = Math.max(ordered - received, 0);
         if (orderedPending <= 0) continue;
 
@@ -194,7 +538,6 @@ const buildLinesFromPo = async (po) => {
         // Without supplier: classic ordered − received.
         let receivable = orderedPending;
         if (hasSupplier) {
-            const sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
             const sentPending = Math.max(sent - received, 0);
             receivable = Math.min(orderedPending, sentPending);
         }
@@ -214,8 +557,12 @@ const buildLinesFromPo = async (po) => {
             barcode: product?.barcode || item.barcode || "",
             productName: item.productName,
             variantLabel: item.variantLabel || "",
-            // Cap for THIS GRN = shipped-not-yet-received (or ordered pending)
+            // Cap for THIS receive session = shipped-not-yet-received (or ordered pending)
             orderedQuantity: receivable,
+            poOrderedQuantity: ordered,
+            supplierSentQuantity: sent,
+            poReceivedQuantity: received,
+            receivableNow: receivable,
             receivedQuantity: 0,
             damagedQuantity: 0,
             acceptedQuantity: 0,
@@ -227,6 +574,49 @@ const buildLinesFromPo = async (po) => {
         });
     }
     return lines;
+};
+
+const snapshotReceiveBatch = (grn, actorId) => {
+    const lines = [];
+    let subtotal = 0;
+    for (const item of grn.items || []) {
+        const received = Math.max(Number(item.receivedQuantity) || 0, 0);
+        const damaged = Math.max(Number(item.damagedQuantity) || 0, 0);
+        const accepted = Math.max(
+            Number(item.acceptedQuantity) || received - damaged,
+            0
+        );
+        if (received <= 0 && damaged <= 0 && accepted <= 0) continue;
+        const price = Math.max(Number(item.purchasePrice) || 0, 0);
+        const lineTotal = accepted * price;
+        subtotal += lineTotal;
+        lines.push({
+            purchaseOrderItemId: item.purchaseOrderItemId || null,
+            productId: item.productId || null,
+            productVariantId: item.productVariantId || null,
+            productName: item.productName || "",
+            variantLabel: item.variantLabel || "",
+            sku: item.sku || "",
+            receivedQuantity: received,
+            damagedQuantity: damaged,
+            acceptedQuantity: accepted,
+            purchasePrice: price,
+            imeis: Array.isArray(item.imeis)
+                ? item.imeis.map((e) => String(e)).filter(Boolean)
+                : []
+        });
+    }
+    if (!lines.length) return null;
+    const prev = Array.isArray(grn.receiveBatches) ? grn.receiveBatches.length : 0;
+    return {
+        batchNo: prev + 1,
+        receivedAt: new Date(),
+        receivedBy: toObjectId(actorId),
+        note: "",
+        lines,
+        subtotal,
+        grandTotal: subtotal
+    };
 };
 
 const recalculateGrn = (grn) => {
@@ -875,13 +1265,17 @@ const listReceivablePurchaseOrders = async (query = {}) => {
                     const sent = Math.max(Number(i.supplierSentQuantity) || 0, 0);
                     return sent - received > 0;
                 }).length;
+                const progress = summarizePoProgress(po);
                 return {
                     ...po,
                     pendingLines,
                     openGrnId: open?._id || null,
                     openGrnNumber: open?.grnNumber || null,
                     hasOpenGrn: Boolean(open),
-                    grnPurchaseStatus: open?.purchaseStatus || "Pending"
+                    grnPurchaseStatus: open?.purchaseStatus || "Pending",
+                    sentQty: progress.sentQty,
+                    receivedQty: progress.receivedQty,
+                    remainingQty: progress.remainingQty
                 };
             })
             .filter((po) => po.pendingLines > 0 && po.hasOpenGrn)
@@ -924,7 +1318,7 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
         }
     }
 
-    // ONE GRN per PO — always reuse the existing document when present.
+    // One open GRN per PO — reopen Draft / Pending instead of creating duplicates
     const existingOpen = await GRN.findOne({
         purchaseOrderId: poId,
         ...NOT_DELETED,
@@ -934,10 +1328,6 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
 
     const refreshAndReturn = async (grnDoc, { reopen = false } = {}) => {
         const freshLines = await buildLinesFromPo(po);
-        if (!freshLines.length && !reopen) {
-            // Still allow opening an empty-remaining GRN for view; but block new work.
-        }
-
         const byPoItem = new Map();
         for (const line of grnDoc.items || []) {
             const key = String(line.purchaseOrderItemId || "");
@@ -953,6 +1343,10 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
                 const damaged = Math.max(Number(prev.damagedQuantity) || 0, 0);
                 const ordered = Math.max(Number(fresh.orderedQuantity) || 0, 0);
                 prev.orderedQuantity = Math.max(ordered, received);
+                prev.poOrderedQuantity = fresh.poOrderedQuantity;
+                prev.supplierSentQuantity = fresh.supplierSentQuantity;
+                prev.poReceivedQuantity = fresh.poReceivedQuantity;
+                prev.receivableNow = fresh.receivableNow;
                 prev.productId = fresh.productId || prev.productId;
                 prev.productVariantId =
                     fresh.productVariantId || prev.productVariantId;
@@ -1003,7 +1397,8 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
         }
 
         const reused = await populateGrn(GRN.findById(grnDoc._id));
-        const plain = enrichGrnDoc(reused);
+        const ctx = await buildPoContextForId(po._id);
+        const plain = enrichGrnDoc(reused, ctx);
         plain.reusedExisting = true;
         return plain;
     };
@@ -1012,8 +1407,7 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
         return refreshAndReturn(existingOpen);
     }
 
-    // Legacy / race: a Completed GRN may exist while PO still has pending qty.
-    // Never create a second GRN — reopen the same document for remaining receive.
+    // Legacy: Completed-but-partial GRN — reopen same doc (never create a second).
     const existingAny = await GRN.findOne({
         purchaseOrderId: poId,
         ...NOT_DELETED,
@@ -1027,26 +1421,18 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
                 400
             );
         }
-
-        // Reopen for remaining qty (one GRN lifecycle).
         existingAny.status = "Draft";
         existingAny.inventoryUpdated = false;
         existingAny.inventoryUpdatedAt = null;
         existingAny.inventoryUpdatedBy = null;
-        existingAny.purchaseStatus =
-            po.isFullyReceived
-                ? "Completed"
-                : (Number(
-                      (po.items || []).reduce(
-                          (s, i) => s + (Number(i.receivedQuantity) || 0),
-                          0
-                      )
-                  ) > 0
-                      ? "Partially Received"
-                      : "Pending");
-        existingAny.requiresApproval = !isOwnerActor(payload)
-            ? existingAny.requiresApproval
-            : false;
+        const anyRecv = (po.items || []).some(
+            (i) => Math.max(Number(i.receivedQuantity) || 0, 0) > 0
+        );
+        existingAny.purchaseStatus = po.isFullyReceived
+            ? "Completed"
+            : anyRecv
+              ? "Partially Received"
+              : "Pending";
         return refreshAndReturn(existingAny, { reopen: true });
     }
 
@@ -1104,7 +1490,9 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     }
     await po.save();
 
-    return enrichGrnDoc(await populateGrn(GRN.findById(grn._id)));
+    const created = await populateGrn(GRN.findById(grn._id));
+    const ctx = await buildPoContextForId(po._id);
+    return enrichGrnDoc(created, ctx);
 };
 
 const getGrns = async (query = {}) => {
@@ -1155,7 +1543,9 @@ const getGrnById = async (id, query = {}) => {
         : { _id: id, ...NOT_DELETED };
     const grn = await populateGrn(GRN.findOne(filter));
     if (!grn) throw new AppError("GRN not found.", 404);
-    return enrichGrnDoc(grn);
+    const poId = grn.purchaseOrderId?._id || grn.purchaseOrderId;
+    const ctx = await buildPoContextForId(poId);
+    return enrichGrnDoc(grn, ctx);
 };
 
 const getGrnDeleteCheck = async (id) => {
@@ -1164,12 +1554,22 @@ const getGrnDeleteCheck = async (id) => {
     );
     if (!grn) throw new AppError("GRN not found.", 404);
 
+    const hasBatches =
+        Array.isArray(grn.receiveBatches) && grn.receiveBatches.length > 0;
     const canDelete =
         !grn.inventoryUpdated &&
+        !hasBatches &&
+        grn.purchaseStatus !== "Partially Received" &&
+        grn.purchaseStatus !== "Completed" &&
         ["Draft", "Cancelled"].includes(grn.status);
 
     let reason = "";
-    if (grn.inventoryUpdated || grn.status === "Completed") {
+    if (
+        grn.inventoryUpdated ||
+        grn.status === "Completed" ||
+        hasBatches ||
+        grn.purchaseStatus === "Partially Received"
+    ) {
         reason =
             "This GRN already updated inventory. It cannot be trashed. Reverse stock via sales return or adjustment if needed.";
     } else if (grn.status === "Pending Approval") {
@@ -1598,6 +1998,11 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
         recalculateGrn(grn);
         validateDraftLines(grn);
 
+        const batch = snapshotReceiveBatch(grn, actorId);
+        if (!batch) {
+            throw new AppError("Enter received quantities before stocking.", 400);
+        }
+
         const productIds = await applyInventoryForGrn(
             grn,
             toObjectId(actorId),
@@ -1606,8 +2011,10 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
         const po = await applyPoReceiving(grn, session);
         const fullyReceived = po.isFullyReceived === true;
 
+        if (!Array.isArray(grn.receiveBatches)) grn.receiveBatches = [];
+        grn.receiveBatches.push(batch);
+
         if (fullyReceived) {
-            // PO products fully received — close the single GRN.
             grn.status = "Completed";
             grn.inventoryUpdated = true;
             grn.inventoryUpdatedAt = new Date();
@@ -1615,7 +2022,6 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
             grn.purchaseStatus = "Completed";
             grn.qualityStatus = "Passed";
         } else {
-            // Partial batch stocked — keep the SAME GRN open for remaining qty.
             const remainingLines = await buildLinesFromPo(po);
             grn.status = "Draft";
             grn.inventoryUpdated = false;
@@ -1635,7 +2041,6 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
 
         await session.commitTransaction();
 
-        // Refresh product stock summaries outside txn — never fail the GRN response.
         const refreshErrors = [];
         for (const pid of productIds) {
             try {
@@ -1651,7 +2056,8 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
         }
 
         const populated = await populateGrn(GRN.findById(grn._id));
-        const plain = enrichGrnDoc(populated);
+        const ctx = await buildPoContextForId(po._id);
+        const plain = enrichGrnDoc(populated, ctx);
         plain.stockSummaryRefresh = {
             ok: refreshErrors.length === 0,
             errors: refreshErrors
@@ -1676,10 +2082,11 @@ const cancelGrn = async (id, actorId = null, reason = "") => {
     }
     if (
         grn.purchaseStatus === "Partially Received" ||
-        grn.purchaseStatus === "Completed"
+        grn.purchaseStatus === "Completed" ||
+        (Array.isArray(grn.receiveBatches) && grn.receiveBatches.length > 0)
     ) {
         throw new AppError(
-            "This GRN already stocked inventory for a partial receive and cannot be cancelled.",
+            "This GRN already stocked inventory for a receive batch and cannot be cancelled.",
             400
         );
     }
