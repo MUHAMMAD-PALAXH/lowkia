@@ -222,8 +222,9 @@ const aggregateDamagedFromGrns = (grns = []) => {
 };
 
 /**
- * Build agreed delivery phases with ordered / sent / received / damaged
- * (received+damaged allocated FIFO across phases for each line).
+ * Build agreed delivery phases with ordered / sent / received / damaged.
+ * Accepted + damaged are allocated FIFO, capped by each phase line's *sent*
+ * qty (not agreed) so short-ships stay accurate across phases.
  */
 const buildDeliveryPhases = (po, damagedByKey = {}) => {
     const items = po.items || [];
@@ -284,6 +285,8 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
         let sentQty = 0;
         let receivedQty = 0;
         let damagedQty = 0;
+        let grossReceivedQty = 0;
+        let pendingReceiveQty = 0;
         let agreedValue = 0;
         let sentValue = 0;
         let receivedValue = 0;
@@ -303,18 +306,25 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
                     : 0,
                 0
             );
-            // FIFO receive / damage against this phase's agreed qty
+            // Cap GRN attribution by what the supplier sent on this phase
+            const receiveCap = sent;
             const recvPool = remainingRecv[key] || 0;
             const dmgPool = remainingDmg[key] || 0;
-            const recv = Math.min(recvPool, agreed);
-            const dmg = Math.min(dmgPool, agreed);
+            const recv = Math.min(recvPool, receiveCap);
             remainingRecv[key] = Math.max(recvPool - recv, 0);
+            const dmg = Math.min(dmgPool, Math.max(receiveCap - recv, 0));
             remainingDmg[key] = Math.max(dmgPool - dmg, 0);
+
+            const gross = recv + dmg;
+            const pending = Math.max(sent - gross, 0);
+            const remaining = Math.max(agreed - gross, 0);
 
             agreedQty += agreed;
             sentQty += sent;
             receivedQty += recv;
             damagedQty += dmg;
+            grossReceivedQty += gross;
+            pendingReceiveQty += pending;
             agreedValue += agreed * price;
             sentValue += sent * price;
             receivedValue += recv * price;
@@ -332,7 +342,9 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
                 sentQty: sent,
                 receivedQty: recv,
                 damagedQty: dmg,
-                remainingQty: Math.max(agreed - recv, 0),
+                grossReceivedQty: gross,
+                pendingReceiveQty: pending,
+                remainingQty: remaining,
                 agreedValue: agreed * price,
                 sentValue: sent * price,
                 receivedValue: recv * price,
@@ -346,6 +358,9 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
             }
             return sum;
         }, 0);
+        const effectiveSent = sentQty > 0 ? sentQty : shipmentQty;
+        const isReceiveComplete =
+            effectiveSent > 0 && grossReceivedQty + 0.0001 >= effectiveSent;
 
         return {
             phase: phaseNo,
@@ -354,6 +369,7 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
             dueDate: phase.dueDate || phase.dateTo || null,
             note: phase.note || "",
             isSentCompleted: !!phase.isCompleted,
+            isReceiveComplete,
             completedAt: phase.completedAt || null,
             lines,
             shipments: phaseShipments.map((s) => ({
@@ -372,15 +388,22 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
             })),
             totals: {
                 agreedQty,
-                sentQty: sentQty > 0 ? sentQty : shipmentQty,
+                orderedQty: agreedQty,
+                sentQty: effectiveSent,
                 receivedQty,
                 damagedQty,
-                remainingQty: Math.max(agreedQty - receivedQty, 0),
+                grossReceivedQty,
+                pendingReceiveQty,
+                remainingQty: Math.max(agreedQty - grossReceivedQty, 0),
+                sentNotReceivedQty: pendingReceiveQty,
                 agreedValue,
                 sentValue,
                 receivedValue,
                 damagedValue,
-                remainingValue: Math.max(agreedValue - receivedValue, 0)
+                remainingValue: Math.max(
+                    agreedValue - receivedValue - damagedValue,
+                    0
+                )
             }
         };
     });
