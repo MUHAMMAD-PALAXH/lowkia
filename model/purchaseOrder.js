@@ -80,6 +80,13 @@ const purchaseItemSchema = new mongoose.Schema(
             min: 0
         },
 
+        // Damaged / rejected at GRN (closes sent-pending together with received)
+        damagedQuantity: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
         // Qty supplier marked as sent (before warehouse GRN)
         supplierSentQuantity: {
             type: Number,

@@ -1796,8 +1796,15 @@ const supplierRejectPurchaseOrder = async (id, actorId = null, payload = {}) => 
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
-const lineMatchKey = (row) =>
-    `${row.productId || ""}|${row.productVariantId || ""}|${row.sku || ""}|${row.variantLabel || ""}`;
+const lineMatchKey = (row = {}) => {
+    const pid = row.productId?._id || row.productId?.id || row.productId || "";
+    const vid =
+        row.productVariantId?._id ||
+        row.productVariantId?.id ||
+        row.productVariantId ||
+        "";
+    return `${String(pid)}|${String(vid)}|${String(row.sku || "")}|${String(row.variantLabel || "")}`;
+};
 
 /**
  * Supplier marks goods as sent (full or one partial phase).

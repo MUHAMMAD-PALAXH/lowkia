@@ -259,18 +259,22 @@ const aggregateReceiveFromGrns = (grns = []) => {
 
             for (const line of batch.lines || []) {
                 const key = lineMatchKey(line);
+                const poiKey = line.purchaseOrderItemId
+                    ? `poi:${String(line.purchaseOrderItemId)}`
+                    : null;
+                const storeKey = poiKey || key;
                 const received = asNonNeg(line.receivedQuantity);
                 const damaged = asNonNeg(line.damagedQuantity);
                 const accepted = Math.max(
                     asNonNeg(line.acceptedQuantity) || received - damaged,
                     0
                 );
-                // Store under full key only (avoid double-count). Soft used at lookup time.
-                bump(acceptedByKey, key, accepted);
-                bump(damagedByKey, key, damaged);
+                // One canonical key only (prefer PO item id) to avoid double-count.
+                bump(acceptedByKey, storeKey, accepted);
+                bump(damagedByKey, storeKey, damaged);
                 if (phaseBucket) {
-                    bump(phaseBucket.acceptedByKey, key, accepted);
-                    bump(phaseBucket.damagedByKey, key, damaged);
+                    bump(phaseBucket.acceptedByKey, storeKey, accepted);
+                    bump(phaseBucket.damagedByKey, storeKey, damaged);
                 }
             }
         }
@@ -397,20 +401,27 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
     for (const item of items) {
         const full = lineMatchKey(item);
         const soft = softMatchKey(item);
+        const poiKey = item?._id || item?.id
+            ? `poi:${String(item._id || item.id)}`
+            : null;
+        const storeKey = poiKey || full;
         const recv = asNonNeg(item.receivedQuantity);
-        const dmg =
-            asNonNeg(damagedByKey[full]) ||
-            (() => {
-                // soft lookup in damaged map
-                for (const [k, v] of Object.entries(damagedByKey)) {
-                    if (k.split("|").slice(0, 2).join("|") === soft) {
-                        return asNonNeg(v);
+        let dmg = asNonNeg(item.damagedQuantity);
+        if (dmg <= 0) {
+            dmg =
+                asNonNeg(damagedByKey[storeKey]) ||
+                asNonNeg(damagedByKey[full]) ||
+                (() => {
+                    for (const [k, v] of Object.entries(damagedByKey)) {
+                        if (k.split("|").slice(0, 2).join("|") === soft) {
+                            return asNonNeg(v);
+                        }
                     }
-                }
-                return 0;
-            })();
-        remainingRecv[full] = (remainingRecv[full] || 0) + recv;
-        remainingDmg[full] = (remainingDmg[full] || 0) + dmg;
+                    return 0;
+                })();
+        }
+        remainingRecv[storeKey] = (remainingRecv[storeKey] || 0) + recv;
+        remainingDmg[storeKey] = (remainingDmg[storeKey] || 0) + dmg;
     }
 
     let phases = Array.isArray(po.supplierPartialSchedule)
@@ -483,7 +494,10 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
             const item = findPoItemForAlloc(alloc, items);
             const fullKey = item ? lineMatchKey(item) : lineMatchKey(alloc);
             const softKey = item ? softMatchKey(item) : softMatchKey(alloc);
-            const lookupKeys = [fullKey, softKey].filter(
+            const poiKey = item?._id || item?.id
+                ? `poi:${String(item._id || item.id)}`
+                : null;
+            const lookupKeys = [poiKey, fullKey, softKey].filter(
                 (k, i, arr) => k && k !== "|" && arr.indexOf(k) === i
             );
             const price = Math.max(
@@ -507,14 +521,26 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
             if (phaseTagged) {
                 recv = takeTagged(phaseTagged.acceptedByKey, lookupKeys);
                 dmg = takeTagged(phaseTagged.damagedByKey, lookupKeys);
-                const grossTagged = recv + dmg;
-                if (sent > 0 && grossTagged > sent + 0.0001) {
-                    const scale = sent / grossTagged;
-                    recv *= scale;
-                    dmg *= scale;
+                // CRITICAL: if tagged keys miss (null productId / sku drift),
+                // fall back to FIFO against PO accepted+damaged pools.
+                if (recv <= 0 && dmg <= 0) {
+                    const receiveCap = sent;
+                    recv = takePool(remainingRecv, lookupKeys, receiveCap);
+                    dmg = takePool(
+                        remainingDmg,
+                        lookupKeys,
+                        Math.max(receiveCap - recv, 0)
+                    );
+                } else {
+                    const grossTagged = recv + dmg;
+                    if (sent > 0 && grossTagged > sent + 0.0001) {
+                        const scale = sent / grossTagged;
+                        recv *= scale;
+                        dmg *= scale;
+                    }
+                    takePool(remainingRecv, lookupKeys, recv);
+                    takePool(remainingDmg, lookupKeys, dmg);
                 }
-                takePool(remainingRecv, lookupKeys, recv);
-                takePool(remainingDmg, lookupKeys, dmg);
             } else {
                 const receiveCap = sent;
                 recv = takePool(remainingRecv, lookupKeys, receiveCap);
@@ -568,9 +594,12 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
             }
             return sum;
         }, 0);
-        const effectiveSent = sentQty > 0 ? sentQty : shipmentQty;
+        const effectiveSent =
+            sentQty > 0 ? sentQty : Math.min(shipmentQty, agreedQty || shipmentQty);
         const isReceiveComplete =
-            effectiveSent > 0 && grossReceivedQty + 0.0001 >= effectiveSent;
+            effectiveSent > 0 &&
+            grossReceivedQty + 0.0001 >= effectiveSent &&
+            pendingReceiveQty <= 0.0001;
 
         return {
             phase: phaseNo,
@@ -764,15 +793,17 @@ const buildLinesFromPo = async (po) => {
     for (const item of po.items || []) {
         const ordered = Math.max(Number(item.quantity) || 0, 0);
         const received = Math.max(Number(item.receivedQuantity) || 0, 0);
+        const damaged = Math.max(Number(item.damagedQuantity) || 0, 0);
         const sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
-        const orderedPending = Math.max(ordered - received, 0);
+        const handled = received + damaged;
+        const orderedPending = Math.max(ordered - handled, 0);
         if (orderedPending <= 0) continue;
 
-        // With supplier: only receive what was shipped but not yet received.
-        // Without supplier: classic ordered − received.
+        // With supplier: only receive what was shipped but not yet handled
+        // (accepted + damaged). Without supplier: classic ordered − handled.
         let receivable = orderedPending;
         if (hasSupplier) {
-            const sentPending = Math.max(sent - received, 0);
+            const sentPending = Math.max(sent - handled, 0);
             receivable = Math.min(orderedPending, sentPending);
         }
         if (receivable <= 0) continue;
@@ -791,7 +822,7 @@ const buildLinesFromPo = async (po) => {
             barcode: product?.barcode || item.barcode || "",
             productName: item.productName,
             variantLabel: item.variantLabel || "",
-            // Cap for THIS receive session = shipped-not-yet-received (or ordered pending)
+            // Cap for THIS receive session = shipped-not-yet-handled
             orderedQuantity: receivable,
             poOrderedQuantity: ordered,
             supplierSentQuantity: sent,
@@ -1367,8 +1398,13 @@ const applyPoReceiving = async (grn, session) => {
     if (!po) throw new AppError("Linked purchase order not found.", 404);
 
     for (const gItem of grn.items || []) {
-        const accepted = Math.max(Number(gItem.acceptedQuantity) || 0, 0);
-        if (accepted <= 0) continue;
+        const received = Math.max(Number(gItem.receivedQuantity) || 0, 0);
+        const damaged = Math.max(Number(gItem.damagedQuantity) || 0, 0);
+        const accepted = Math.max(
+            Number(gItem.acceptedQuantity) || received - damaged,
+            0
+        );
+        if (accepted <= 0 && damaged <= 0) continue;
 
         let poItem = null;
         if (gItem.purchaseOrderItemId) {
@@ -1391,19 +1427,22 @@ const applyPoReceiving = async (grn, session) => {
             );
         }
 
-        const pending =
-            Number(poItem.quantity || 0) - Number(poItem.receivedQuantity || 0);
-        if (accepted > pending + 1e-9) {
+        const prevRecv = Math.max(Number(poItem.receivedQuantity) || 0, 0);
+        const prevDmg = Math.max(Number(poItem.damagedQuantity) || 0, 0);
+        const ordered = Math.max(Number(poItem.quantity) || 0, 0);
+        const pending = Math.max(ordered - prevRecv - prevDmg, 0);
+        const handling = accepted + damaged;
+        if (handling > pending + 1e-9) {
             throw new AppError(
-                `Cannot receive ${accepted} of ${gItem.productName}; only ${pending} pending on PO.`,
+                `Cannot receive ${handling} of ${gItem.productName}; only ${pending} pending on PO.`,
                 400
             );
         }
 
-        poItem.receivedQuantity =
-            Number(poItem.receivedQuantity || 0) + accepted;
+        poItem.receivedQuantity = prevRecv + accepted;
+        poItem.damagedQuantity = prevDmg + damaged;
         poItem.pendingQuantity = Math.max(
-            Number(poItem.quantity || 0) - poItem.receivedQuantity,
+            ordered - poItem.receivedQuantity - poItem.damagedQuantity,
             0
         );
     }
@@ -1414,22 +1453,23 @@ const applyPoReceiving = async (grn, session) => {
     }
 
     let totalQty = 0;
-    let receivedQty = 0;
+    let handledQty = 0;
     let receivedAmount = 0;
     for (const item of po.items || []) {
-        totalQty += Number(item.quantity) || 0;
-        receivedQty += Number(item.receivedQuantity) || 0;
-        receivedAmount +=
-            (Number(item.receivedQuantity) || 0) *
-            (Number(item.purchasePrice) || 0);
+        const ordered = Number(item.quantity) || 0;
+        const recv = Number(item.receivedQuantity) || 0;
+        const dmg = Number(item.damagedQuantity) || 0;
+        totalQty += ordered;
+        handledQty += recv + dmg;
+        receivedAmount += recv * (Number(item.purchasePrice) || 0);
     }
     po.totalReceivedAmount = receivedAmount;
 
-    if (receivedQty <= 0) {
+    if (handledQty <= 0) {
         po.status = po.supplierId ? "Agreed" : "Ordered";
         po.isFullyReceived = false;
         grn.purchaseStatus = "Pending";
-    } else if (receivedQty < totalQty) {
+    } else if (handledQty + 0.0001 < totalQty) {
         po.status = "Partially Received";
         po.isFullyReceived = false;
         grn.purchaseStatus = "Partially Received";
@@ -2252,6 +2292,22 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
         recalculateGrn(grn);
         validateDraftLines(grn);
 
+        const hasReceive = (grn.items || []).some((i) => {
+            const recv = Math.max(Number(i.receivedQuantity) || 0, 0);
+            const dmg = Math.max(Number(i.damagedQuantity) || 0, 0);
+            return recv > 0 || dmg > 0;
+        });
+        if (!hasReceive) {
+            throw new AppError("Enter received quantities before stocking.", 400);
+        }
+
+        // Link/create products FIRST so batch snapshot stores real productIds
+        const productIds = await applyInventoryForGrn(
+            grn,
+            toObjectId(actorId),
+            session
+        );
+
         const batch = snapshotReceiveBatch(grn, actorId, {
             receivePhase: opts.receivePhase,
             note: opts.note || ""
@@ -2260,11 +2316,6 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
             throw new AppError("Enter received quantities before stocking.", 400);
         }
 
-        const productIds = await applyInventoryForGrn(
-            grn,
-            toObjectId(actorId),
-            session
-        );
         const po = await applyPoReceiving(grn, session);
         const fullyReceived = po.isFullyReceived === true;
 
