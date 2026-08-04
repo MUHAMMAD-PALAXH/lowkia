@@ -567,6 +567,7 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
             damagedValue += dmg * price;
 
             lines.push({
+                purchaseOrderItemId: item?._id || item?.id || null,
                 productId: alloc.productId || item?.productId || null,
                 productVariantId:
                     alloc.productVariantId || item?.productVariantId || null,
@@ -786,6 +787,32 @@ const loadProductMeta = async (productId) => {
         .lean();
 };
 
+/** Effective supplier-sent qty for a PO line (item field + schedule + shipments). */
+const effectiveSupplierSentForItem = (po, item) => {
+    let sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
+    let fromSchedule = 0;
+    for (const phase of po.supplierPartialSchedule || []) {
+        for (const alloc of phase.lineAllocations || []) {
+            if (!linesLooselyMatch(alloc, item) && lineMatchKey(alloc) !== lineMatchKey(item)) {
+                continue;
+            }
+            fromSchedule += asNonNeg(alloc.sentQuantity);
+        }
+    }
+    let fromShipments = 0;
+    for (const ship of po.supplierShipments || []) {
+        for (const line of ship.lines || []) {
+            if (
+                linesLooselyMatch(line, item) ||
+                lineMatchKey(line) === lineMatchKey(item)
+            ) {
+                fromShipments += asNonNeg(line.quantity);
+            }
+        }
+    }
+    return Math.max(sent, fromSchedule, fromShipments);
+};
+
 /** Build draft GRN lines from pending PO quantities + shipment context */
 const buildLinesFromPo = async (po) => {
     const hasSupplier = Boolean(po.supplierId);
@@ -794,7 +821,9 @@ const buildLinesFromPo = async (po) => {
         const ordered = Math.max(Number(item.quantity) || 0, 0);
         const received = Math.max(Number(item.receivedQuantity) || 0, 0);
         const damaged = Math.max(Number(item.damagedQuantity) || 0, 0);
-        const sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
+        const sent = hasSupplier
+            ? effectiveSupplierSentForItem(po, item)
+            : Math.max(Number(item.supplierSentQuantity) || 0, 0);
         const handled = received + damaged;
         const orderedPending = Math.max(ordered - handled, 0);
         if (orderedPending <= 0) continue;
@@ -1867,6 +1896,7 @@ const syncDraftGrnLinesFromPo = async (grnDoc) => {
                 imeis: Array.isArray(prev.imeis) ? prev.imeis : []
             };
         });
+        grnDoc.markModified("items");
         recalculateGrn(grnDoc);
         const anyRecv = (po.items || []).some(
             (i) =>
@@ -2430,6 +2460,7 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
             grn.purchaseStatus = "Partially Received";
             grn.qualityStatus = "Pending";
             grn.items = remainingLines;
+            grn.markModified("items");
             recalculateGrn(grn);
             grn.receivedDate = new Date();
         }
