@@ -2101,12 +2101,22 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
 
     po.updatedBy = toObjectId(actorId);
     await po.save();
+
+    // Refresh open Draft GRNs so next-phase receive inputs appear
+    try {
+        const grnService = require("./grnService");
+        if (typeof grnService.syncOpenDraftGrnLinesForPo === "function") {
+            await grnService.syncOpenDraftGrnLinesForPo(po._id);
+        }
+    } catch (err) {
+        console.error(
+            "[PO] sync open GRN lines after supplier send failed:",
+            err?.message || err
+        );
+    }
+
     return populatePo(PurchaseOrder.findById(po._id));
 };
-
-/**
- * Buyer accepts supplier demand terms → both Agreed; supplier may ship.
- */
 const buyerAcceptDemand = async (id, actorId = null, payload = {}) => {
     const po = await findPoOrFail(id);
     if (!po.supplierId) {

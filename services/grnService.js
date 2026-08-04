@@ -1813,14 +1813,103 @@ const getGrns = async (query = {}) => {
     };
 };
 
+/** Rebuild Draft GRN line caps from current PO sent/received (after later phase sends). */
+const syncDraftGrnLinesFromPo = async (grnDoc) => {
+    if (!grnDoc) return grnDoc;
+    if (!EDITABLE_GRN.includes(grnDoc.status) || grnDoc.inventoryUpdated) {
+        return grnDoc;
+    }
+    const poId = grnDoc.purchaseOrderId?._id || grnDoc.purchaseOrderId;
+    if (!poId) return grnDoc;
+
+    const po = await PurchaseOrder.findOne({ _id: poId, ...NOT_DELETED });
+    if (!po) return grnDoc;
+
+    const freshLines = await buildLinesFromPo(po);
+    const oldCap = (grnDoc.items || []).reduce(
+        (s, i) => s + Math.max(Number(i.orderedQuantity) || 0, 0),
+        0
+    );
+    const newCap = freshLines.reduce(
+        (s, i) => s + Math.max(Number(i.orderedQuantity) || 0, 0),
+        0
+    );
+    const oldCount = (grnDoc.items || []).length;
+    const newCount = freshLines.length;
+
+    // Nothing receivable and already empty — ok
+    if (newCount === 0 && oldCount === 0) return grnDoc;
+
+    // Caps / line set changed (typical: next phase sent after previous receive)
+    if (
+        oldCount !== newCount ||
+        Math.abs(oldCap - newCap) > 0.0001 ||
+        (newCount > 0 && oldCount === 0)
+    ) {
+        // Preserve in-progress draft qty for matching PO lines when possible
+        const prevByPoItem = new Map();
+        for (const line of grnDoc.items || []) {
+            const key = String(line.purchaseOrderItemId || "");
+            if (key) prevByPoItem.set(key, line);
+        }
+        grnDoc.items = freshLines.map((fresh) => {
+            const prev = prevByPoItem.get(String(fresh.purchaseOrderItemId || ""));
+            if (!prev) return fresh;
+            const prevRecv = Math.max(Number(prev.receivedQuantity) || 0, 0);
+            const prevDmg = Math.max(Number(prev.damagedQuantity) || 0, 0);
+            const cap = Math.max(Number(fresh.orderedQuantity) || 0, 0);
+            if (prevRecv <= 0 && prevDmg <= 0) return fresh;
+            return {
+                ...fresh,
+                receivedQuantity: Math.min(prevRecv, cap),
+                damagedQuantity: Math.min(prevDmg, cap),
+                remarks: prev.remarks || "",
+                imeis: Array.isArray(prev.imeis) ? prev.imeis : []
+            };
+        });
+        recalculateGrn(grnDoc);
+        const anyRecv = (po.items || []).some(
+            (i) =>
+                Math.max(Number(i.receivedQuantity) || 0, 0) +
+                    Math.max(Number(i.damagedQuantity) || 0, 0) >
+                0
+        );
+        grnDoc.purchaseStatus = po.isFullyReceived
+            ? "Completed"
+            : anyRecv
+              ? "Partially Received"
+              : "Pending";
+        await grnDoc.save();
+    }
+    return grnDoc;
+};
+
+/** After supplier ships more, refresh every open Draft GRN for that PO. */
+const syncOpenDraftGrnLinesForPo = async (purchaseOrderId) => {
+    if (!purchaseOrderId) return;
+    const open = await GRN.find({
+        purchaseOrderId,
+        ...NOT_DELETED,
+        status: { $in: EDITABLE_GRN },
+        inventoryUpdated: { $ne: true }
+    });
+    for (const grn of open) {
+        await syncDraftGrnLinesFromPo(grn);
+    }
+};
+
 const getGrnById = async (id, query = {}) => {
     const trashMode = isTrashQuery(query);
     const filter = trashMode
         ? { _id: id, isDeleted: true }
         : { _id: id, ...NOT_DELETED };
-    const grn = await populateGrn(GRN.findOne(filter));
+    let grn = await populateGrn(GRN.findOne(filter));
     if (!grn) throw new AppError("GRN not found.", 404);
     const poId = grn.purchaseOrderId?._id || grn.purchaseOrderId;
+    if (!trashMode) {
+        await syncDraftGrnLinesFromPo(grn);
+        grn = await populateGrn(GRN.findById(grn._id));
+    }
     const ctx = await buildPoContextForId(poId);
     return enrichGrnDoc(grn, ctx);
 };
@@ -1917,6 +2006,9 @@ const updateGrn = async (id, payload = {}, actorId = null) => {
     if (grn.inventoryUpdated) {
         throw new AppError("Inventory already updated — GRN is locked.", 400);
     }
+
+    // Ensure line caps include latest supplier sends before applying qty
+    await syncDraftGrnLinesFromPo(grn);
 
     if (payload.referenceNumber !== undefined) {
         grn.referenceNumber = String(payload.referenceNumber).trim();
@@ -2289,6 +2381,8 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
         }
 
         const wasPending = grn.status === "Pending Approval";
+        // Pull latest sent qty into draft lines before stocking this phase
+        await syncDraftGrnLinesFromPo(grn);
         recalculateGrn(grn);
         validateDraftLines(grn);
 
@@ -2439,5 +2533,6 @@ module.exports = {
     bulkDeleteGrns,
     bulkRestoreGrns,
     bulkPermanentDeleteGrns,
+    syncOpenDraftGrnLinesForPo,
     RECEIVABLE_PO
 };
