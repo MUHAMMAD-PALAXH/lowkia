@@ -272,7 +272,8 @@ const getSupplierStats = async () => {
         awaitingPurchaseOrders,
         acceptedPurchaseOrders,
         rejectedPurchaseOrders,
-        awaitingBySupplierRows
+        awaitingBySupplierRows,
+        openAgreedBySupplierRows
     ] = await Promise.all([
         Supplier.aggregate([
             { $match: { isDeleted: false } },
@@ -341,6 +342,31 @@ const getSupplierStats = async () => {
                     count: { $sum: 1 }
                 }
             }
+        ]),
+        // Agreed / in-fulfillment POs not fully completed (still need send or receive)
+        PurchaseOrder.aggregate([
+            {
+                $match: {
+                    isDeleted: { $ne: true },
+                    supplierId: { $ne: null },
+                    isFullyReceived: { $ne: true },
+                    status: {
+                        $in: [
+                            "Agreed",
+                            "Supplier Accepted",
+                            "Partially Delivered",
+                            "Completely Delivered",
+                            "Partially Received"
+                        ]
+                    }
+                }
+            },
+            {
+                $group: {
+                    _id: "$supplierId",
+                    count: { $sum: 1 }
+                }
+            }
         ])
     ]);
 
@@ -348,6 +374,15 @@ const getSupplierStats = async () => {
     for (const row of awaitingBySupplierRows || []) {
         if (!row?._id) continue;
         awaitingBySupplier[String(row._id)] = row.count || 0;
+    }
+
+    const openAgreedBySupplier = {};
+    let openAgreedPurchaseOrders = 0;
+    for (const row of openAgreedBySupplierRows || []) {
+        if (!row?._id) continue;
+        const c = row.count || 0;
+        openAgreedBySupplier[String(row._id)] = c;
+        openAgreedPurchaseOrders += c;
     }
 
     return {
@@ -364,7 +399,9 @@ const getSupplierStats = async () => {
         awaitingPurchaseOrders,
         acceptedPurchaseOrders,
         rejectedPurchaseOrders,
-        awaitingBySupplier
+        awaitingBySupplier,
+        openAgreedPurchaseOrders,
+        openAgreedBySupplier
     };
 };
 
