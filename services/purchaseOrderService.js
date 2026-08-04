@@ -44,18 +44,28 @@ const SENDABLE_STATUSES = [
     "Agreed",
     "Supplier Accepted",
     "Partially Delivered",
-    "Partially Received"
+    "Partially Received",
+    // Sent all planned qty but OK shortfall remains (e.g. damaged → replacement)
+    "Completely Delivered"
 ];
 
 const poHasRemainingToSend = (po) => {
-    const itemRemaining = (po.items || []).some(
-        (i) =>
-            Math.max(0, Number(i.quantity) || 0) -
-                Math.max(0, Number(i.supplierSentQuantity) || 0) >
-            0.0001
-    );
+    // Need enough sends to cover OK shortfall + already-damaged units
+    // remaining = (ordered + damaged) - sent  ==  (ordered - accepted) - (sent - accepted - damaged)
+    const itemRemaining = (po.items || []).some((i) => {
+        const ordered = Math.max(0, Number(i.quantity) || 0);
+        const sent = Math.max(0, Number(i.supplierSentQuantity) || 0);
+        const damaged = Math.max(0, Number(i.damagedQuantity) || 0);
+        return ordered + damaged - sent > 0.0001;
+    });
     if (itemRemaining) return true;
     if (po.supplierDeliveryType === "Partial") {
+        const okShort = (po.items || []).some((i) => {
+            const ordered = Math.max(0, Number(i.quantity) || 0);
+            const recv = Math.max(0, Number(i.receivedQuantity) || 0);
+            return ordered - recv > 0.0001;
+        });
+        if (okShort) return true;
         return (po.supplierPartialSchedule || []).some((p) => !p.isCompleted);
     }
     return false;
@@ -1864,9 +1874,12 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
 
     if (deliveryType === "Full") {
         for (const item of po.items || []) {
-            const remaining =
-                Math.max(0, Number(item.quantity) || 0) -
-                Math.max(0, Number(item.supplierSentQuantity) || 0);
+            const remaining = Math.max(
+                0,
+                (Math.max(0, Number(item.quantity) || 0) +
+                    Math.max(0, Number(item.damagedQuantity) || 0)) -
+                    Math.max(0, Number(item.supplierSentQuantity) || 0)
+            );
             if (remaining <= 0) continue;
             expectedByKey.set(lineMatchKey(item), {
                 item,
@@ -1882,9 +1895,40 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     } else {
         const schedule = po.supplierPartialSchedule || [];
         phaseIndex = schedule.findIndex((p) => !p.isCompleted);
+        const okShortfall = (po.items || []).some((i) => {
+            const ordered = Math.max(0, Number(i.quantity) || 0);
+            const recv = Math.max(0, Number(i.receivedQuantity) || 0);
+            return ordered - recv > 0.0001;
+        });
         if (phaseIndex < 0) {
-            throw new AppError("All partial delivery phases are already completed.", 400);
-        }
+            if (!okShortfall) {
+                throw new AppError(
+                    "All partial delivery phases are already completed.",
+                    400
+                );
+            }
+            // Replacement send after damage: use last phase slot (or ad-hoc)
+            phaseIndex = Math.max(schedule.length - 1, 0);
+            for (const item of po.items || []) {
+                const ordered = Math.max(0, Number(item.quantity) || 0);
+                const recv = Math.max(0, Number(item.receivedQuantity) || 0);
+                const damaged = Math.max(0, Number(item.damagedQuantity) || 0);
+                const sent = Math.max(0, Number(item.supplierSentQuantity) || 0);
+                const remaining = Math.max(ordered + damaged - sent, 0);
+                if (remaining <= 0) continue;
+                expectedByKey.set(lineMatchKey(item), {
+                    item,
+                    expected: remaining,
+                    productName: item.productName || "",
+                    variantLabel: item.variantLabel || "",
+                    sku: item.sku || "",
+                    replacement: true
+                });
+            }
+            if (!expectedByKey.size) {
+                throw new AppError("No replacement quantity left to send.", 400);
+            }
+        } else {
         const phase = schedule[phaseIndex];
         const requestedPhase = payload.phase != null ? Number(payload.phase) : null;
         if (
@@ -1913,6 +1957,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         if (!expectedByKey.size) {
             throw new AppError("This phase has no remaining quantity to send.", 400);
         }
+        } // end normal open-phase send
     }
 
     let hasVariance = false;
@@ -2077,23 +2122,28 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     let totalOrdered = 0;
     let totalSent = 0;
     let totalReceived = 0;
+    let totalDamaged = 0;
     for (const item of po.items || []) {
         totalOrdered += Number(item.quantity) || 0;
         totalSent += Number(item.supplierSentQuantity) || 0;
         totalReceived += Number(item.receivedQuantity) || 0;
+        totalDamaged += Number(item.damagedQuantity) || 0;
     }
+    const stillNeedOk = totalReceived + 0.0001 < totalOrdered;
     if (totalSent <= 0) {
         po.status = "Agreed";
+    } else if (stillNeedOk && totalReceived > 0) {
+        // Damaged / partial OK — GRN still open; supplier may send replacements
+        po.status = "Partially Received";
     } else if (totalSent + 0.0001 >= totalOrdered) {
         po.status = "Completely Delivered";
-        if (deliveryType === "Partial") {
+        if (deliveryType === "Partial" && !stillNeedOk) {
             for (const p of po.supplierPartialSchedule || []) {
                 p.isCompleted = true;
                 if (!p.completedAt) p.completedAt = sentAt;
             }
         }
-    } else if (totalReceived > 0) {
-        // Buyer already GRN'd some qty — stay Partially Received so remaining phases stay visible/sendable
+    } else if (totalReceived > 0 || totalDamaged > 0) {
         po.status = "Partially Received";
     } else {
         po.status = "Partially Delivered";

@@ -901,7 +901,10 @@ purchaseOrderSchema.methods.calculateTotal = function () {
 
         this.subtotal += item.total;
 
-        item.pendingQuantity = item.quantity - item.receivedQuantity;
+        item.pendingQuantity = Math.max(
+            item.quantity - item.receivedQuantity,
+            0
+        );
     });
 
     this.grandTotal =

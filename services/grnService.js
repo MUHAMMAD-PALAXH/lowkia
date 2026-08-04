@@ -192,6 +192,35 @@ const asNonNeg = (v) => {
     return Number.isFinite(n) && n > 0 ? n : 0;
 };
 
+/** Effective supplier-sent qty for a PO line (item field + schedule + shipments). */
+const effectiveSupplierSentForItem = (po, item) => {
+    let sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
+    let fromSchedule = 0;
+    for (const phase of po.supplierPartialSchedule || []) {
+        for (const alloc of phase.lineAllocations || []) {
+            if (
+                !linesLooselyMatch(alloc, item) &&
+                lineMatchKey(alloc) !== lineMatchKey(item)
+            ) {
+                continue;
+            }
+            fromSchedule += asNonNeg(alloc.sentQuantity);
+        }
+    }
+    let fromShipments = 0;
+    for (const ship of po.supplierShipments || []) {
+        for (const line of ship.lines || []) {
+            if (
+                linesLooselyMatch(line, item) ||
+                lineMatchKey(line) === lineMatchKey(item)
+            ) {
+                fromShipments += asNonNeg(line.quantity);
+            }
+        }
+    }
+    return Math.max(sent, fromSchedule, fromShipments);
+};
+
 const summarizePoProgress = (po, damagedByKey = {}) => {
     let orderedQty = 0;
     let sentQty = 0;
@@ -203,10 +232,22 @@ const summarizePoProgress = (po, damagedByKey = {}) => {
     let damagedValue = 0;
     for (const item of po.items || []) {
         const qty = Math.max(Number(item.quantity) || 0, 0);
-        const sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
+        const sent = effectiveSupplierSentForItem(po, item);
         const recv = Math.max(Number(item.receivedQuantity) || 0, 0);
         const price = Math.max(Number(item.purchasePrice) || 0, 0);
-        const dmg = Math.max(Number(damagedByKey[lineMatchKey(item)]) || 0, 0);
+        const fullKey = lineMatchKey(item);
+        const softKey = softMatchKey(item);
+        const poiKey =
+            item._id || item.id ? `poi:${String(item._id || item.id)}` : null;
+        const dmgFromItem = Math.max(Number(item.damagedQuantity) || 0, 0);
+        const dmgFromBatches = Math.max(
+            Number(damagedByKey[poiKey]) || 0,
+            Number(damagedByKey[fullKey]) || 0,
+            softKey !== "|" ? Number(damagedByKey[softKey]) || 0 : 0,
+            0
+        );
+        // Prefer persisted PO damaged; fall back to GRN batch aggregation
+        const dmg = Math.max(dmgFromItem, dmgFromBatches);
         orderedQty += qty;
         sentQty += sent;
         receivedQty += recv;
@@ -216,18 +257,28 @@ const summarizePoProgress = (po, damagedByKey = {}) => {
         receivedValue += recv * price;
         damagedValue += dmg * price;
     }
+    // Remaining = still need OK units (damaged does NOT fulfill the order)
+    const remainingQty = Math.max(orderedQty - receivedQty, 0);
+    const handledQty = receivedQty + damagedQty;
+    const pendingFromSentQty = Math.max(sentQty - handledQty, 0);
     return {
         orderedQty,
         sentQty,
         receivedQty,
         damagedQty,
-        remainingQty: Math.max(orderedQty - receivedQty, 0),
-        sentNotReceivedQty: Math.max(sentQty - receivedQty, 0),
+        handledQty,
+        remainingQty,
+        // Damaged units that still leave OK shortfall (need replacement send)
+        replacementDueQty: Math.min(damagedQty, remainingQty),
+        sentNotReceivedQty: pendingFromSentQty,
+        pendingReceiveQty: pendingFromSentQty,
+        grossReceivedQty: handledQty,
         orderedValue,
         sentValue,
         receivedValue,
         damagedValue,
-        remainingValue: Math.max(orderedValue - receivedValue, 0)
+        remainingValue: Math.max(orderedValue - receivedValue, 0),
+        handledValue: receivedValue + damagedValue
     };
 };
 
@@ -787,32 +838,6 @@ const loadProductMeta = async (productId) => {
         .lean();
 };
 
-/** Effective supplier-sent qty for a PO line (item field + schedule + shipments). */
-const effectiveSupplierSentForItem = (po, item) => {
-    let sent = Math.max(Number(item.supplierSentQuantity) || 0, 0);
-    let fromSchedule = 0;
-    for (const phase of po.supplierPartialSchedule || []) {
-        for (const alloc of phase.lineAllocations || []) {
-            if (!linesLooselyMatch(alloc, item) && lineMatchKey(alloc) !== lineMatchKey(item)) {
-                continue;
-            }
-            fromSchedule += asNonNeg(alloc.sentQuantity);
-        }
-    }
-    let fromShipments = 0;
-    for (const ship of po.supplierShipments || []) {
-        for (const line of ship.lines || []) {
-            if (
-                linesLooselyMatch(line, item) ||
-                lineMatchKey(line) === lineMatchKey(item)
-            ) {
-                fromShipments += asNonNeg(line.quantity);
-            }
-        }
-    }
-    return Math.max(sent, fromSchedule, fromShipments);
-};
-
 /** Build draft GRN lines from pending PO quantities + shipment context */
 const buildLinesFromPo = async (po) => {
     const hasSupplier = Boolean(po.supplierId);
@@ -824,12 +849,12 @@ const buildLinesFromPo = async (po) => {
         const sent = hasSupplier
             ? effectiveSupplierSentForItem(po, item)
             : Math.max(Number(item.supplierSentQuantity) || 0, 0);
-        const handled = received + damaged;
-        const orderedPending = Math.max(ordered - handled, 0);
+        // Only OK units fulfill the order — damaged needs replacement
+        const orderedPending = Math.max(ordered - received, 0);
         if (orderedPending <= 0) continue;
 
-        // With supplier: only receive what was shipped but not yet handled
-        // (accepted + damaged). Without supplier: classic ordered − handled.
+        // Physical inspect pending on what was shipped (accepted + damaged)
+        const handled = received + damaged;
         let receivable = orderedPending;
         if (hasSupplier) {
             const sentPending = Math.max(sent - handled, 0);
@@ -1459,19 +1484,19 @@ const applyPoReceiving = async (grn, session) => {
         const prevRecv = Math.max(Number(poItem.receivedQuantity) || 0, 0);
         const prevDmg = Math.max(Number(poItem.damagedQuantity) || 0, 0);
         const ordered = Math.max(Number(poItem.quantity) || 0, 0);
-        const pending = Math.max(ordered - prevRecv - prevDmg, 0);
-        const handling = accepted + damaged;
-        if (handling > pending + 1e-9) {
+        const maxAccept = Math.max(ordered - prevRecv, 0);
+        if (accepted > maxAccept + 1e-9) {
             throw new AppError(
-                `Cannot receive ${handling} of ${gItem.productName}; only ${pending} pending on PO.`,
+                `Cannot accept ${accepted} of ${gItem.productName}; only ${maxAccept} OK units still needed on PO.`,
                 400
             );
         }
 
         poItem.receivedQuantity = prevRecv + accepted;
         poItem.damagedQuantity = prevDmg + damaged;
+        // Pending OK units still owed (damaged does not fulfill ordered qty)
         poItem.pendingQuantity = Math.max(
-            ordered - poItem.receivedQuantity - poItem.damagedQuantity,
+            ordered - poItem.receivedQuantity,
             0
         );
     }
@@ -1482,23 +1507,26 @@ const applyPoReceiving = async (grn, session) => {
     }
 
     let totalQty = 0;
-    let handledQty = 0;
+    let acceptedQty = 0;
+    let damagedQty = 0;
     let receivedAmount = 0;
     for (const item of po.items || []) {
         const ordered = Number(item.quantity) || 0;
         const recv = Number(item.receivedQuantity) || 0;
         const dmg = Number(item.damagedQuantity) || 0;
         totalQty += ordered;
-        handledQty += recv + dmg;
+        acceptedQty += recv;
+        damagedQty += dmg;
         receivedAmount += recv * (Number(item.purchasePrice) || 0);
     }
     po.totalReceivedAmount = receivedAmount;
 
-    if (handledQty <= 0) {
+    // Complete only when all ordered units are Received OK (not damaged)
+    if (acceptedQty <= 0 && damagedQty <= 0) {
         po.status = po.supplierId ? "Agreed" : "Ordered";
         po.isFullyReceived = false;
         grn.purchaseStatus = "Pending";
-    } else if (handledQty + 0.0001 < totalQty) {
+    } else if (acceptedQty + 0.0001 < totalQty) {
         po.status = "Partially Received";
         po.isFullyReceived = false;
         grn.purchaseStatus = "Partially Received";
