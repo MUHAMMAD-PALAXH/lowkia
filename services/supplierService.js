@@ -343,7 +343,7 @@ const getSupplierStats = async () => {
                 }
             }
         ]),
-        // Agreed / in-fulfillment POs not fully completed (still need send or receive)
+        // Agreed / in-fulfillment POs — order count + remaining send qty
         PurchaseOrder.aggregate([
             {
                 $match: {
@@ -362,9 +362,53 @@ const getSupplierStats = async () => {
                 }
             },
             {
+                $addFields: {
+                    remainingSendQty: {
+                        $sum: {
+                            $map: {
+                                input: { $ifNull: ["$items", []] },
+                                as: "i",
+                                in: {
+                                    $max: [
+                                        0,
+                                        {
+                                            $subtract: [
+                                                {
+                                                    $add: [
+                                                        {
+                                                            $ifNull: [
+                                                                "$$i.quantity",
+                                                                0
+                                                            ]
+                                                        },
+                                                        {
+                                                            $ifNull: [
+                                                                "$$i.damagedQuantity",
+                                                                0
+                                                            ]
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    $ifNull: [
+                                                        "$$i.supplierSentQuantity",
+                                                        0
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            {
                 $group: {
                     _id: "$supplierId",
-                    count: { $sum: 1 }
+                    count: { $sum: 1 },
+                    remainingSendQty: { $sum: "$remainingSendQty" }
                 }
             }
         ])
@@ -377,12 +421,18 @@ const getSupplierStats = async () => {
     }
 
     const openAgreedBySupplier = {};
+    const remainingSendQtyBySupplier = {};
     let openAgreedPurchaseOrders = 0;
+    let remainingSendQtyTotal = 0;
     for (const row of openAgreedBySupplierRows || []) {
         if (!row?._id) continue;
+        const id = String(row._id);
         const c = row.count || 0;
-        openAgreedBySupplier[String(row._id)] = c;
+        const qty = Math.max(0, Number(row.remainingSendQty) || 0);
+        openAgreedBySupplier[id] = c;
+        remainingSendQtyBySupplier[id] = qty;
         openAgreedPurchaseOrders += c;
+        remainingSendQtyTotal += qty;
     }
 
     return {
@@ -401,7 +451,9 @@ const getSupplierStats = async () => {
         rejectedPurchaseOrders,
         awaitingBySupplier,
         openAgreedPurchaseOrders,
-        openAgreedBySupplier
+        openAgreedBySupplier,
+        remainingSendQtyBySupplier,
+        remainingSendQtyTotal
     };
 };
 
