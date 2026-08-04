@@ -649,7 +649,7 @@ const getSupplierDetails = async (id, query = {}) => {
             ]
         })
             .select(
-                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus subtotal discount discountType tax taxType shippingCost shippingType otherCharges grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule supplierShipments negotiationRound negotiationHistory isFullyReceived totalReceivedAmount isDeleted deletedAt"
+                "purchaseOrderNo orderDate expectedDeliveryDate status paymentStatus subtotal discount discountType tax taxType shippingCost shippingType otherCharges grandTotal paidAmount dueAmount items warehouseId supplierNote supplierAcceptanceStatus supplierNotifiedAt supplierMessage supplierRespondedAt supplierResponseNote supplierExpectedDeliveryDate supplierDeliveryType supplierPaymentType supplierPaymentMethod supplierPartialSchedule supplierPaymentSchedule supplierShipments damageCases negotiationRound negotiationHistory isFullyReceived totalReceivedAmount isDeleted deletedAt"
             )
             .populate("items.productId", "name productCode productType trackingType sku barcode")
             .sort({ orderDate: -1, createdAt: -1 })

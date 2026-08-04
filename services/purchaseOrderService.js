@@ -1894,6 +1894,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             throw new AppError("All ordered quantities are already sent.", 400);
         }
     } else {
+        fulfillmentCycle.coalesceAllOpenPhases(po);
         const schedule = po.supplierPartialSchedule || [];
         phaseIndex = schedule.findIndex((p) => !p.isCompleted);
         if (phaseIndex < 0) {

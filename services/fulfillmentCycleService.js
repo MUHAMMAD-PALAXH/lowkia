@@ -137,18 +137,29 @@ const mergeAllocationsIntoPhase = (phase, extras = []) => {
     for (const extra of extras) {
         const qty = Math.max(0, Number(extra.quantity) || 0);
         if (qty <= 0.0001) continue;
-        const key = lineMatchKey(extra);
         const soft = softMatchKey(extra);
         let alloc = phase.lineAllocations.find(
-            (a) => lineMatchKey(a) === key
+            (a) => softMatchKey(a) === soft && soft !== "|"
         );
         if (!alloc) {
             alloc = phase.lineAllocations.find(
-                (a) => softMatchKey(a) === soft && soft !== "|"
+                (a) => lineMatchKey(a) === lineMatchKey(extra)
             );
         }
         if (alloc) {
             alloc.quantity = Math.max(0, Number(alloc.quantity) || 0) + qty;
+            // Prefer richer identity from the PO item when merging
+            if (!alloc.productId && extra.productId) alloc.productId = extra.productId;
+            if (!alloc.productVariantId && extra.productVariantId) {
+                alloc.productVariantId = extra.productVariantId;
+            }
+            if (!alloc.sku && extra.sku) alloc.sku = extra.sku;
+            if (!alloc.variantLabel && extra.variantLabel) {
+                alloc.variantLabel = extra.variantLabel;
+            }
+            if (!alloc.productName && extra.productName) {
+                alloc.productName = extra.productName;
+            }
         } else {
             phase.lineAllocations.push({
                 productId: extra.productId || null,
@@ -160,6 +171,57 @@ const mergeAllocationsIntoPhase = (phase, extras = []) => {
                 sentQuantity: 0
             });
         }
+    }
+    coalescePhaseAllocations(phase);
+};
+
+/** One allocation row per product+variant — prevents duplicate send lines. */
+const coalescePhaseAllocations = (phase) => {
+    if (!phase || !Array.isArray(phase.lineAllocations)) return phase;
+    const map = new Map();
+    for (const a of phase.lineAllocations) {
+        const soft = softMatchKey(a);
+        const key = soft !== "|" ? soft : lineMatchKey(a);
+        const prev = map.get(key);
+        const qty = Math.max(0, Number(a.quantity) || 0);
+        const sent = Math.max(0, Number(a.sentQuantity) || 0);
+        if (!prev) {
+            map.set(key, {
+                productId: a.productId || null,
+                productVariantId: a.productVariantId || null,
+                productName: a.productName || "",
+                variantLabel: a.variantLabel || "",
+                sku: a.sku || "",
+                quantity: qty,
+                sentQuantity: sent
+            });
+            continue;
+        }
+        prev.quantity += qty;
+        prev.sentQuantity += sent;
+        if (!prev.productId && a.productId) prev.productId = a.productId;
+        if (!prev.productVariantId && a.productVariantId) {
+            prev.productVariantId = a.productVariantId;
+        }
+        if (!prev.sku && a.sku) prev.sku = a.sku;
+        if (!prev.variantLabel && a.variantLabel) {
+            prev.variantLabel = a.variantLabel;
+        }
+        if (!prev.productName && a.productName) prev.productName = a.productName;
+    }
+    phase.lineAllocations = [...map.values()].filter(
+        (a) => Math.max(0, Number(a.quantity) || 0) > 0.0001
+    );
+    return phase;
+};
+
+const coalesceAllOpenPhases = (po) => {
+    for (const phase of po.supplierPartialSchedule || []) {
+        if (phase.isCompleted) continue;
+        coalescePhaseAllocations(phase);
+    }
+    if (typeof po.markModified === "function") {
+        po.markModified("supplierPartialSchedule");
     }
 };
 
@@ -341,6 +403,7 @@ const ensureReplacementPhaseAfterReceive = (po) => {
         // Full delivery uses item remainingToSend on the next supplier-send
         return null;
     }
+    coalesceAllOpenPhases(po);
     const needed = buildRemainingAllocations(po);
     if (!needed.length) return null;
 
@@ -348,7 +411,7 @@ const ensureReplacementPhaseAfterReceive = (po) => {
         po.supplierPartialSchedule = [];
     }
 
-    // How much is already allocated (unsent) across incomplete phases?
+    // Soft-key coverage so sku/label drift cannot create duplicate gaps
     const covered = {};
     for (const phase of po.supplierPartialSchedule) {
         if (phase.isCompleted) continue;
@@ -357,14 +420,16 @@ const ensureReplacementPhaseAfterReceive = (po) => {
                 Math.max(0, Number(a.quantity) || 0) -
                 Math.max(0, Number(a.sentQuantity) || 0);
             if (left <= 0) continue;
-            const key = lineMatchKey(a);
+            const soft = softMatchKey(a);
+            const key = soft !== "|" ? soft : lineMatchKey(a);
             covered[key] = (covered[key] || 0) + left;
         }
     }
 
     const uncovered = [];
     for (const row of needed) {
-        const key = lineMatchKey(row);
+        const soft = softMatchKey(row);
+        const key = soft !== "|" ? soft : lineMatchKey(row);
         const need = Math.max(0, Number(row.quantity) || 0);
         const have = Math.max(0, Number(covered[key]) || 0);
         const gap = need - have;
@@ -379,7 +444,6 @@ const ensureReplacementPhaseAfterReceive = (po) => {
         const open = po.supplierPartialSchedule[openIdx];
         mergeAllocationsIntoPhase(open, uncovered);
         if (open.kind === "Plan") {
-            // Keep Plan as plan; note that catch-up qty was folded in
             if (!String(open.note || "").includes("catch-up")) {
                 open.note = [open.note, "Includes catch-up / replacement qty"]
                     .filter(Boolean)
@@ -411,6 +475,8 @@ module.exports = {
     findOpenPhaseIndex,
     ensureOpenFulfillmentPhase,
     mergeAllocationsIntoPhase,
+    coalescePhaseAllocations,
+    coalesceAllOpenPhases,
     rollPhaseShortfallToCatchUp,
     createDamageCasesFromReceive,
     openDamageHoldQtyByKey,
