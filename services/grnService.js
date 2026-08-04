@@ -1858,8 +1858,59 @@ const getGrns = async (query = {}) => {
         GRN.countDocuments(filter)
     ]);
 
+    // Badge: supplier sent qty waiting to be received on open GRNs
+    const poIds = [
+        ...new Set(
+            items
+                .map((g) => String(g.purchaseOrderId?._id || g.purchaseOrderId || ""))
+                .filter(Boolean)
+        )
+    ];
+    const pos =
+        poIds.length > 0
+            ? await PurchaseOrder.find({
+                  _id: { $in: poIds },
+                  ...NOT_DELETED
+              })
+                  .select(
+                      "items supplierId supplierPartialSchedule supplierShipments"
+                  )
+                  .lean()
+            : [];
+    const poById = new Map(pos.map((p) => [String(p._id), p]));
+
+    const enriched = items.map((grn) => {
+        const obj = enrichGrnDoc(grn);
+        const status = String(obj.status || "");
+        const done =
+            status === "Completed" ||
+            status === "Cancelled" ||
+            obj.inventoryUpdated === true;
+        let awaiting = 0;
+        if (!done) {
+            const poId = String(
+                grn.purchaseOrderId?._id || grn.purchaseOrderId || ""
+            );
+            const po = poById.get(poId);
+            if (po) {
+                awaiting = awaitingReceiveQtyFromPo(po);
+            } else {
+                awaiting = (obj.items || []).reduce((s, i) => {
+                    const cap = Math.max(
+                        Number(i.receivableNow) || 0,
+                        Number(i.orderedQuantity) || 0
+                    );
+                    return s + cap;
+                }, 0);
+            }
+        }
+        obj.awaitingReceiveQty = awaiting;
+        obj.hasAwaitingReceive = awaiting > 0.0001;
+        return obj;
+    });
+
     return {
-        items,
+        items: enriched,
         pagination: {
             page,
             limit,
@@ -1868,6 +1919,27 @@ const getGrns = async (query = {}) => {
         },
         trash: trashMode
     };
+};
+
+/** Qty supplier sent that buyer has not yet handled (accepted + damaged). */
+const awaitingReceiveQtyFromPo = (po) => {
+    if (!po) return 0;
+    const hasSupplier = Boolean(po.supplierId);
+    let total = 0;
+    for (const item of po.items || []) {
+        const ordered = Math.max(Number(item.quantity) || 0, 0);
+        const received = Math.max(Number(item.receivedQuantity) || 0, 0);
+        const damaged = Math.max(Number(item.damagedQuantity) || 0, 0);
+        const sent = hasSupplier
+            ? effectiveSupplierSentForItem(po, item)
+            : Math.max(Number(item.supplierSentQuantity) || 0, 0);
+        const orderedPending = Math.max(ordered - received, 0);
+        if (orderedPending <= 0) continue;
+        const handled = received + damaged;
+        const sentPending = Math.max(sent - handled, 0);
+        total += Math.min(orderedPending, sentPending);
+    }
+    return total;
 };
 
 /** Rebuild Draft GRN line caps from current PO sent/received (after later phase sends). */
@@ -1969,7 +2041,25 @@ const getGrnById = async (id, query = {}) => {
         grn = await populateGrn(GRN.findById(grn._id));
     }
     const ctx = await buildPoContextForId(poId);
-    return enrichGrnDoc(grn, ctx);
+    const plain = enrichGrnDoc(grn, ctx);
+    const done =
+        plain.status === "Completed" ||
+        plain.status === "Cancelled" ||
+        plain.inventoryUpdated === true;
+    const awaiting = done
+        ? 0
+        : ctx?.progress?.pendingReceiveQty != null
+          ? Math.max(Number(ctx.progress.pendingReceiveQty) || 0, 0)
+          : awaitingReceiveQtyFromPo(
+                await PurchaseOrder.findOne({ _id: poId, ...NOT_DELETED })
+                    .select(
+                        "items supplierId supplierPartialSchedule supplierShipments"
+                    )
+                    .lean()
+            );
+    plain.awaitingReceiveQty = awaiting;
+    plain.hasAwaitingReceive = awaiting > 0.0001;
+    return plain;
 };
 
 const getGrnDeleteCheck = async (id) => {
