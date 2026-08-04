@@ -431,27 +431,24 @@ const damageCasesSummary = (po) => {
 };
 
 /**
- * After receive creates damage / OK shortfall, make sure schedule allocations
- * cover remaining send qty — merge into the current open phase or append
- * a Replacement / CatchUp phase so GRN sequential receive stays consistent.
+ * After receive, do not fold leftover / damage into an agreed Plan phase.
+ * Previous remaining stays on completed phases; damage uses SupplierReceived
+ * cases on the send form. Only append a new phase when plan qty is not
+ * covered by open + completed leftovers.
  */
 const ensureReplacementPhaseAfterReceive = (po) => {
     if (po.supplierDeliveryType !== "Partial") {
-        // Full delivery uses item remainingToSend on the next supplier-send
         return null;
     }
     coalesceAllOpenPhases(po);
-    const needed = buildRemainingAllocations(po);
-    if (!needed.length) return null;
 
     if (!Array.isArray(po.supplierPartialSchedule)) {
         po.supplierPartialSchedule = [];
     }
 
-    // Soft-key coverage so sku/label drift cannot create duplicate gaps
+    // Coverage = open remaining + completed remaining (previous leftover)
     const covered = {};
     for (const phase of po.supplierPartialSchedule) {
-        if (phase.isCompleted) continue;
         for (const a of phase.lineAllocations || []) {
             const left =
                 Math.max(0, Number(a.quantity) || 0) -
@@ -464,38 +461,43 @@ const ensureReplacementPhaseAfterReceive = (po) => {
     }
 
     const uncovered = [];
-    for (const row of needed) {
-        const soft = softMatchKey(row);
-        const key = soft !== "|" ? soft : lineMatchKey(row);
-        const need = Math.max(0, Number(row.quantity) || 0);
+    for (const item of po.items || []) {
+        const need = planRemainingToSend(item);
+        if (need <= 0.0001) continue;
+        const soft = softMatchKey(item);
+        const key = soft !== "|" ? soft : lineMatchKey(item);
         const have = Math.max(0, Number(covered[key]) || 0);
         const gap = need - have;
         if (gap > 0.0001) {
-            uncovered.push({ ...row, quantity: gap, sentQuantity: 0 });
+            uncovered.push({
+                productId: item.productId || null,
+                productVariantId: item.productVariantId || null,
+                productName: item.productName || "",
+                variantLabel: item.variantLabel || "",
+                sku: item.sku || "",
+                quantity: gap,
+                sentQuantity: 0
+            });
         }
     }
     if (!uncovered.length) return null;
 
+    // Never inflate an existing Plan phase — append CatchUp only when needed
     const openIdx = findOpenPhaseIndex(po);
     if (openIdx >= 0) {
         const open = po.supplierPartialSchedule[openIdx];
-        mergeAllocationsIntoPhase(open, uncovered);
-        if (open.kind === "Plan") {
-            if (!String(open.note || "").includes("catch-up")) {
-                open.note = [open.note, "Includes catch-up / replacement qty"]
-                    .filter(Boolean)
-                    .join(" · ");
+        if (open.kind && open.kind !== "Plan") {
+            mergeAllocationsIntoPhase(open, uncovered);
+            if (typeof po.markModified === "function") {
+                po.markModified("supplierPartialSchedule");
             }
+            return open;
         }
-        if (typeof po.markModified === "function") {
-            po.markModified("supplierPartialSchedule");
-        }
-        return open;
     }
 
     return ensureOpenFulfillmentPhase(po, {
-        kind: "Replacement",
-        note: "Additional phase for remaining / damaged replacement"
+        kind: "CatchUp",
+        note: "Additional phase for uncovered plan qty"
     });
 };
 

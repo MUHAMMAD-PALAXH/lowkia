@@ -1942,7 +1942,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 );
             }
             for (const alloc of phase.lineAllocations || []) {
-                const currentCap =
+                let currentCap =
                     Math.max(0, Number(alloc.quantity) || 0) -
                     Math.max(0, Number(alloc.sentQuantity) || 0);
                 if (currentCap <= 0.0001) continue;
@@ -1950,6 +1950,40 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                     (po.items || []).find((i) =>
                         fulfillmentCycle.softItemMatch(i, alloc)
                     ) || null;
+                if (item) {
+                    const prev =
+                        fulfillmentCycle.completedPhaseRemainingQty(po, item);
+                    let futureLocked = 0;
+                    for (const p of po.supplierPartialSchedule || []) {
+                        if (p.isCompleted || p === phase) continue;
+                        for (const a of p.lineAllocations || []) {
+                            if (!fulfillmentCycle.softItemMatch(a, item)) {
+                                continue;
+                            }
+                            futureLocked += Math.max(
+                                0,
+                                (Number(a.quantity) || 0) -
+                                    (Number(a.sentQuantity) || 0)
+                            );
+                        }
+                    }
+                    const planFair = Math.max(
+                        0,
+                        fulfillmentCycle.planRemainingToSend(item) -
+                            prev -
+                            futureLocked
+                    );
+                    if (currentCap > planFair + 0.0001) {
+                        currentCap = planFair;
+                    }
+                    // Repair inflated Plan allocation quantity
+                    const sent = Math.max(0, Number(alloc.sentQuantity) || 0);
+                    const fairQty = sent + currentCap;
+                    if ((Number(alloc.quantity) || 0) > fairQty + 0.0001) {
+                        alloc.quantity = fairQty;
+                    }
+                }
+                if (currentCap <= 0.0001) continue;
                 bumpExpected(lineMatchKey(alloc), {
                     alloc,
                     item,
