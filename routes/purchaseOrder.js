@@ -163,6 +163,20 @@ router.post(
 );
 
 router.post(
+    "/:id/return-damaged",
+    idValidator,
+    validate,
+    purchaseOrderController.returnDamagedToSupplier
+);
+
+router.post(
+    "/:id/supplier-ack-damaged",
+    idValidator,
+    validate,
+    purchaseOrderController.supplierAcknowledgeDamaged
+);
+
+router.post(
     "/:id/supplier-payments",
     idValidator,
     validate,

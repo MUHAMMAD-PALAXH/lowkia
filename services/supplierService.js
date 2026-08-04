@@ -1469,6 +1469,7 @@ const getSupplierDetails = async (id, query = {}) => {
             supplierPaymentMethod: po.supplierPaymentMethod || "",
             supplierPartialSchedule: (po.supplierPartialSchedule || []).map((s) => ({
                 phase: Number(s.phase) || 1,
+                kind: s.kind || "Plan",
                 amount: Number(s.amount) || 0,
                 amountType: s.amountType || "Fixed",
                 daysFrom: Number(s.daysFrom ?? s.days) || 0,
@@ -1511,6 +1512,8 @@ const getSupplierDetails = async (id, query = {}) => {
                 transferDaysMax: Number(s.transferDaysMax) || 0,
                 deliveryMode: s.deliveryMode || "Full",
                 phase: s.phase == null ? null : Number(s.phase),
+                kind: s.kind || "PlanPhase",
+                direction: s.direction || "SupplierToBuyer",
                 varianceReason: s.varianceReason || "",
                 note: s.note || "",
                 lines: (s.lines || []).map((a) => ({
@@ -1522,6 +1525,26 @@ const getSupplierDetails = async (id, query = {}) => {
                     quantity: Number(a.quantity) || 0,
                     expectedQuantity: Number(a.expectedQuantity) || 0
                 }))
+            })),
+            damageCases: (po.damageCases || []).map((c) => ({
+                id: c._id || null,
+                caseNo: c.caseNo || "",
+                purchaseOrderItemId: c.purchaseOrderItemId || null,
+                productId: c.productId || null,
+                productVariantId: c.productVariantId || null,
+                productName: c.productName || "",
+                variantLabel: c.variantLabel || "",
+                sku: c.sku || "",
+                quantity: Number(c.quantity) || 0,
+                status: c.status || "BuyerHold",
+                grnId: c.grnId || null,
+                receiveBatchNo: c.receiveBatchNo || "",
+                phase: c.phase == null ? null : Number(c.phase),
+                createdAt: c.createdAt || null,
+                returnedAt: c.returnedAt || null,
+                supplierReceivedAt: c.supplierReceivedAt || null,
+                returnNote: c.returnNote || "",
+                receiveNote: c.receiveNote || ""
             })),
             negotiationRound: Number(po.negotiationRound) || 0,
             negotiationHistory: (po.negotiationHistory || []).map((h) => ({

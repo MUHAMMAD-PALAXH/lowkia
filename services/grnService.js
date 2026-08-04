@@ -32,6 +32,7 @@ const { generateProductBarcode } = require("./barcodeGenerator");
 const productService = require("./productService");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const fulfillmentCycle = require("./fulfillmentCycleService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const RECEIVABLE_PO = [
@@ -525,8 +526,10 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
         const phaseNo = Number(phase.phase) || idx + 1;
         const phaseShipments = shipments.filter(
             (s) =>
-                Number(s.phase) === phaseNo ||
-                (s.phase == null && phases.length === 1)
+                s.kind !== "ReturnToSupplier" &&
+                s.direction !== "BuyerToSupplier" &&
+                (Number(s.phase) === phaseNo ||
+                    (s.phase == null && phases.length === 1))
         );
         const phaseTagged = byPhase[phaseNo] || null;
         const lines = [];
@@ -655,6 +658,7 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
 
         return {
             phase: phaseNo,
+            kind: phase.kind || "Plan",
             dateFrom: phase.dateFrom || null,
             dateTo: phase.dateTo || phase.dueDate || null,
             dueDate: phase.dueDate || phase.dateTo || null,
@@ -765,6 +769,7 @@ const buildPoContext = (po, grns = []) => {
         supplierShipments: plain.supplierShipments || [],
         supplierPaymentSchedule: schedule,
         deliveryPhases,
+        damageCases: fulfillmentCycle.damageCasesSummary(plain),
         grnReceivedDates: receiveDates,
         firstGrnReceivedAt: firstReceivedAt,
         lastGrnReceivedAt: lastReceivedAt,
@@ -1534,6 +1539,11 @@ const applyPoReceiving = async (grn, session) => {
         po.status = "Completed";
         po.isFullyReceived = true;
         grn.purchaseStatus = "Completed";
+    }
+
+    // Open additional CatchUp/Replacement phase when OK still owed and no phase left
+    if (!po.isFullyReceived) {
+        fulfillmentCycle.ensureReplacementPhaseAfterReceive(po);
     }
 
     await po.save({ session });
@@ -2559,6 +2569,11 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
         }
 
         const po = await applyPoReceiving(grn, session);
+        fulfillmentCycle.createDamageCasesFromReceive(po, grn, batch);
+        if ((po.damageCases || []).length) {
+            po.markModified("damageCases");
+            await po.save({ session });
+        }
         const fullyReceived = po.isFullyReceived === true;
 
         if (!Array.isArray(grn.receiveBatches)) grn.receiveBatches = [];

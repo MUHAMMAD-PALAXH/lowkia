@@ -9,6 +9,7 @@ const GRN = require("../model/grn");
 const { generatePurchaseOrderCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const fulfillmentCycle = require("./fulfillmentCycleService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const OPEN_GRN_STATUSES = ["Draft", "Pending Approval"];
@@ -1895,41 +1896,23 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     } else {
         const schedule = po.supplierPartialSchedule || [];
         phaseIndex = schedule.findIndex((p) => !p.isCompleted);
-        const okShortfall = (po.items || []).some((i) => {
-            const ordered = Math.max(0, Number(i.quantity) || 0);
-            const recv = Math.max(0, Number(i.receivedQuantity) || 0);
-            return ordered - recv > 0.0001;
-        });
         if (phaseIndex < 0) {
-            if (!okShortfall) {
+            // Planned phases done but remaining / damage debt → append real phase
+            const extra = fulfillmentCycle.ensureOpenFulfillmentPhase(po, {
+                kind: "Replacement",
+                note: "Additional phase for remaining / damaged replacement"
+            });
+            if (!extra) {
                 throw new AppError(
                     "All partial delivery phases are already completed.",
                     400
                 );
             }
-            // Replacement send after damage: use last phase slot (or ad-hoc)
-            phaseIndex = Math.max(schedule.length - 1, 0);
-            for (const item of po.items || []) {
-                const ordered = Math.max(0, Number(item.quantity) || 0);
-                const recv = Math.max(0, Number(item.receivedQuantity) || 0);
-                const damaged = Math.max(0, Number(item.damagedQuantity) || 0);
-                const sent = Math.max(0, Number(item.supplierSentQuantity) || 0);
-                const remaining = Math.max(ordered + damaged - sent, 0);
-                if (remaining <= 0) continue;
-                expectedByKey.set(lineMatchKey(item), {
-                    item,
-                    expected: remaining,
-                    productName: item.productName || "",
-                    variantLabel: item.variantLabel || "",
-                    sku: item.sku || "",
-                    replacement: true
-                });
-            }
-            if (!expectedByKey.size) {
-                throw new AppError("No replacement quantity left to send.", 400);
-            }
-        } else {
-        const phase = schedule[phaseIndex];
+            phaseIndex = (po.supplierPartialSchedule || []).findIndex(
+                (p) => !p.isCompleted
+            );
+        }
+        const phase = po.supplierPartialSchedule[phaseIndex];
         const requestedPhase = payload.phase != null ? Number(payload.phase) : null;
         if (
             requestedPhase != null &&
@@ -1951,13 +1934,13 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 expected,
                 productName: alloc.productName || "",
                 variantLabel: alloc.variantLabel || "",
-                sku: alloc.sku || ""
+                sku: alloc.sku || "",
+                phaseKind: phase.kind || "Plan"
             });
         }
         if (!expectedByKey.size) {
             throw new AppError("This phase has no remaining quantity to send.", 400);
         }
-        } // end normal open-phase send
     }
 
     let hasVariance = false;
@@ -2088,8 +2071,26 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         if (phaseFullySent || hasVariance) {
             phase.isCompleted = true;
             phase.completedAt = sentAt;
+            if (hasVariance && !phaseFullySent) {
+                fulfillmentCycle.rollPhaseShortfallToCatchUp(
+                    po,
+                    phase,
+                    shipmentLines
+                );
+            }
         }
     }
+
+    const activePhase =
+        deliveryType === "Partial" && phaseIndex >= 0
+            ? po.supplierPartialSchedule[phaseIndex]
+            : null;
+    const shipKind =
+        activePhase?.kind === "Replacement"
+            ? "Replacement"
+            : activePhase?.kind === "CatchUp"
+              ? "CatchUp"
+              : "PlanPhase";
 
     if (!Array.isArray(po.supplierShipments)) po.supplierShipments = [];
     po.supplierShipments.push({
@@ -2102,6 +2103,8 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 ? Number(po.supplierPartialSchedule[phaseIndex].phase) ||
                   phaseIndex + 1
                 : null,
+        kind: shipKind,
+        direction: "SupplierToBuyer",
         varianceReason,
         note,
         lines: shipmentLines.map((row) => ({
@@ -2167,6 +2170,164 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
 
     return populatePo(PurchaseOrder.findById(po._id));
 };
+
+/**
+ * Buyer returns damaged goods held at warehouse back to the supplier.
+ * Creates a Buyer→Supplier shipment and marks DamageCases ReturnShipped.
+ */
+const returnDamagedToSupplier = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    if (!Array.isArray(po.damageCases) || !po.damageCases.length) {
+        throw new AppError("No damaged cases to return on this purchase order.", 400);
+    }
+
+    const holdCases = po.damageCases.filter((c) => c.status === "BuyerHold");
+    if (!holdCases.length) {
+        throw new AppError(
+            "No damaged units are waiting at buyer to return.",
+            400
+        );
+    }
+
+    const requestedIds = Array.isArray(payload.caseIds)
+        ? payload.caseIds.map((x) => String(x))
+        : [];
+    const selected = requestedIds.length
+        ? holdCases.filter(
+              (c) =>
+                  requestedIds.includes(String(c._id)) ||
+                  requestedIds.includes(String(c.caseNo))
+          )
+        : holdCases;
+    if (!selected.length) {
+        throw new AppError("No matching BuyerHold damage cases selected.", 400);
+    }
+
+    const transferDaysMin = Math.max(
+        0,
+        parseInt(payload.transferDaysMin ?? payload.daysMin, 10) || 0
+    );
+    const transferDaysMax = Math.max(
+        transferDaysMin,
+        parseInt(payload.transferDaysMax ?? payload.daysMax, 10) ||
+            transferDaysMin
+    );
+    const note = String(payload.note || payload.returnNote || "").trim();
+    const sentAt = payload.returnedAt ? new Date(payload.returnedAt) : new Date();
+    if (Number.isNaN(sentAt.getTime())) {
+        throw new AppError("Invalid returnedAt date/time.", 400);
+    }
+
+    const lineMap = new Map();
+    for (const c of selected) {
+        const key = fulfillmentCycle.lineMatchKey(c);
+        const prev = lineMap.get(key) || {
+            productId: c.productId || null,
+            productVariantId: c.productVariantId || null,
+            productName: c.productName || "",
+            variantLabel: c.variantLabel || "",
+            sku: c.sku || "",
+            quantity: 0,
+            expectedQuantity: 0
+        };
+        const q = Math.max(0, Number(c.quantity) || 0);
+        prev.quantity += q;
+        prev.expectedQuantity += q;
+        lineMap.set(key, prev);
+        c.status = "ReturnShipped";
+        c.returnedAt = sentAt;
+        c.returnNote = note;
+    }
+
+    if (!Array.isArray(po.supplierShipments)) po.supplierShipments = [];
+    po.supplierShipments.push({
+        sentAt,
+        transferDaysMin,
+        transferDaysMax,
+        deliveryMode: po.supplierDeliveryType === "Partial" ? "Partial" : "Full",
+        phase: null,
+        kind: "ReturnToSupplier",
+        direction: "BuyerToSupplier",
+        varianceReason: "",
+        note: note || "Damaged goods returned to supplier",
+        damageCaseIds: selected.map((c) => c._id).filter(Boolean),
+        lines: [...lineMap.values()]
+    });
+
+    po.markModified("damageCases");
+    po.markModified("supplierShipments");
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
+/**
+ * Supplier confirms receipt of damaged goods returned by the buyer.
+ */
+const supplierAcknowledgeDamaged = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    const inbound = (po.damageCases || []).filter(
+        (c) => c.status === "ReturnShipped"
+    );
+    if (!inbound.length) {
+        throw new AppError(
+            "No damaged returns are in transit for this purchase order.",
+            400
+        );
+    }
+
+    const requestedIds = Array.isArray(payload.caseIds)
+        ? payload.caseIds.map((x) => String(x))
+        : [];
+    const selected = requestedIds.length
+        ? inbound.filter(
+              (c) =>
+                  requestedIds.includes(String(c._id)) ||
+                  requestedIds.includes(String(c.caseNo))
+          )
+        : inbound;
+    if (!selected.length) {
+        throw new AppError("No matching return-shipped damage cases selected.", 400);
+    }
+
+    const receivedAt = payload.receivedAt
+        ? new Date(payload.receivedAt)
+        : new Date();
+    if (Number.isNaN(receivedAt.getTime())) {
+        throw new AppError("Invalid receivedAt date/time.", 400);
+    }
+    const note = String(payload.note || payload.receiveNote || "").trim();
+
+    for (const c of selected) {
+        c.status = "SupplierReceived";
+        c.supplierReceivedAt = receivedAt;
+        c.receiveNote = note;
+    }
+
+    fulfillmentCycle.ensureOpenFulfillmentPhase(po, {
+        kind: "Replacement",
+        note: "Replacement after damaged goods received by supplier"
+    });
+
+    po.markModified("damageCases");
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+
+    try {
+        const grnService = require("./grnService");
+        if (typeof grnService.syncOpenDraftGrnLinesForPo === "function") {
+            await grnService.syncOpenDraftGrnLinesForPo(po._id);
+        }
+    } catch (err) {
+        console.error(
+            "[PO] sync GRN after supplier damaged ack failed:",
+            err?.message || err
+        );
+    }
+
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
 const buyerAcceptDemand = async (id, actorId = null, payload = {}) => {
     const po = await findPoOrFail(id);
     if (!po.supplierId) {
@@ -2992,6 +3153,8 @@ module.exports = {
     supplierAcceptPurchaseOrder,
     supplierRejectPurchaseOrder,
     supplierSendPurchaseOrder,
+    returnDamagedToSupplier,
+    supplierAcknowledgeDamaged,
     buyerAcceptDemand,
     buyerRejectDemand,
     sendNewDemand,

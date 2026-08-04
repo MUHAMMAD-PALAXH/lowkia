@@ -658,6 +658,12 @@ const purchaseOrderSchema = new mongoose.Schema(
                 dateTo: { type: Date, default: null },
                 dueDate: { type: Date, default: null },
                 note: { type: String, default: "", trim: true },
+                /** Plan = agreed schedule; CatchUp = under-send leftover; Replacement = damage / OK shortfall */
+                kind: {
+                    type: String,
+                    enum: ["Plan", "CatchUp", "Replacement"],
+                    default: "Plan"
+                },
                 isCompleted: { type: Boolean, default: false },
                 completedAt: { type: Date, default: null },
                 lineAllocations: [
@@ -693,8 +699,29 @@ const purchaseOrderSchema = new mongoose.Schema(
                     default: "Full"
                 },
                 phase: { type: Number, default: null },
+                kind: {
+                    type: String,
+                    enum: [
+                        "PlanPhase",
+                        "CatchUp",
+                        "Replacement",
+                        "ReturnToSupplier"
+                    ],
+                    default: "PlanPhase"
+                },
+                direction: {
+                    type: String,
+                    enum: ["SupplierToBuyer", "BuyerToSupplier"],
+                    default: "SupplierToBuyer"
+                },
                 varianceReason: { type: String, default: "", trim: true },
                 note: { type: String, default: "", trim: true },
+                damageCaseIds: [
+                    {
+                        type: mongoose.Schema.Types.ObjectId,
+                        default: null
+                    }
+                ],
                 lines: [
                     {
                         productId: {
@@ -714,6 +741,54 @@ const purchaseOrderSchema = new mongoose.Schema(
                         expectedQuantity: { type: Number, default: 0, min: 0 }
                     }
                 ]
+            }
+        ],
+
+        /** Damaged units awaiting return / supplier receive — cycles on re-damage */
+        damageCases: [
+            {
+                caseNo: { type: String, default: "", trim: true },
+                purchaseOrderItemId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    default: null
+                },
+                productId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "Product",
+                    default: null
+                },
+                productVariantId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "ProductVariant",
+                    default: null
+                },
+                productName: { type: String, default: "" },
+                variantLabel: { type: String, default: "" },
+                sku: { type: String, default: "" },
+                quantity: { type: Number, default: 0, min: 0 },
+                status: {
+                    type: String,
+                    enum: [
+                        "BuyerHold",
+                        "ReturnShipped",
+                        "SupplierReceived",
+                        "Closed"
+                    ],
+                    default: "BuyerHold"
+                },
+                grnId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    ref: "GRN",
+                    default: null
+                },
+                receiveBatchNo: { type: String, default: "" },
+                phase: { type: Number, default: null },
+                createdAt: { type: Date, default: Date.now },
+                returnedAt: { type: Date, default: null },
+                supplierReceivedAt: { type: Date, default: null },
+                returnNote: { type: String, default: "", trim: true },
+                receiveNote: { type: String, default: "", trim: true },
+                imeis: [{ type: String, trim: true }]
             }
         ],
 

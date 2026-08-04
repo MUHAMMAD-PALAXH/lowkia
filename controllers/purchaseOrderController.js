@@ -186,6 +186,24 @@ exports.supplierSendPurchaseOrder = asyncHandler(async (req, res) => {
     return success(res, "Supplier shipment recorded successfully.", po);
 });
 
+exports.returnDamagedToSupplier = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.returnDamagedToSupplier(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(res, "Damaged goods return to supplier recorded.", po);
+});
+
+exports.supplierAcknowledgeDamaged = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.supplierAcknowledgeDamaged(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(res, "Supplier received damaged return.", po);
+});
+
 exports.buyerAcceptDemand = asyncHandler(async (req, res) => {
     const po = await purchaseOrderService.buyerAcceptDemand(
         req.params.id,
