@@ -1873,18 +1873,48 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     let phaseIndex = -1;
     let expectedByKey = new Map();
 
+    const bumpExpected = (key, patch) => {
+        const cur = expectedByKey.get(key);
+        if (!cur) {
+            expectedByKey.set(key, {
+                currentCap: 0,
+                prevCap: 0,
+                dmgCap: 0,
+                expected: 0,
+                productName: "",
+                variantLabel: "",
+                sku: "",
+                ...patch
+            });
+            const row = expectedByKey.get(key);
+            row.expected =
+                (row.currentCap || 0) + (row.prevCap || 0) + (row.dmgCap || 0);
+            return;
+        }
+        cur.currentCap = (cur.currentCap || 0) + (patch.currentCap || 0);
+        cur.prevCap = (cur.prevCap || 0) + (patch.prevCap || 0);
+        cur.dmgCap = (cur.dmgCap || 0) + (patch.dmgCap || 0);
+        if (patch.item && !cur.item) cur.item = patch.item;
+        if (patch.alloc && !cur.alloc) cur.alloc = patch.alloc;
+        if (patch.productName) cur.productName = patch.productName;
+        if (patch.variantLabel) cur.variantLabel = patch.variantLabel;
+        if (patch.sku) cur.sku = patch.sku;
+        if (patch.phaseKind) cur.phaseKind = patch.phaseKind;
+        cur.expected =
+            (cur.currentCap || 0) + (cur.prevCap || 0) + (cur.dmgCap || 0);
+    };
+
     if (deliveryType === "Full") {
         for (const item of po.items || []) {
-            const remaining = Math.max(
-                0,
-                (Math.max(0, Number(item.quantity) || 0) +
-                    Math.max(0, Number(item.damagedQuantity) || 0)) -
-                    Math.max(0, Number(item.supplierSentQuantity) || 0)
-            );
-            if (remaining <= 0) continue;
-            expectedByKey.set(lineMatchKey(item), {
+            const plan = fulfillmentCycle.planRemainingToSend(item);
+            const dmg = fulfillmentCycle.supplierReceivedDamageQty(po, item);
+            const expected = plan + dmg;
+            if (expected <= 0.0001) continue;
+            bumpExpected(lineMatchKey(item), {
                 item,
-                expected: remaining,
+                currentCap: plan,
+                prevCap: 0,
+                dmgCap: dmg,
                 productName: item.productName || "",
                 variantLabel: item.variantLabel || "",
                 sku: item.sku || ""
@@ -1897,50 +1927,76 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         fulfillmentCycle.coalesceAllOpenPhases(po);
         const schedule = po.supplierPartialSchedule || [];
         phaseIndex = schedule.findIndex((p) => !p.isCompleted);
-        if (phaseIndex < 0) {
-            // Planned phases done but remaining / damage debt → append real phase
-            const extra = fulfillmentCycle.ensureOpenFulfillmentPhase(po, {
-                kind: "Replacement",
-                note: "Additional phase for remaining / damaged replacement"
-            });
-            if (!extra) {
+        const requestedPhase = payload.phase != null ? Number(payload.phase) : null;
+
+        if (phaseIndex >= 0) {
+            const phase = po.supplierPartialSchedule[phaseIndex];
+            if (
+                requestedPhase != null &&
+                !Number.isNaN(requestedPhase) &&
+                requestedPhase !== Number(phase.phase)
+            ) {
                 throw new AppError(
-                    "All partial delivery phases are already completed.",
+                    `Only phase ${phase.phase} can be sent now. Complete it before later phases.`,
                     400
                 );
             }
-            phaseIndex = (po.supplierPartialSchedule || []).findIndex(
-                (p) => !p.isCompleted
-            );
+            for (const alloc of phase.lineAllocations || []) {
+                const currentCap =
+                    Math.max(0, Number(alloc.quantity) || 0) -
+                    Math.max(0, Number(alloc.sentQuantity) || 0);
+                if (currentCap <= 0.0001) continue;
+                const item =
+                    (po.items || []).find((i) =>
+                        fulfillmentCycle.softItemMatch(i, alloc)
+                    ) || null;
+                bumpExpected(lineMatchKey(alloc), {
+                    alloc,
+                    item,
+                    currentCap,
+                    productName: alloc.productName || "",
+                    variantLabel: alloc.variantLabel || "",
+                    sku: alloc.sku || "",
+                    phaseKind: phase.kind || "Plan"
+                });
+            }
         }
-        const phase = po.supplierPartialSchedule[phaseIndex];
-        const requestedPhase = payload.phase != null ? Number(payload.phase) : null;
-        if (
-            requestedPhase != null &&
-            !Number.isNaN(requestedPhase) &&
-            requestedPhase !== Number(phase.phase)
-        ) {
-            throw new AppError(
-                `Only phase ${phase.phase} can be sent now. Complete it before later phases.`,
-                400
-            );
-        }
-        for (const alloc of phase.lineAllocations || []) {
-            const expected =
-                Math.max(0, Number(alloc.quantity) || 0) -
-                Math.max(0, Number(alloc.sentQuantity) || 0);
-            if (expected <= 0) continue;
-            expectedByKey.set(lineMatchKey(alloc), {
-                alloc,
-                expected,
-                productName: alloc.productName || "",
-                variantLabel: alloc.variantLabel || "",
-                sku: alloc.sku || "",
-                phaseKind: phase.kind || "Plan"
+
+        // Always add previous-remaining (completed under-sends) + supplier-received damage
+        for (const item of po.items || []) {
+            const prev = fulfillmentCycle.completedPhaseRemainingQty(po, item);
+            const dmg = fulfillmentCycle.supplierReceivedDamageQty(po, item);
+            if (prev <= 0.0001 && dmg <= 0.0001) continue;
+            let key = lineMatchKey(item);
+            for (const [k, v] of expectedByKey.entries()) {
+                const ref = v.alloc || v.item || {};
+                if (fulfillmentCycle.softItemMatch(ref, item)) {
+                    key = k;
+                    break;
+                }
+            }
+            bumpExpected(key, {
+                item,
+                prevCap: prev,
+                dmgCap: dmg,
+                productName: item.productName || "",
+                variantLabel: item.variantLabel || "",
+                sku: item.sku || ""
             });
         }
+
+        // Drop zero rows
+        for (const [k, v] of [...expectedByKey.entries()]) {
+            if ((v.expected || 0) <= 0.0001) expectedByKey.delete(k);
+        }
+
         if (!expectedByKey.size) {
-            throw new AppError("This phase has no remaining quantity to send.", 400);
+            throw new AppError(
+                phaseIndex < 0
+                    ? "All partial delivery phases are already completed."
+                    : "This phase has no remaining quantity to send.",
+                400
+            );
         }
     }
 
@@ -1948,9 +2004,65 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     const shipmentLines = [];
     const seen = new Set();
 
+    const resolveBreakdown = (raw, meta) => {
+        const b = raw.breakdown && typeof raw.breakdown === "object"
+            ? raw.breakdown
+            : {};
+        let cur = Number(b.currentPhase);
+        let prev = Number(b.previousRemaining);
+        let dmg = Number(b.damaged);
+        const qty = Number(raw.quantity) || 0;
+        const hasBd =
+            Number.isFinite(cur) || Number.isFinite(prev) || Number.isFinite(dmg);
+        if (hasBd) {
+            cur = Math.max(0, Number.isFinite(cur) ? cur : 0);
+            prev = Math.max(0, Number.isFinite(prev) ? prev : 0);
+            dmg = Math.max(0, Number.isFinite(dmg) ? dmg : 0);
+            const sum = cur + prev + dmg;
+            if (Math.abs(sum - qty) > 0.0001 && qty > 0) {
+                // Trust total qty; scale / fill from caps if breakdown incomplete
+                if (sum <= 0.0001) {
+                    let left = qty;
+                    cur = Math.min(meta.currentCap || 0, left);
+                    left -= cur;
+                    prev = Math.min(meta.prevCap || 0, left);
+                    left -= prev;
+                    dmg = Math.min(meta.dmgCap || 0, left);
+                }
+            }
+        } else {
+            let left = qty;
+            cur = Math.min(meta.currentCap || 0, left);
+            left -= cur;
+            prev = Math.min(meta.prevCap || 0, left);
+            left -= prev;
+            dmg = Math.min(meta.dmgCap || 0, left);
+        }
+        if (cur > (meta.currentCap || 0) + 0.0001) {
+            throw new AppError(
+                `Current phase qty cannot exceed ${(meta.currentCap || 0)} for ${meta.productName || "item"}.`,
+                400
+            );
+        }
+        if (prev > (meta.prevCap || 0) + 0.0001) {
+            throw new AppError(
+                `Previous remaining cannot exceed ${(meta.prevCap || 0)} for ${meta.productName || "item"}.`,
+                400
+            );
+        }
+        if (dmg > (meta.dmgCap || 0) + 0.0001) {
+            throw new AppError(
+                `Damaged replacement qty cannot exceed ${(meta.dmgCap || 0)} for ${meta.productName || "item"}.`,
+                400
+            );
+        }
+        return { currentPhase: cur, previousRemaining: prev, damaged: dmg };
+    };
+
     for (const raw of rawLines) {
         const key = lineMatchKey(raw);
-        const meta = expectedByKey.get(key);
+        let meta = expectedByKey.get(key);
+        let resolvedKey = key;
         if (!meta) {
             // try softer match by product+variant only
             let soft = null;
@@ -1971,45 +2083,29 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                     400
                 );
             }
-            if (seen.has(soft.key)) continue;
-            const qty = Number(raw.quantity);
-            if (!Number.isFinite(qty) || qty < 0) {
-                throw new AppError("Send quantity cannot be negative.", 400);
-            }
-            if (qty > soft.meta.expected + 0.0001) {
-                throw new AppError(
-                    `Send quantity cannot exceed PO remaining ${soft.meta.expected} for ${soft.meta.productName || soft.key}.`,
-                    400
-                );
-            }
-            if (qty < soft.meta.expected - 0.0001) hasVariance = true;
-            seen.add(soft.key);
-            shipmentLines.push({
-                key: soft.key,
-                meta: soft.meta,
-                quantity: qty,
-                expectedQuantity: soft.meta.expected
-            });
-            continue;
+            meta = soft.meta;
+            resolvedKey = soft.key;
         }
-        if (seen.has(key)) continue;
+        if (seen.has(resolvedKey)) continue;
         const qty = Number(raw.quantity);
         if (!Number.isFinite(qty) || qty < 0) {
             throw new AppError("Send quantity cannot be negative.", 400);
         }
         if (qty > meta.expected + 0.0001) {
             throw new AppError(
-                `Send quantity cannot exceed PO remaining ${meta.expected} for ${meta.productName || key}.`,
+                `Send quantity cannot exceed PO remaining ${meta.expected} for ${meta.productName || resolvedKey}.`,
                 400
             );
         }
         if (qty < meta.expected - 0.0001) hasVariance = true;
-        seen.add(key);
+        const breakdown = resolveBreakdown(raw, meta);
+        seen.add(resolvedKey);
         shipmentLines.push({
-            key,
+            key: resolvedKey,
             meta,
             quantity: qty,
-            expectedQuantity: meta.expected
+            expectedQuantity: meta.expected,
+            breakdown
         });
     }
 
@@ -2021,7 +2117,8 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             key,
             meta,
             quantity: 0,
-            expectedQuantity: meta.expected
+            expectedQuantity: meta.expected,
+            breakdown: { currentPhase: 0, previousRemaining: 0, damaged: 0 }
         });
     }
 
@@ -2037,26 +2134,42 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         throw new AppError("Enter at least one quantity greater than 0.", 400);
     }
 
-    // Apply sent quantities onto PO items
+    // Apply sent quantities onto PO items / phase allocations / damage cases
     for (const row of shipmentLines) {
         if (row.quantity <= 0) continue;
         const item =
             row.meta.item ||
             (po.items || []).find((i) => lineMatchKey(i) === row.key) ||
-            (po.items || []).find(
-                (i) =>
-                    String(i.productId || "") ===
-                        String(row.meta.alloc?.productId || "") &&
-                    String(i.productVariantId || "") ===
-                        String(row.meta.alloc?.productVariantId || "")
+            (po.items || []).find((i) =>
+                fulfillmentCycle.softItemMatch(i, row.meta.alloc || {})
             );
+        const bd = row.breakdown || {};
+        let curQty = Math.max(0, Number(bd.currentPhase) || 0);
+        let prevQty = Math.max(0, Number(bd.previousRemaining) || 0);
+        let dmgQty = Math.max(0, Number(bd.damaged) || 0);
+        if (curQty + prevQty + dmgQty <= 0.0001) {
+            curQty = row.quantity;
+        }
+
         if (item) {
             item.supplierSentQuantity =
-                Math.max(0, Number(item.supplierSentQuantity) || 0) + row.quantity;
+                Math.max(0, Number(item.supplierSentQuantity) || 0) +
+                row.quantity;
         }
-        if (row.meta.alloc) {
+        if (row.meta.alloc && curQty > 0.0001) {
             row.meta.alloc.sentQuantity =
-                Math.max(0, Number(row.meta.alloc.sentQuantity) || 0) + row.quantity;
+                Math.max(0, Number(row.meta.alloc.sentQuantity) || 0) + curQty;
+        } else if (row.meta.alloc && prevQty + dmgQty <= 0.0001) {
+            // No breakdown — whole qty against current alloc
+            row.meta.alloc.sentQuantity =
+                Math.max(0, Number(row.meta.alloc.sentQuantity) || 0) +
+                row.quantity;
+        }
+        if (prevQty > 0.0001 && item) {
+            fulfillmentCycle.applyQtyToCompletedPhases(po, item, prevQty);
+        }
+        if (dmgQty > 0.0001 && item) {
+            fulfillmentCycle.closeSupplierReceivedDamage(po, item, dmgQty);
         }
     }
 
@@ -2068,7 +2181,8 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             return q <= 0 || s + 0.0001 >= q;
         });
         // Close phase when fully sent, or when under-sent with an accepted variance reason
-        // so the next incomplete phase can be shipped.
+        // so the next incomplete phase can be shipped. Under-send leftover stays on this
+        // phase as previous remaining (not merged into the next phase).
         if (phaseFullySent || hasVariance) {
             phase.isCompleted = true;
             phase.completedAt = sentAt;
@@ -2079,6 +2193,9 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                     shipmentLines
                 );
             }
+        }
+        if (typeof po.markModified === "function") {
+            po.markModified("supplierPartialSchedule");
         }
     }
 
@@ -2343,10 +2460,8 @@ const supplierAcknowledgeDamaged = async (id, actorId = null, payload = {}) => {
         c.receiveNote = note;
     }
 
-    fulfillmentCycle.ensureOpenFulfillmentPhase(po, {
-        kind: "Replacement",
-        note: "Replacement after damaged goods received by supplier"
-    });
+    // Damage field on send form unlocks from SupplierReceived cases —
+    // do not merge replacement qty into a Plan/CatchUp phase.
 
     po.markModified("damageCases");
     po.updatedBy = toObjectId(actorId);

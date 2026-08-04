@@ -44,11 +44,97 @@ const softMatchKey = (row = {}) => {
     return `${String(pid)}|${String(vid)}`;
 };
 
+/** Plan qty still owed (ordered − sent). Damage replacements are tracked separately. */
+const planRemainingToSend = (item = {}) => {
+    const ordered = Math.max(0, Number(item.quantity) || 0);
+    const sent = Math.max(0, Number(item.supplierSentQuantity) || 0);
+    return Math.max(ordered - sent, 0);
+};
+
+/**
+ * Total still sendable including all recorded damage (legacy).
+ * Prefer planRemainingToSend + supplierReceivedDamageQty for send UI gating.
+ */
 const remainingToSend = (item = {}) => {
     const ordered = Math.max(0, Number(item.quantity) || 0);
     const damaged = Math.max(0, Number(item.damagedQuantity) || 0);
     const sent = Math.max(0, Number(item.supplierSentQuantity) || 0);
     return Math.max(ordered + damaged - sent, 0);
+};
+
+const softItemMatch = (a = {}, b = {}) => {
+    const softA = softMatchKey(a);
+    const softB = softMatchKey(b);
+    if (softA !== "|" && softA === softB) return true;
+    return lineMatchKey(a) === lineMatchKey(b);
+};
+
+/** Damaged qty supplier may send only after they confirmed receive of returned goods. */
+const supplierReceivedDamageQty = (po, item = {}) => {
+    let sum = 0;
+    for (const c of po.damageCases || []) {
+        if (c.status !== "SupplierReceived") continue;
+        if (!softItemMatch(c, item)) continue;
+        sum += Math.max(0, Number(c.quantity) || 0);
+    }
+    return sum;
+};
+
+/** Under-send leftover sitting on completed phases (previous remaining field). */
+const completedPhaseRemainingQty = (po, item = {}) => {
+    let sum = 0;
+    for (const phase of po.supplierPartialSchedule || []) {
+        if (!phase.isCompleted) continue;
+        for (const a of phase.lineAllocations || []) {
+            if (!softItemMatch(a, item)) continue;
+            const left =
+                Math.max(0, Number(a.quantity) || 0) -
+                Math.max(0, Number(a.sentQuantity) || 0);
+            if (left > 0) sum += left;
+        }
+    }
+    return sum;
+};
+
+const applyQtyToCompletedPhases = (po, item = {}, qty = 0) => {
+    let left = Math.max(0, Number(qty) || 0);
+    if (left <= 0.0001) return 0;
+    for (const phase of po.supplierPartialSchedule || []) {
+        if (!phase.isCompleted || left <= 0.0001) continue;
+        for (const a of phase.lineAllocations || []) {
+            if (!softItemMatch(a, item)) continue;
+            const rem =
+                Math.max(0, Number(a.quantity) || 0) -
+                Math.max(0, Number(a.sentQuantity) || 0);
+            if (rem <= 0.0001) continue;
+            const take = Math.min(rem, left);
+            a.sentQuantity = Math.max(0, Number(a.sentQuantity) || 0) + take;
+            left -= take;
+        }
+    }
+    return left;
+};
+
+/** Mark SupplierReceived cases Closed as replacement qty is sent. */
+const closeSupplierReceivedDamage = (po, item = {}, qty = 0) => {
+    let left = Math.max(0, Number(qty) || 0);
+    if (left <= 0.0001) return;
+    for (const c of po.damageCases || []) {
+        if (left <= 0.0001) break;
+        if (c.status !== "SupplierReceived") continue;
+        if (!softItemMatch(c, item)) continue;
+        const q = Math.max(0, Number(c.quantity) || 0);
+        if (q <= left + 0.0001) {
+            c.status = "Closed";
+            left -= q;
+        } else {
+            c.quantity = q - left;
+            left = 0;
+        }
+    }
+    if (typeof po.markModified === "function") {
+        po.markModified("damageCases");
+    }
 };
 
 const okShortfall = (item = {}) => {
@@ -66,18 +152,22 @@ const nextPhaseNumber = (po) => {
     return max + 1;
 };
 
+/** Open-phase coverage uses plan qty only — never fold damage into Plan phases. */
 const buildRemainingAllocations = (po) => {
     const rows = [];
     for (const item of po.items || []) {
-        const qty = remainingToSend(item);
-        if (qty <= 0.0001) continue;
+        const qty = planRemainingToSend(item);
+        // Subtract qty already sitting on completed phases (previous remaining)
+        const onCompleted = completedPhaseRemainingQty(po, item);
+        const openNeed = Math.max(qty - onCompleted, 0);
+        if (openNeed <= 0.0001) continue;
         rows.push({
             productId: item.productId || null,
             productVariantId: item.productVariantId || null,
             productName: item.productName || "",
             variantLabel: item.variantLabel || "",
             sku: item.sku || "",
-            quantity: qty,
+            quantity: openNeed,
             sentQuantity: 0
         });
     }
@@ -226,70 +316,17 @@ const coalesceAllOpenPhases = (po) => {
 };
 
 /**
- * When a planned phase closes short, roll unsent qty into the next open phase
- * or append a CatchUp phase so leftover product is never stranded.
+ * Under-send leftover stays on the closed phase as "previous remaining".
+ * Do NOT merge into the next phase — current phase qty and prev remaining
+ * must stay separate fields on the supplier send form.
  */
 const rollPhaseShortfallToCatchUp = (po, closedPhase, shipmentLines = []) => {
-    const shortfalls = [];
-    for (const row of shipmentLines) {
-        const expected = Math.max(0, Number(row.expectedQuantity) || 0);
-        const sent = Math.max(0, Number(row.quantity) || 0);
-        const short = expected - sent;
-        if (short <= 0.0001) continue;
-        const src = row.meta?.item || row.meta?.alloc || {};
-        shortfalls.push({
-            productId: src.productId || null,
-            productVariantId: src.productVariantId || null,
-            productName: row.meta?.productName || src.productName || "",
-            variantLabel: row.meta?.variantLabel || src.variantLabel || "",
-            sku: row.meta?.sku || src.sku || "",
-            quantity: short
-        });
+    // Intentional no-op: shortfall remains on closedPhase allocations
+    // (quantity − sentQuantity) for the previous-remaining send bucket.
+    if (closedPhase && !closedPhase.note) {
+        closedPhase.note = "Under-sent — leftover stays as previous remaining";
     }
-    if (!shortfalls.length) return null;
-
-    const schedule = po.supplierPartialSchedule || [];
-    const nextOpen = schedule.find(
-        (p) => p !== closedPhase && !p.isCompleted
-    );
-    if (nextOpen) {
-        mergeAllocationsIntoPhase(nextOpen, shortfalls);
-        if (!nextOpen.note) {
-            nextOpen.note = "Includes catch-up from earlier under-send";
-        }
-        if (typeof po.markModified === "function") {
-            po.markModified("supplierPartialSchedule");
-        }
-        return nextOpen;
-    }
-
-    if (!Array.isArray(po.supplierPartialSchedule)) {
-        po.supplierPartialSchedule = [];
-    }
-    const catchUp = {
-        phase: nextPhaseNumber(po),
-        amount: 0,
-        amountType: "Fixed",
-        daysFrom: 0,
-        daysTo: 0,
-        days: 0,
-        dateFrom: null,
-        dateTo: null,
-        dueDate: null,
-        note: `Catch-up for under-sent phase ${closedPhase?.phase || ""}`.trim(),
-        kind: "CatchUp",
-        isCompleted: false,
-        completedAt: null,
-        lineAllocations: shortfalls.map((s) => ({
-            ...s,
-            sentQuantity: 0
-        }))
-    };
-    po.supplierPartialSchedule.push(catchUp);
-    if (typeof po.markModified === "function") {
-        po.markModified("supplierPartialSchedule");
-    }
-    return catchUp;
+    return null;
 };
 
 const nextDamageCaseNo = (po) => {
@@ -468,7 +505,13 @@ module.exports = {
     DAMAGE_STATUSES,
     lineMatchKey,
     softMatchKey,
+    softItemMatch,
+    planRemainingToSend,
     remainingToSend,
+    supplierReceivedDamageQty,
+    completedPhaseRemainingQty,
+    applyQtyToCompletedPhases,
+    closeSupplierReceivedDamage,
     okShortfall,
     nextPhaseNumber,
     buildRemainingAllocations,
