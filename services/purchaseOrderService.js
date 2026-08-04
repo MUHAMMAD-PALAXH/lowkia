@@ -2056,6 +2056,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     let hasVariance = false;
     const shipmentLines = [];
     const seen = new Set();
+    const seenRefs = [];
 
     const resolveBreakdown = (raw, meta) => {
         const b = raw.breakdown && typeof raw.breakdown === "object"
@@ -2068,7 +2069,6 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         const hasBd =
             Number.isFinite(cur) || Number.isFinite(prev) || Number.isFinite(dmg);
 
-        // Re-resolve item + live previous remaining from completed phases
         const item =
             meta.item ||
             (po.items || []).find((i) =>
@@ -2079,63 +2079,84 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             ) ||
             null;
         if (item) meta.item = item;
-        const livePrev = item
-            ? fulfillmentCycle.completedPhaseRemainingQty(po, item)
-            : 0;
-        const liveDmg = item
-            ? fulfillmentCycle.supplierReceivedDamageQty(po, item)
-            : 0;
-        if (livePrev > (meta.prevCap || 0)) meta.prevCap = livePrev;
-        if (liveDmg > (meta.dmgCap || 0)) meta.dmgCap = liveDmg;
-        meta.expected =
-            (meta.currentCap || 0) + (meta.prevCap || 0) + (meta.dmgCap || 0);
+
+        let prevCap = Math.max(
+            0,
+            Number(meta.prevCap) || 0,
+            item ? fulfillmentCycle.completedPhaseRemainingQty(po, item) : 0
+        );
+        let dmgCap = Math.max(
+            0,
+            Number(meta.dmgCap) || 0,
+            item ? fulfillmentCycle.supplierReceivedDamageQty(po, item) : 0
+        );
+        let curCap = Math.max(0, Number(meta.currentCap) || 0);
+
+        // Re-peel current phase to agreed fair share (exclude prev + later phases)
+        if (item) {
+            let futureLocked = 0;
+            const openPhase =
+                phaseIndex >= 0 ? po.supplierPartialSchedule[phaseIndex] : null;
+            for (const p of po.supplierPartialSchedule || []) {
+                if (p.isCompleted || p === openPhase) continue;
+                for (const a of p.lineAllocations || []) {
+                    if (!fulfillmentCycle.softItemMatch(a, item)) continue;
+                    futureLocked += Math.max(
+                        0,
+                        (Number(a.quantity) || 0) - (Number(a.sentQuantity) || 0)
+                    );
+                }
+            }
+            const planFair = Math.max(
+                0,
+                fulfillmentCycle.planRemainingToSend(item) -
+                    prevCap -
+                    futureLocked
+            );
+            if (curCap > planFair + 0.0001) curCap = planFair;
+        }
 
         if (hasBd) {
             cur = Math.max(0, Number.isFinite(cur) ? cur : 0);
             prev = Math.max(0, Number.isFinite(prev) ? prev : 0);
             dmg = Math.max(0, Number.isFinite(dmg) ? dmg : 0);
             const sum = cur + prev + dmg;
-            if (Math.abs(sum - qty) > 0.0001 && qty > 0) {
-                // Trust total qty; scale / fill from caps if breakdown incomplete
-                if (sum <= 0.0001) {
-                    let left = qty;
-                    cur = Math.min(meta.currentCap || 0, left);
-                    left -= cur;
-                    prev = Math.min(meta.prevCap || 0, left);
-                    left -= prev;
-                    dmg = Math.min(meta.dmgCap || 0, left);
-                }
+            if (Math.abs(sum - qty) > 0.0001 && qty > 0 && sum <= 0.0001) {
+                let left = qty;
+                cur = Math.min(curCap, left);
+                left -= cur;
+                prev = Math.min(prevCap, left);
+                left -= prev;
+                dmg = Math.min(dmgCap, left);
             }
         } else {
             let left = qty;
-            cur = Math.min(meta.currentCap || 0, left);
+            cur = Math.min(curCap, left);
             left -= cur;
-            prev = Math.min(meta.prevCap || 0, left);
+            prev = Math.min(prevCap, left);
             left -= prev;
-            dmg = Math.min(meta.dmgCap || 0, left);
+            dmg = Math.min(dmgCap, left);
         }
 
-        let curCap = Math.max(0, Number(meta.currentCap) || 0);
-        let prevCap = Math.max(0, Number(meta.prevCap) || 0);
-        let dmgCap = Math.max(0, Number(meta.dmgCap) || 0);
-        let expected =
-            Math.max(0, Number(meta.expected) || 0) || curCap + prevCap + dmgCap;
-
-        // Allow client previous-remaining when it fits overall shippable qty
-        if (prev > prevCap + 0.0001) {
-            prevCap = Math.max(prevCap, prev);
-            expected = curCap + prevCap + dmgCap;
-        }
-        if (cur > curCap + 0.0001 && cur + prev + dmg <= expected + 0.0001) {
-            curCap = Math.max(curCap, cur);
-            expected = curCap + prevCap + dmgCap;
-        }
-        if (dmg > dmgCap + 0.0001 && cur + prev + dmg <= expected + 0.0001) {
-            dmgCap = Math.max(dmgCap, dmg);
-            expected = curCap + prevCap + dmgCap;
+        // Expand caps when client bucket fits overall fair expected
+        if (prev > prevCap + 0.0001) prevCap = prev;
+        if (dmg > dmgCap + 0.0001) dmgCap = dmg;
+        if (cur > curCap + 0.0001) {
+            // Only expand current if it still fits plan fair after prev/dmg
+            const room = Math.max(
+                0,
+                (item
+                    ? fulfillmentCycle.planRemainingToSend(item) + dmgCap
+                    : cur + prev + dmg) -
+                    prevCap -
+                    dmgCap
+            );
+            if (cur <= room + 0.0001) curCap = cur;
         }
 
+        const expected = curCap + prevCap + dmgCap;
         const total = cur + prev + dmg;
+
         if (qty > expected + 0.0001 || total > expected + 0.0001) {
             throw new AppError(
                 `Send quantity cannot exceed PO remaining ${expected} for ${meta.productName || "item"}.`,
@@ -2160,6 +2181,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 400
             );
         }
+
         meta.currentCap = curCap;
         meta.prevCap = prevCap;
         meta.dmgCap = dmgCap;
@@ -2167,19 +2189,31 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         return { currentPhase: cur, previousRemaining: prev, damaged: dmg };
     };
 
+    const alreadySeenRef = (ref) => {
+        if (!ref) return false;
+        return seenRefs.some((s) => fulfillmentCycle.softItemMatch(s, ref));
+    };
+
     for (const raw of rawLines) {
         const key = lineMatchKey(raw);
         let meta = expectedByKey.get(key);
         let resolvedKey = key;
         if (!meta) {
-            // try softer match by product+variant only
             let soft = null;
             for (const [k, v] of expectedByKey.entries()) {
+                const ref = v.alloc || v.item || {};
+                if (
+                    fulfillmentCycle.softItemMatch(ref, raw) ||
+                    fulfillmentCycle.softItemMatch(v.item || {}, raw)
+                ) {
+                    soft = { key: k, meta: v };
+                    break;
+                }
                 const pid = String(raw.productId || "");
                 const vid = String(raw.productVariantId || "");
                 if (
-                    k.startsWith(`${pid}|${vid}|`) ||
-                    (pid && k.startsWith(`${pid}|`))
+                    pid &&
+                    (k.startsWith(`${pid}|${vid}|`) || k.startsWith(`${pid}|`))
                 ) {
                     soft = { key: k, meta: v };
                     break;
@@ -2194,21 +2228,26 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             meta = soft.meta;
             resolvedKey = soft.key;
         }
-        if (seen.has(resolvedKey)) continue;
+        if (seen.has(resolvedKey) || alreadySeenRef(raw) || alreadySeenRef(meta.item) || alreadySeenRef(meta.alloc)) {
+            continue;
+        }
         const qty = Number(raw.quantity);
         if (!Number.isFinite(qty) || qty < 0) {
             throw new AppError("Send quantity cannot be negative.", 400);
         }
         const breakdown = resolveBreakdown(raw, meta);
-        // meta.expected may grow after live prev/dmg re-resolve inside breakdown
         if (qty > meta.expected + 0.0001) {
             throw new AppError(
                 `Send quantity cannot exceed PO remaining ${meta.expected} for ${meta.productName || resolvedKey}.`,
                 400
             );
         }
-        if (qty < meta.expected - 0.0001) hasVariance = true;
+        // Variance only when deliberately short of the peeled expected total
+        if (qty + 0.0001 < meta.expected) hasVariance = true;
         seen.add(resolvedKey);
+        if (raw) seenRefs.push(raw);
+        if (meta.item) seenRefs.push(meta.item);
+        if (meta.alloc) seenRefs.push(meta.alloc);
         shipmentLines.push({
             key: resolvedKey,
             meta,
@@ -2218,15 +2257,26 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         });
     }
 
-    // Require every expected line to be present (0 allowed only with variance reason)
+    // Missing expected rows — skip duplicates already covered by soft match
     for (const [key, meta] of expectedByKey.entries()) {
         if (seen.has(key)) continue;
+        if (
+            alreadySeenRef(meta.item) ||
+            alreadySeenRef(meta.alloc) ||
+            (meta.item && alreadySeenRef(meta.item)) ||
+            (meta.alloc && alreadySeenRef(meta.alloc))
+        ) {
+            continue;
+        }
+        const expected =
+            (meta.currentCap || 0) + (meta.prevCap || 0) + (meta.dmgCap || 0);
+        if (expected <= 0.0001) continue;
         hasVariance = true;
         shipmentLines.push({
             key,
             meta,
             quantity: 0,
-            expectedQuantity: meta.expected,
+            expectedQuantity: expected,
             breakdown: { currentPhase: 0, previousRemaining: 0, damaged: 0 }
         });
     }
