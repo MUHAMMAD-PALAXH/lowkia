@@ -297,6 +297,15 @@ const damageCasesSummary = (po) => {
         if (st === "BuyerHold") openQty += q;
         if (st === "ReturnShipped") returnShippedQty += q;
     }
+    // Fallback: PO damaged counters when cases were never created
+    let damagedOnPo = 0;
+    for (const item of po.items || []) {
+        damagedOnPo += Math.max(0, Number(item.damagedQuantity) || 0);
+    }
+    const tracked = openQty + returnShippedQty;
+    if (damagedOnPo > tracked + 0.0001) {
+        openQty += damagedOnPo - tracked;
+    }
     return {
         totalCases: cases.length,
         openBuyerHoldQty: openQty,
@@ -304,7 +313,21 @@ const damageCasesSummary = (po) => {
         awaitingSupplierReceive: cases.filter((c) => c.status === "ReturnShipped")
             .length,
         byStatus,
-        cases
+        cases: cases.map((c) => ({
+            id: c._id || c.id || null,
+            caseNo: c.caseNo || "",
+            productId: c.productId || null,
+            productVariantId: c.productVariantId || null,
+            productName: c.productName || "",
+            variantLabel: c.variantLabel || "",
+            sku: c.sku || "",
+            quantity: Math.max(0, Number(c.quantity) || 0),
+            status: c.status || "BuyerHold",
+            phase: c.phase == null ? null : Number(c.phase),
+            createdAt: c.createdAt || null,
+            returnedAt: c.returnedAt || null,
+            supplierReceivedAt: c.supplierReceivedAt || null
+        }))
     };
 };
 

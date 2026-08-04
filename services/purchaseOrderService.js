@@ -2177,9 +2177,47 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
  */
 const returnDamagedToSupplier = async (id, actorId = null, payload = {}) => {
     const po = await findPoOrFail(id);
-    if (!Array.isArray(po.damageCases) || !po.damageCases.length) {
-        throw new AppError("No damaged cases to return on this purchase order.", 400);
+    if (!Array.isArray(po.damageCases)) po.damageCases = [];
+
+    // Backfill BuyerHold cases from PO damaged counters (older receives /
+    // before DamageCase tracking) so GRN can always return damaged qty.
+    const holdQtyByKey = {};
+    for (const c of po.damageCases) {
+        if (c.status !== "BuyerHold" && c.status !== "ReturnShipped") continue;
+        const key = fulfillmentCycle.lineMatchKey(c);
+        holdQtyByKey[key] =
+            (holdQtyByKey[key] || 0) + Math.max(0, Number(c.quantity) || 0);
     }
+    for (const item of po.items || []) {
+        const damaged = Math.max(0, Number(item.damagedQuantity) || 0);
+        if (damaged <= 0.0001) continue;
+        const key = fulfillmentCycle.lineMatchKey(item);
+        const already = holdQtyByKey[key] || 0;
+        const gap = damaged - already;
+        if (gap <= 0.0001) continue;
+        po.damageCases.push({
+            caseNo: `DMG-${String(po.damageCases.length + 1).padStart(3, "0")}`,
+            purchaseOrderItemId: item._id || null,
+            productId: item.productId || null,
+            productVariantId: item.productVariantId || null,
+            productName: item.productName || "",
+            variantLabel: item.variantLabel || "",
+            sku: item.sku || "",
+            quantity: gap,
+            status: "BuyerHold",
+            grnId: null,
+            receiveBatchNo: "",
+            phase: null,
+            createdAt: new Date(),
+            returnedAt: null,
+            supplierReceivedAt: null,
+            returnNote: "",
+            receiveNote: "",
+            imeis: []
+        });
+        holdQtyByKey[key] = already + gap;
+    }
+    if (po.damageCases.length) po.markModified("damageCases");
 
     const holdCases = po.damageCases.filter((c) => c.status === "BuyerHold");
     if (!holdCases.length) {
