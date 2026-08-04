@@ -2419,12 +2419,30 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         totalDamaged += Number(item.damagedQuantity) || 0;
     }
     const stillNeedOk = totalReceived + 0.0001 < totalOrdered;
+    const planStillToSend = (po.items || []).some(
+        (i) => fulfillmentCycle.planRemainingToSend(i) > 0.0001
+    );
+    const phaseQtyStillToSend = (po.supplierPartialSchedule || []).some((p) =>
+        (p.lineAllocations || []).some((a) => {
+            const left =
+                Math.max(0, Number(a.quantity) || 0) -
+                Math.max(0, Number(a.sentQuantity) || 0);
+            return left > 0.0001;
+        })
+    );
+    // Completely Delivered only when every ordered unit is sent AND no phase
+    // leftover (current / previous remaining) is still outstanding.
+    const fullySent =
+        totalSent + 0.0001 >= totalOrdered &&
+        !planStillToSend &&
+        !phaseQtyStillToSend;
+
     if (totalSent <= 0) {
         po.status = "Agreed";
     } else if (stillNeedOk && totalReceived > 0) {
         // Damaged / partial OK — GRN still open; supplier may send replacements
         po.status = "Partially Received";
-    } else if (totalSent + 0.0001 >= totalOrdered) {
+    } else if (fullySent) {
         po.status = "Completely Delivered";
         if (deliveryType === "Partial" && !stillNeedOk) {
             for (const p of po.supplierPartialSchedule || []) {

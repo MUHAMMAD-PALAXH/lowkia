@@ -418,14 +418,20 @@ const damageCasesSummary = (po) => {
         if (st === "BuyerHold") openQty += q;
         if (st === "ReturnShipped") returnShippedQty += q;
     }
-    // Fallback: PO damaged counters when cases were never created
+    // Fallback: PO damaged counters only when NO damage cases exist yet
     let damagedOnPo = 0;
     for (const item of po.items || []) {
         damagedOnPo += Math.max(0, Number(item.damagedQuantity) || 0);
     }
-    const tracked = openQty + returnShippedQty;
-    if (damagedOnPo > tracked + 0.0001) {
-        openQty += damagedOnPo - tracked;
+    const trackedAll = cases.reduce(
+        (s, c) => s + Math.max(0, Number(c.quantity) || 0),
+        0
+    );
+    // Never re-open BuyerHold for qty already ReturnShipped / SupplierReceived / Closed
+    if (cases.length === 0 && damagedOnPo > 0.0001) {
+        openQty = damagedOnPo;
+    } else if (damagedOnPo > trackedAll + 0.0001) {
+        openQty += damagedOnPo - trackedAll;
     }
     return {
         totalCases: cases.length,
