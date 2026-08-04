@@ -1950,9 +1950,13 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                     (po.items || []).find((i) =>
                         fulfillmentCycle.softItemMatch(i, alloc)
                     ) || null;
+                const prev = item
+                    ? fulfillmentCycle.completedPhaseRemainingQty(po, item)
+                    : 0;
+                const dmg = item
+                    ? fulfillmentCycle.supplierReceivedDamageQty(po, item)
+                    : 0;
                 if (item) {
-                    const prev =
-                        fulfillmentCycle.completedPhaseRemainingQty(po, item);
                     let futureLocked = 0;
                     for (const p of po.supplierPartialSchedule || []) {
                         if (p.isCompleted || p === phase) continue;
@@ -1983,40 +1987,55 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                         alloc.quantity = fairQty;
                     }
                 }
-                if (currentCap <= 0.0001) continue;
+                if (currentCap <= 0.0001 && prev <= 0.0001 && dmg <= 0.0001) {
+                    continue;
+                }
                 bumpExpected(lineMatchKey(alloc), {
                     alloc,
                     item,
-                    currentCap,
-                    productName: alloc.productName || "",
-                    variantLabel: alloc.variantLabel || "",
-                    sku: alloc.sku || "",
+                    currentCap: Math.max(0, currentCap),
+                    prevCap: Math.max(0, prev),
+                    dmgCap: Math.max(0, dmg),
+                    productName: alloc.productName || item?.productName || "",
+                    variantLabel:
+                        alloc.variantLabel || item?.variantLabel || "",
+                    sku: alloc.sku || item?.sku || "",
                     phaseKind: phase.kind || "Plan"
                 });
             }
         }
 
-        // Always add previous-remaining (completed under-sends) + supplier-received damage
+        // Previous remaining / damage for items not already covered above
         for (const item of po.items || []) {
             const prev = fulfillmentCycle.completedPhaseRemainingQty(po, item);
             const dmg = fulfillmentCycle.supplierReceivedDamageQty(po, item);
             if (prev <= 0.0001 && dmg <= 0.0001) continue;
             let key = lineMatchKey(item);
+            let found = false;
             for (const [k, v] of expectedByKey.entries()) {
                 const ref = v.alloc || v.item || {};
                 if (fulfillmentCycle.softItemMatch(ref, item)) {
                     key = k;
+                    found = true;
+                    // Ensure caps are present even if first loop missed match
+                    if ((v.prevCap || 0) < prev) v.prevCap = prev;
+                    if ((v.dmgCap || 0) < dmg) v.dmgCap = dmg;
+                    if (!v.item) v.item = item;
+                    v.expected =
+                        (v.currentCap || 0) + (v.prevCap || 0) + (v.dmgCap || 0);
                     break;
                 }
             }
-            bumpExpected(key, {
-                item,
-                prevCap: prev,
-                dmgCap: dmg,
-                productName: item.productName || "",
-                variantLabel: item.variantLabel || "",
-                sku: item.sku || ""
-            });
+            if (!found) {
+                bumpExpected(key, {
+                    item,
+                    prevCap: prev,
+                    dmgCap: dmg,
+                    productName: item.productName || "",
+                    variantLabel: item.variantLabel || "",
+                    sku: item.sku || ""
+                });
+            }
         }
 
         // Drop zero rows
@@ -2048,6 +2067,29 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         const qty = Number(raw.quantity) || 0;
         const hasBd =
             Number.isFinite(cur) || Number.isFinite(prev) || Number.isFinite(dmg);
+
+        // Re-resolve item + live previous remaining from completed phases
+        const item =
+            meta.item ||
+            (po.items || []).find((i) =>
+                fulfillmentCycle.softItemMatch(i, raw)
+            ) ||
+            (po.items || []).find((i) =>
+                fulfillmentCycle.softItemMatch(i, meta.alloc || {})
+            ) ||
+            null;
+        if (item) meta.item = item;
+        const livePrev = item
+            ? fulfillmentCycle.completedPhaseRemainingQty(po, item)
+            : 0;
+        const liveDmg = item
+            ? fulfillmentCycle.supplierReceivedDamageQty(po, item)
+            : 0;
+        if (livePrev > (meta.prevCap || 0)) meta.prevCap = livePrev;
+        if (liveDmg > (meta.dmgCap || 0)) meta.dmgCap = liveDmg;
+        meta.expected =
+            (meta.currentCap || 0) + (meta.prevCap || 0) + (meta.dmgCap || 0);
+
         if (hasBd) {
             cur = Math.max(0, Number.isFinite(cur) ? cur : 0);
             prev = Math.max(0, Number.isFinite(prev) ? prev : 0);
@@ -2072,24 +2114,56 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             left -= prev;
             dmg = Math.min(meta.dmgCap || 0, left);
         }
-        if (cur > (meta.currentCap || 0) + 0.0001) {
+
+        let curCap = Math.max(0, Number(meta.currentCap) || 0);
+        let prevCap = Math.max(0, Number(meta.prevCap) || 0);
+        let dmgCap = Math.max(0, Number(meta.dmgCap) || 0);
+        let expected =
+            Math.max(0, Number(meta.expected) || 0) || curCap + prevCap + dmgCap;
+
+        // Allow client previous-remaining when it fits overall shippable qty
+        if (prev > prevCap + 0.0001) {
+            prevCap = Math.max(prevCap, prev);
+            expected = curCap + prevCap + dmgCap;
+        }
+        if (cur > curCap + 0.0001 && cur + prev + dmg <= expected + 0.0001) {
+            curCap = Math.max(curCap, cur);
+            expected = curCap + prevCap + dmgCap;
+        }
+        if (dmg > dmgCap + 0.0001 && cur + prev + dmg <= expected + 0.0001) {
+            dmgCap = Math.max(dmgCap, dmg);
+            expected = curCap + prevCap + dmgCap;
+        }
+
+        const total = cur + prev + dmg;
+        if (qty > expected + 0.0001 || total > expected + 0.0001) {
             throw new AppError(
-                `Current phase qty cannot exceed ${(meta.currentCap || 0)} for ${meta.productName || "item"}.`,
+                `Send quantity cannot exceed PO remaining ${expected} for ${meta.productName || "item"}.`,
                 400
             );
         }
-        if (prev > (meta.prevCap || 0) + 0.0001) {
+        if (cur > curCap + 0.0001) {
             throw new AppError(
-                `Previous remaining cannot exceed ${(meta.prevCap || 0)} for ${meta.productName || "item"}.`,
+                `Current phase qty cannot exceed ${curCap} for ${meta.productName || "item"}.`,
                 400
             );
         }
-        if (dmg > (meta.dmgCap || 0) + 0.0001) {
+        if (prev > prevCap + 0.0001) {
             throw new AppError(
-                `Damaged replacement qty cannot exceed ${(meta.dmgCap || 0)} for ${meta.productName || "item"}.`,
+                `Previous remaining cannot exceed ${prevCap} for ${meta.productName || "item"}.`,
                 400
             );
         }
+        if (dmg > dmgCap + 0.0001) {
+            throw new AppError(
+                `Damaged replacement qty cannot exceed ${dmgCap} for ${meta.productName || "item"}.`,
+                400
+            );
+        }
+        meta.currentCap = curCap;
+        meta.prevCap = prevCap;
+        meta.dmgCap = dmgCap;
+        meta.expected = expected;
         return { currentPhase: cur, previousRemaining: prev, damaged: dmg };
     };
 
@@ -2125,6 +2199,8 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         if (!Number.isFinite(qty) || qty < 0) {
             throw new AppError("Send quantity cannot be negative.", 400);
         }
+        const breakdown = resolveBreakdown(raw, meta);
+        // meta.expected may grow after live prev/dmg re-resolve inside breakdown
         if (qty > meta.expected + 0.0001) {
             throw new AppError(
                 `Send quantity cannot exceed PO remaining ${meta.expected} for ${meta.productName || resolvedKey}.`,
@@ -2132,7 +2208,6 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             );
         }
         if (qty < meta.expected - 0.0001) hasVariance = true;
-        const breakdown = resolveBreakdown(raw, meta);
         seen.add(resolvedKey);
         shipmentLines.push({
             key: resolvedKey,
@@ -2200,7 +2275,16 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 row.quantity;
         }
         if (prevQty > 0.0001 && item) {
-            fulfillmentCycle.applyQtyToCompletedPhases(po, item, prevQty);
+            const left = fulfillmentCycle.applyQtyToCompletedPhases(
+                po,
+                item,
+                prevQty
+            );
+            // If completed phases had no leftover rows, fold into current alloc
+            if (left > 0.0001 && row.meta.alloc) {
+                row.meta.alloc.sentQuantity =
+                    Math.max(0, Number(row.meta.alloc.sentQuantity) || 0) + left;
+            }
         }
         if (dmgQty > 0.0001 && item) {
             fulfillmentCycle.closeSupplierReceivedDamage(po, item, dmgQty);

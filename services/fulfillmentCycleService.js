@@ -66,7 +66,29 @@ const softItemMatch = (a = {}, b = {}) => {
     const softA = softMatchKey(a);
     const softB = softMatchKey(b);
     if (softA !== "|" && softA === softB) return true;
-    return lineMatchKey(a) === lineMatchKey(b);
+    if (lineMatchKey(a) === lineMatchKey(b)) return true;
+    // Name / SKU fallback (allocations sometimes lack productId)
+    const nameA = String(a.productName || "")
+        .trim()
+        .toLowerCase();
+    const nameB = String(b.productName || "")
+        .trim()
+        .toLowerCase();
+    if (!nameA || !nameB || nameA !== nameB) return false;
+    const varA = String(a.variantLabel || "")
+        .trim()
+        .toLowerCase();
+    const varB = String(b.variantLabel || "")
+        .trim()
+        .toLowerCase();
+    if (varA === varB) return true;
+    const skuA = String(a.sku || "")
+        .trim()
+        .toLowerCase();
+    const skuB = String(b.sku || "")
+        .trim()
+        .toLowerCase();
+    return !!(skuA && skuB && skuA === skuB);
 };
 
 /** Damaged qty supplier may send only after they confirmed receive of returned goods. */
