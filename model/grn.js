@@ -185,6 +185,8 @@ const receiveBatchSchema = new mongoose.Schema(
             default: null
         },
         note: { type: String, default: "", trim: true },
+        /** Delivery phase this batch stocked (partial schedule). */
+        phase: { type: Number, default: null, min: 1 },
         lines: { type: [receiveBatchLineSchema], default: [] },
         subtotal: { type: Number, default: 0 },
         grandTotal: { type: Number, default: 0 }

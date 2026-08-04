@@ -152,8 +152,45 @@ const plannedPaymentAmount = (phase, grandTotal) => {
     return raw;
 };
 
-const lineMatchKey = (row = {}) =>
-    `${String(row.productId?._id || row.productId || "")}|${String(row.productVariantId?._id || row.productVariantId || "")}|${String(row.sku || "")}|${String(row.variantLabel || "")}`;
+const lineMatchKey = (row = {}) => {
+    const pid = row.productId?._id || row.productId?.id || row.productId || "";
+    const vid =
+        row.productVariantId?._id ||
+        row.productVariantId?.id ||
+        row.productVariantId ||
+        "";
+    return `${String(pid)}|${String(vid)}|${String(row.sku || "")}|${String(row.variantLabel || "")}`;
+};
+
+const softMatchKey = (row = {}) => {
+    const pid = row.productId?._id || row.productId?.id || row.productId || "";
+    const vid =
+        row.productVariantId?._id ||
+        row.productVariantId?.id ||
+        row.productVariantId ||
+        "";
+    return `${String(pid)}|${String(vid)}`;
+};
+
+const linesLooselyMatch = (a = {}, b = {}) => {
+    const sa = softMatchKey(a);
+    const sb = softMatchKey(b);
+    if (sa !== "|" && sa === sb) return true;
+    const nameA = String(a.productName || "").trim().toLowerCase();
+    const nameB = String(b.productName || "").trim().toLowerCase();
+    const varA = String(a.variantLabel || "").trim().toLowerCase();
+    const varB = String(b.variantLabel || "").trim().toLowerCase();
+    if (nameA && nameA === nameB && varA === varB) return true;
+    const skuA = String(a.sku || "").trim().toLowerCase();
+    const skuB = String(b.sku || "").trim().toLowerCase();
+    if (skuA && skuA === skuB) return true;
+    return false;
+};
+
+const asNonNeg = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+};
 
 const summarizePoProgress = (po, damagedByKey = {}) => {
     let orderedQty = 0;
@@ -194,25 +231,55 @@ const summarizePoProgress = (po, damagedByKey = {}) => {
     };
 };
 
-/** Aggregate damaged qty per PO line key from GRN receive batches. */
-const aggregateDamagedFromGrns = (grns = []) => {
+/** Aggregate accepted/damaged from GRN receive batches (global + per-phase). */
+const aggregateReceiveFromGrns = (grns = []) => {
     const damagedByKey = {};
+    const acceptedByKey = {};
+    const byPhase = {}; // phase -> { acceptedByKey, damagedByKey }
     const receiveDates = [];
+
+    const bump = (map, key, qty) => {
+        if (!key || key === "|" || qty <= 0) return;
+        map[key] = (map[key] || 0) + qty;
+    };
+
     for (const grn of grns || []) {
         if (grn.receivedDate) receiveDates.push(grn.receivedDate);
         for (const batch of grn.receiveBatches || []) {
             if (batch.receivedAt) receiveDates.push(batch.receivedAt);
+            const phaseNo = Number(batch.phase);
+            const phaseBucket =
+                Number.isFinite(phaseNo) && phaseNo > 0
+                    ? (byPhase[phaseNo] ||
+                          (byPhase[phaseNo] = {
+                              acceptedByKey: {},
+                              damagedByKey: {}
+                          }))
+                    : null;
+
             for (const line of batch.lines || []) {
                 const key = lineMatchKey(line);
-                damagedByKey[key] =
-                    (damagedByKey[key] || 0) +
-                    Math.max(Number(line.damagedQuantity) || 0, 0);
+                const received = asNonNeg(line.receivedQuantity);
+                const damaged = asNonNeg(line.damagedQuantity);
+                const accepted = Math.max(
+                    asNonNeg(line.acceptedQuantity) || received - damaged,
+                    0
+                );
+                // Store under full key only (avoid double-count). Soft used at lookup time.
+                bump(acceptedByKey, key, accepted);
+                bump(damagedByKey, key, damaged);
+                if (phaseBucket) {
+                    bump(phaseBucket.acceptedByKey, key, accepted);
+                    bump(phaseBucket.damagedByKey, key, damaged);
+                }
             }
         }
     }
     receiveDates.sort((a, b) => new Date(a) - new Date(b));
     return {
         damagedByKey,
+        acceptedByKey,
+        byPhase,
         firstReceivedAt: receiveDates[0] || null,
         lastReceivedAt: receiveDates.length
             ? receiveDates[receiveDates.length - 1]
@@ -221,42 +288,159 @@ const aggregateDamagedFromGrns = (grns = []) => {
     };
 };
 
+/** @deprecated alias kept for call sites */
+const aggregateDamagedFromGrns = (grns = []) => {
+    const agg = aggregateReceiveFromGrns(grns);
+    return {
+        damagedByKey: agg.damagedByKey,
+        firstReceivedAt: agg.firstReceivedAt,
+        lastReceivedAt: agg.lastReceivedAt,
+        receiveDates: agg.receiveDates
+    };
+};
+
+const findPoItemForAlloc = (alloc, items = []) => {
+    const full = lineMatchKey(alloc);
+    for (const item of items) {
+        if (lineMatchKey(item) === full) return item;
+    }
+    const soft = softMatchKey(alloc);
+    if (soft !== "|") {
+        for (const item of items) {
+            if (softMatchKey(item) === soft) return item;
+        }
+    }
+    for (const item of items) {
+        if (linesLooselyMatch(alloc, item)) return item;
+    }
+    return null;
+};
+
+const shipmentQtyForAlloc = (phaseShipments = [], alloc, item = null) => {
+    let sum = 0;
+    for (const s of phaseShipments) {
+        for (const l of s.lines || []) {
+            if (
+                linesLooselyMatch(l, alloc) ||
+                (item && linesLooselyMatch(l, item))
+            ) {
+                sum += asNonNeg(l.quantity);
+            }
+        }
+    }
+    return sum;
+};
+
+const takePool = (poolMap, keys, amount) => {
+    const need = Math.max(amount, 0);
+    if (need <= 0) return 0;
+    // Direct keys first
+    for (const key of keys) {
+        if (!key || key === "|") continue;
+        const avail = Math.max(Number(poolMap[key]) || 0, 0);
+        if (avail <= 0) continue;
+        const take = Math.min(avail, need);
+        poolMap[key] = Math.max(avail - take, 0);
+        return take;
+    }
+    // Soft fallback across map entries
+    const softs = keys
+        .map((k) => (k.includes("|") ? k.split("|").slice(0, 2).join("|") : k))
+        .filter((k) => k && k !== "|");
+    for (const [mapKey, availRaw] of Object.entries(poolMap)) {
+        const avail = Math.max(Number(availRaw) || 0, 0);
+        if (avail <= 0) continue;
+        const mapSoft = mapKey.split("|").slice(0, 2).join("|");
+        if (!softs.includes(mapSoft)) continue;
+        const take = Math.min(avail, need);
+        poolMap[mapKey] = Math.max(avail - take, 0);
+        return take;
+    }
+    return 0;
+};
+
+const takeTagged = (taggedMap, keys) => {
+    if (!taggedMap) return 0;
+    for (const key of keys) {
+        if (!key || key === "|") continue;
+        const qty = asNonNeg(taggedMap[key]);
+        if (qty <= 0) continue;
+        taggedMap[key] = 0;
+        return qty;
+    }
+    const softs = keys
+        .map((k) => (k.includes("|") ? k.split("|").slice(0, 2).join("|") : k))
+        .filter((k) => k && k !== "|");
+    for (const [mapKey, availRaw] of Object.entries(taggedMap)) {
+        const qty = asNonNeg(availRaw);
+        if (qty <= 0) continue;
+        const mapSoft = mapKey.split("|").slice(0, 2).join("|");
+        if (!softs.includes(mapSoft)) continue;
+        taggedMap[mapKey] = 0;
+        return qty;
+    }
+    return 0;
+};
+
 /**
  * Build agreed delivery phases with ordered / sent / received / damaged.
- * Accepted + damaged are allocated FIFO, capped by each phase line's *sent*
- * qty (not agreed) so short-ships stay accurate across phases.
+ * Sent prefers alloc.sentQuantity, then shipment lines, then PO item sent.
+ * Received/damaged prefer phase-tagged GRN batches, else FIFO against sent caps.
  */
-const buildDeliveryPhases = (po, damagedByKey = {}) => {
+const buildDeliveryPhases = (po, receiveAgg = {}) => {
     const items = po.items || [];
-    const itemByKey = new Map();
-    for (const item of items) {
-        itemByKey.set(lineMatchKey(item), item);
-    }
+    const damagedByKey = receiveAgg.damagedByKey || {};
+    const byPhase = receiveAgg.byPhase || {};
 
     const remainingRecv = {};
     const remainingDmg = {};
-    for (const [key, item] of itemByKey.entries()) {
-        remainingRecv[key] = Math.max(Number(item.receivedQuantity) || 0, 0);
-        remainingDmg[key] = Math.max(Number(damagedByKey[key]) || 0, 0);
+    for (const item of items) {
+        const full = lineMatchKey(item);
+        const soft = softMatchKey(item);
+        const recv = asNonNeg(item.receivedQuantity);
+        const dmg =
+            asNonNeg(damagedByKey[full]) ||
+            (() => {
+                // soft lookup in damaged map
+                for (const [k, v] of Object.entries(damagedByKey)) {
+                    if (k.split("|").slice(0, 2).join("|") === soft) {
+                        return asNonNeg(v);
+                    }
+                }
+                return 0;
+            })();
+        remainingRecv[full] = (remainingRecv[full] || 0) + recv;
+        remainingDmg[full] = (remainingDmg[full] || 0) + dmg;
     }
 
     let phases = Array.isArray(po.supplierPartialSchedule)
         ? po.supplierPartialSchedule
         : [];
 
-    // Full delivery with empty schedule — synthesize one phase from PO lines
     if (!phases.length) {
         phases = [
             {
                 phase: 1,
-                dateFrom: po.supplierExpectedDeliveryDate || po.expectedDeliveryDate || null,
-                dateTo: po.supplierExpectedDeliveryDate || po.expectedDeliveryDate || null,
-                dueDate: po.supplierExpectedDeliveryDate || po.expectedDeliveryDate || null,
-                note: po.supplierDeliveryType === "Partial" ? "" : "Complete delivery",
+                dateFrom:
+                    po.supplierExpectedDeliveryDate ||
+                    po.expectedDeliveryDate ||
+                    null,
+                dateTo:
+                    po.supplierExpectedDeliveryDate ||
+                    po.expectedDeliveryDate ||
+                    null,
+                dueDate:
+                    po.supplierExpectedDeliveryDate ||
+                    po.expectedDeliveryDate ||
+                    null,
+                note:
+                    po.supplierDeliveryType === "Partial"
+                        ? ""
+                        : "Complete delivery",
                 isCompleted: items.every(
                     (i) =>
-                        Math.max(Number(i.supplierSentQuantity) || 0, 0) + 0.0001 >=
-                        Math.max(Number(i.quantity) || 0, 0)
+                        asNonNeg(i.supplierSentQuantity) + 0.0001 >=
+                        asNonNeg(i.quantity)
                 ),
                 lineAllocations: items.map((i) => ({
                     productId: i.productId || null,
@@ -264,8 +448,8 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
                     productName: i.productName || "",
                     variantLabel: i.variantLabel || "",
                     sku: i.sku || "",
-                    quantity: Math.max(Number(i.quantity) || 0, 0),
-                    sentQuantity: Math.max(Number(i.supplierSentQuantity) || 0, 0)
+                    quantity: asNonNeg(i.quantity),
+                    sentQuantity: asNonNeg(i.supplierSentQuantity)
                 }))
             }
         ];
@@ -278,8 +462,11 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
     return phases.map((phase, idx) => {
         const phaseNo = Number(phase.phase) || idx + 1;
         const phaseShipments = shipments.filter(
-            (s) => Number(s.phase) === phaseNo || (s.phase == null && phases.length === 1)
+            (s) =>
+                Number(s.phase) === phaseNo ||
+                (s.phase == null && phases.length === 1)
         );
+        const phaseTagged = byPhase[phaseNo] || null;
         const lines = [];
         let agreedQty = 0;
         let sentQty = 0;
@@ -293,27 +480,50 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
         let damagedValue = 0;
 
         for (const alloc of phase.lineAllocations || []) {
-            const key = lineMatchKey(alloc);
-            const item = itemByKey.get(key);
+            const item = findPoItemForAlloc(alloc, items);
+            const fullKey = item ? lineMatchKey(item) : lineMatchKey(alloc);
+            const softKey = item ? softMatchKey(item) : softMatchKey(alloc);
+            const lookupKeys = [fullKey, softKey].filter(
+                (k, i, arr) => k && k !== "|" && arr.indexOf(k) === i
+            );
             const price = Math.max(
                 Number(item?.purchasePrice) || Number(alloc.purchasePrice) || 0,
                 0
             );
-            const agreed = Math.max(Number(alloc.quantity) || 0, 0);
-            const sent = Math.max(
-                Number(alloc.sentQuantity) != null && alloc.sentQuantity !== ""
-                    ? Number(alloc.sentQuantity)
-                    : 0,
-                0
-            );
-            // Cap GRN attribution by what the supplier sent on this phase
-            const receiveCap = sent;
-            const recvPool = remainingRecv[key] || 0;
-            const dmgPool = remainingDmg[key] || 0;
-            const recv = Math.min(recvPool, receiveCap);
-            remainingRecv[key] = Math.max(recvPool - recv, 0);
-            const dmg = Math.min(dmgPool, Math.max(receiveCap - recv, 0));
-            remainingDmg[key] = Math.max(dmgPool - dmg, 0);
+            const agreed = asNonNeg(alloc.quantity);
+
+            let sent = asNonNeg(alloc.sentQuantity);
+            if (sent <= 0) {
+                sent = shipmentQtyForAlloc(phaseShipments, alloc, item);
+            }
+            if (sent <= 0 && phases.length === 1 && item) {
+                sent = asNonNeg(item.supplierSentQuantity);
+            }
+            // Never attribute more than agreed on this phase
+            if (agreed > 0) sent = Math.min(sent, agreed);
+
+            let recv = 0;
+            let dmg = 0;
+            if (phaseTagged) {
+                recv = takeTagged(phaseTagged.acceptedByKey, lookupKeys);
+                dmg = takeTagged(phaseTagged.damagedByKey, lookupKeys);
+                const grossTagged = recv + dmg;
+                if (sent > 0 && grossTagged > sent + 0.0001) {
+                    const scale = sent / grossTagged;
+                    recv *= scale;
+                    dmg *= scale;
+                }
+                takePool(remainingRecv, lookupKeys, recv);
+                takePool(remainingDmg, lookupKeys, dmg);
+            } else {
+                const receiveCap = sent;
+                recv = takePool(remainingRecv, lookupKeys, receiveCap);
+                dmg = takePool(
+                    remainingDmg,
+                    lookupKeys,
+                    Math.max(receiveCap - recv, 0)
+                );
+            }
 
             const gross = recv + dmg;
             const pending = Math.max(sent - gross, 0);
@@ -354,7 +564,7 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
 
         const shipmentQty = phaseShipments.reduce((sum, s) => {
             for (const l of s.lines || []) {
-                sum += Math.max(Number(l.quantity) || 0, 0);
+                sum += asNonNeg(l.quantity);
             }
             return sum;
         }, 0);
@@ -381,7 +591,7 @@ const buildDeliveryPhases = (po, damagedByKey = {}) => {
                 note: s.note || "",
                 varianceReason: s.varianceReason || "",
                 quantity: (s.lines || []).reduce(
-                    (n, l) => n + Math.max(Number(l.quantity) || 0, 0),
+                    (n, l) => n + asNonNeg(l.quantity),
                     0
                 ),
                 lines: s.lines || []
@@ -449,10 +659,11 @@ const buildPoContext = (po, grns = []) => {
           })
         : [];
 
+    const receiveAgg = aggregateReceiveFromGrns(grns);
     const { damagedByKey, firstReceivedAt, lastReceivedAt, receiveDates } =
-        aggregateDamagedFromGrns(grns);
+        receiveAgg;
     const progress = summarizePoProgress(plain, damagedByKey);
-    const deliveryPhases = buildDeliveryPhases(plain, damagedByKey);
+    const deliveryPhases = buildDeliveryPhases(plain, receiveAgg);
 
     return {
         purchaseOrderId: String(plain._id || plain.id || ""),
@@ -599,7 +810,7 @@ const buildLinesFromPo = async (po) => {
     return lines;
 };
 
-const snapshotReceiveBatch = (grn, actorId) => {
+const snapshotReceiveBatch = (grn, actorId, opts = {}) => {
     const lines = [];
     let subtotal = 0;
     for (const item of grn.items || []) {
@@ -631,11 +842,14 @@ const snapshotReceiveBatch = (grn, actorId) => {
     }
     if (!lines.length) return null;
     const prev = Array.isArray(grn.receiveBatches) ? grn.receiveBatches.length : 0;
+    const phaseNo = Number(opts.receivePhase);
     return {
         batchNo: prev + 1,
         receivedAt: new Date(),
         receivedBy: toObjectId(actorId),
-        note: "",
+        note: String(opts.note || "").trim(),
+        phase:
+            Number.isFinite(phaseNo) && phaseNo > 0 ? Math.floor(phaseNo) : null,
         lines,
         subtotal,
         grandTotal: subtotal
@@ -1691,12 +1905,26 @@ const updateGrn = async (id, payload = {}, actorId = null) => {
 
     if (Array.isArray(payload.items)) {
         for (const patch of payload.items) {
-            const line = grn.items.id(patch._id || patch.id) ||
+            let line =
+                grn.items.id(patch._id || patch.id) ||
                 grn.items.find(
                     (i) =>
                         String(i.purchaseOrderItemId) ===
                         String(patch.purchaseOrderItemId)
                 );
+            if (!line && (patch.productId || patch.productName)) {
+                line = grn.items.find(
+                    (i) =>
+                        (patch.productId &&
+                            String(i.productId) === String(patch.productId) &&
+                            String(i.productVariantId || "") ===
+                                String(patch.productVariantId || "")) ||
+                        (patch.productName &&
+                            String(i.productName) === String(patch.productName) &&
+                            String(i.variantLabel || "") ===
+                                String(patch.variantLabel || ""))
+                );
+            }
             if (!line) continue;
 
             if (patch.receivedQuantity !== undefined) {
@@ -1733,7 +1961,10 @@ const updateGrn = async (id, payload = {}, actorId = null) => {
     recalculateGrn(grn);
     grn.updatedBy = toObjectId(actorId) || grn.updatedBy;
     await grn.save();
-    return enrichGrnDoc(await populateGrn(GRN.findById(grn._id)));
+    const populated = await populateGrn(GRN.findById(grn._id));
+    const poId = populated?.purchaseOrderId?._id || populated?.purchaseOrderId;
+    const ctx = await buildPoContextForId(poId);
+    return enrichGrnDoc(populated, ctx);
 };
 
 const findGrnLine = (grn, payload = {}) => {
@@ -2021,7 +2252,10 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
         recalculateGrn(grn);
         validateDraftLines(grn);
 
-        const batch = snapshotReceiveBatch(grn, actorId);
+        const batch = snapshotReceiveBatch(grn, actorId, {
+            receivePhase: opts.receivePhase,
+            note: opts.note || ""
+        });
         if (!batch) {
             throw new AppError("Enter received quantities before stocking.", 400);
         }
