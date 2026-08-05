@@ -2080,9 +2080,17 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             null;
         if (item) meta.item = item;
 
+        const prevByPhaseLive = item
+            ? fulfillmentCycle.completedPhaseRemainingByPhase(po, item)
+            : [];
+        const prevCapFromPhases = prevByPhaseLive.reduce(
+            (s, r) => s + r.remaining,
+            0
+        );
         let prevCap = Math.max(
             0,
             Number(meta.prevCap) || 0,
+            prevCapFromPhases,
             item ? fulfillmentCycle.completedPhaseRemainingQty(po, item) : 0
         );
         let dmgCap = Math.max(
@@ -2116,10 +2124,37 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             if (curCap > planFair + 0.0001) curCap = planFair;
         }
 
+        // Parse optional per-phase previous remaining from client
+        const rawPrevByPhase = Array.isArray(b.previousByPhase)
+            ? b.previousByPhase
+            : Array.isArray(raw.previousByPhase)
+              ? raw.previousByPhase
+              : [];
+        const previousByPhase = [];
+        for (const row of rawPrevByPhase) {
+            if (!row || typeof row !== "object") continue;
+            const phaseNo = Number(row.phase);
+            const q = Math.max(0, Number(row.qty ?? row.quantity) || 0);
+            if (!Number.isFinite(phaseNo) || phaseNo <= 0 || q <= 0.0001) {
+                continue;
+            }
+            previousByPhase.push({ phase: phaseNo, qty: q });
+        }
+
         if (hasBd) {
             cur = Math.max(0, Number.isFinite(cur) ? cur : 0);
             prev = Math.max(0, Number.isFinite(prev) ? prev : 0);
             dmg = Math.max(0, Number.isFinite(dmg) ? dmg : 0);
+            if (previousByPhase.length) {
+                const byPhaseSum = previousByPhase.reduce(
+                    (s, r) => s + r.qty,
+                    0
+                );
+                // Prefer explicit per-phase sum when provided
+                if (Math.abs(byPhaseSum - prev) > 0.0001) {
+                    prev = byPhaseSum;
+                }
+            }
             const sum = cur + prev + dmg;
             if (Math.abs(sum - qty) > 0.0001 && qty > 0 && sum <= 0.0001) {
                 let left = qty;
@@ -2138,22 +2173,24 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             dmg = Math.min(dmgCap, left);
         }
 
-        // Expand caps when client bucket fits overall fair expected
-        if (prev > prevCap + 0.0001) prevCap = prev;
-        if (dmg > dmgCap + 0.0001) dmgCap = dmg;
-        if (cur > curCap + 0.0001) {
-            // Only expand current if it still fits plan fair after prev/dmg
-            const room = Math.max(
-                0,
-                (item
-                    ? fulfillmentCycle.planRemainingToSend(item) + dmgCap
-                    : cur + prev + dmg) -
-                    prevCap -
-                    dmgCap
-            );
-            if (cur <= room + 0.0001) curCap = cur;
+        // Validate per-phase previous remaining against live leftover
+        if (previousByPhase.length) {
+            const remMap = {};
+            for (const r of prevByPhaseLive) {
+                remMap[r.phase] = r.remaining;
+            }
+            for (const row of previousByPhase) {
+                const rem = remMap[row.phase] || 0;
+                if (row.qty > rem + 0.0001) {
+                    throw new AppError(
+                        `Phase ${row.phase} remaining cannot exceed ${rem} for ${meta.productName || "item"}.`,
+                        400
+                    );
+                }
+            }
         }
 
+        // Do NOT expand caps — reject over-cap sends
         const expected = curCap + prevCap + dmgCap;
         const total = cur + prev + dmg;
 
@@ -2186,7 +2223,13 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         meta.prevCap = prevCap;
         meta.dmgCap = dmgCap;
         meta.expected = expected;
-        return { currentPhase: cur, previousRemaining: prev, damaged: dmg };
+        meta.prevByPhaseLive = prevByPhaseLive;
+        return {
+            currentPhase: cur,
+            previousRemaining: prev,
+            damaged: dmg,
+            previousByPhase
+        };
     };
 
     const alreadySeenRef = (ref) => {
@@ -2305,22 +2348,47 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             );
         row._prevFromPhases = [];
         row._damageCaseNos = [];
+        const explicit = Array.isArray(bd.previousByPhase)
+            ? bd.previousByPhase
+            : [];
         if (prevQty > 0.0001 && item) {
-            for (const p of po.supplierPartialSchedule || []) {
-                if (!p.isCompleted) continue;
-                for (const a of p.lineAllocations || []) {
-                    if (!fulfillmentCycle.softItemMatch(a, item)) continue;
-                    const rem =
-                        Math.max(0, Number(a.quantity) || 0) -
-                        Math.max(0, Number(a.sentQuantity) || 0);
-                    if (rem > 0.0001) {
-                        row._prevFromPhases.push(Number(p.phase) || 0);
+            if (explicit.length) {
+                // Client specified per-phase take amounts
+                for (const r of explicit) {
+                    const phaseNo = Number(r.phase);
+                    const q = Math.max(0, Number(r.qty ?? r.quantity) || 0);
+                    if (phaseNo > 0 && q > 0.0001) {
+                        row._prevFromPhases.push({
+                            phase: phaseNo,
+                            quantity: q
+                        });
                     }
                 }
+            } else {
+                // FIFO attribute how prevQty would be taken from completed phases
+                let left = prevQty;
+                for (const p of po.supplierPartialSchedule || []) {
+                    if (!p.isCompleted || left <= 0.0001) continue;
+                    const phaseNo = Number(p.phase) || 0;
+                    if (phaseNo <= 0) continue;
+                    let rem = 0;
+                    for (const a of p.lineAllocations || []) {
+                        if (!fulfillmentCycle.softItemMatch(a, item)) continue;
+                        rem += Math.max(
+                            0,
+                            (Number(a.quantity) || 0) -
+                                (Number(a.sentQuantity) || 0)
+                        );
+                    }
+                    if (rem <= 0.0001) continue;
+                    const take = Math.min(rem, left);
+                    row._prevFromPhases.push({
+                        phase: phaseNo,
+                        quantity: take
+                    });
+                    left -= take;
+                }
             }
-            row._prevFromPhases = [
-                ...new Set(row._prevFromPhases.filter((n) => n > 0))
-            ];
         }
         if ((Number(bd.damaged) || 0) > 0.0001 && item) {
             for (const c of po.damageCases || []) {
@@ -2348,12 +2416,20 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         if (curQty + prevQty + dmgQty <= 0.0001) {
             curQty = row.quantity;
         }
+        const byPhase = Array.isArray(row._prevFromPhases)
+            ? row._prevFromPhases.map((r) => ({
+                  phase: Number(r.phase),
+                  qty: Math.max(0, Number(r.quantity) || 0)
+              }))
+            : [];
 
         if (item) {
             item.supplierSentQuantity =
                 Math.max(0, Number(item.supplierSentQuantity) || 0) +
                 row.quantity;
         }
+        // Attribute full wave (current + prev + damage) to active phase
+        // receivable via shipment totals; only bump alloc.sent for current.
         if (row.meta.alloc && curQty > 0.0001) {
             row.meta.alloc.sentQuantity =
                 Math.max(0, Number(row.meta.alloc.sentQuantity) || 0) + curQty;
@@ -2367,7 +2443,8 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             const left = fulfillmentCycle.applyQtyToCompletedPhases(
                 po,
                 item,
-                prevQty
+                prevQty,
+                byPhase
             );
             // If completed phases had no leftover rows, fold into current alloc
             if (left > 0.0001 && row.meta.alloc) {

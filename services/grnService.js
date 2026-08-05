@@ -575,14 +575,23 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
             const agreed = asNonNeg(alloc.quantity);
 
             let sent = asNonNeg(alloc.sentQuantity);
-            if (sent <= 0) {
-                sent = shipmentQtyForAlloc(phaseShipments, alloc, item);
+            const shipQty = shipmentQtyForAlloc(phaseShipments, alloc, item);
+            // Mixed waves include prev-remaining + damage extras on the shipment
+            // line. Prefer shipment total so GRN pending covers the full wave,
+            // not only current-phase alloc.sentQuantity.
+            if (shipQty > sent + 0.0001) {
+                sent = shipQty;
+            } else if (sent <= 0) {
+                sent = shipQty;
             }
             if (sent <= 0 && phases.length === 1 && item) {
                 sent = asNonNeg(item.supplierSentQuantity);
             }
-            // Never attribute more than agreed on this phase
-            if (agreed > 0) sent = Math.min(sent, agreed);
+            // Cap at agreed only when the wave is pure current-phase
+            // (no shipment extras beyond agreed).
+            if (agreed > 0 && shipQty <= agreed + 0.0001) {
+                sent = Math.min(sent, agreed);
+            }
 
             let recv = 0;
             let dmg = 0;

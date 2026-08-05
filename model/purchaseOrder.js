@@ -751,8 +751,14 @@ const purchaseOrderSchema = new mongoose.Schema(
                             },
                             damaged: { type: Number, default: 0, min: 0 }
                         },
-                        /** Provenance for GRN multi-bucket receive */
-                        previousFromPhases: { type: [Number], default: [] },
+                        /**
+                         * Provenance for GRN multi-bucket receive.
+                         * Prefer [{ phase, quantity }]; legacy bare phase numbers still OK.
+                         */
+                        previousFromPhases: {
+                            type: [mongoose.Schema.Types.Mixed],
+                            default: []
+                        },
                         damageCaseNos: { type: [String], default: [] }
                     }
                 ]

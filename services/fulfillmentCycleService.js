@@ -110,37 +110,94 @@ const supplierReceivedDamageQty = (po, item = {}) => {
 /** Under-send leftover sitting on completed phases (previous remaining field). */
 const completedPhaseRemainingQty = (po, item = {}) => {
     let sum = 0;
-    for (const phase of po.supplierPartialSchedule || []) {
-        if (!phase.isCompleted) continue;
-        for (const a of phase.lineAllocations || []) {
-            if (!softItemMatch(a, item)) continue;
-            const left =
-                Math.max(0, Number(a.quantity) || 0) -
-                Math.max(0, Number(a.sentQuantity) || 0);
-            if (left > 0) sum += left;
-        }
+    for (const row of completedPhaseRemainingByPhase(po, item)) {
+        sum += row.remaining;
     }
     return sum;
 };
 
-const applyQtyToCompletedPhases = (po, item = {}, qty = 0) => {
+/**
+ * Per completed-phase leftover for an item.
+ * @returns {{ phase: number, remaining: number }[]}
+ */
+const completedPhaseRemainingByPhase = (po, item = {}) => {
+    const rows = [];
+    for (const phase of po.supplierPartialSchedule || []) {
+        if (!phase.isCompleted) continue;
+        const phaseNo = Number(phase.phase) || 0;
+        if (phaseNo <= 0) continue;
+        let rem = 0;
+        for (const a of phase.lineAllocations || []) {
+            if (!softItemMatch(a, item)) continue;
+            rem += Math.max(
+                0,
+                (Number(a.quantity) || 0) - (Number(a.sentQuantity) || 0)
+            );
+        }
+        if (rem > 0.0001) {
+            rows.push({ phase: phaseNo, remaining: rem });
+        }
+    }
+    rows.sort((a, b) => a.phase - b.phase);
+    return rows;
+};
+
+/**
+ * Clear previous-remaining leftover on completed phases.
+ * Prefer explicit byPhase [{ phase, qty }]; leftover qty uses FIFO.
+ * Does NOT bump sentQuantity on completed phases (avoids reopening GRN pending).
+ */
+const applyQtyToCompletedPhases = (po, item = {}, qty = 0, byPhase = []) => {
     let left = Math.max(0, Number(qty) || 0);
     if (left <= 0.0001) return 0;
-    for (const phase of po.supplierPartialSchedule || []) {
-        if (!phase.isCompleted || left <= 0.0001) continue;
+
+    const clearOnPhase = (phase, want) => {
+        let need = Math.max(0, Number(want) || 0);
+        if (need <= 0.0001) return 0;
+        let taken = 0;
         for (const a of phase.lineAllocations || []) {
+            if (need <= 0.0001) break;
             if (!softItemMatch(a, item)) continue;
             const rem =
                 Math.max(0, Number(a.quantity) || 0) -
                 Math.max(0, Number(a.sentQuantity) || 0);
             if (rem <= 0.0001) continue;
-            const take = Math.min(rem, left);
-            // Clear leftover WITHOUT increasing sentQuantity — raising sent
-            // would reopen GRN "pending receive" on an already-received phase.
+            const take = Math.min(rem, need);
             const sent = Math.max(0, Number(a.sentQuantity) || 0);
-            a.quantity = Math.max(sent, Math.max(0, Number(a.quantity) || 0) - take);
-            left -= take;
+            a.quantity = Math.max(
+                sent,
+                Math.max(0, Number(a.quantity) || 0) - take
+            );
+            need -= take;
+            taken += take;
         }
+        return taken;
+    };
+
+    const explicit = Array.isArray(byPhase) ? byPhase : [];
+    for (const row of explicit) {
+        if (left <= 0.0001) break;
+        const phaseNo = Number(row.phase);
+        const want = Math.min(
+            left,
+            Math.max(0, Number(row.qty ?? row.quantity) || 0)
+        );
+        if (!Number.isFinite(phaseNo) || phaseNo <= 0 || want <= 0.0001) {
+            continue;
+        }
+        const phase = (po.supplierPartialSchedule || []).find(
+            (p) => p.isCompleted && Number(p.phase) === phaseNo
+        );
+        if (!phase) continue;
+        const taken = clearOnPhase(phase, want);
+        left -= taken;
+    }
+
+    // FIFO for any remainder (legacy clients / unallocated prev qty)
+    for (const phase of po.supplierPartialSchedule || []) {
+        if (!phase.isCompleted || left <= 0.0001) continue;
+        const taken = clearOnPhase(phase, left);
+        left -= taken;
     }
     if (typeof po.markModified === "function") {
         po.markModified("supplierPartialSchedule");
@@ -628,6 +685,7 @@ module.exports = {
     remainingToSend,
     supplierReceivedDamageQty,
     completedPhaseRemainingQty,
+    completedPhaseRemainingByPhase,
     applyQtyToCompletedPhases,
     markPhaseReceiveComplete,
     closeSupplierReceivedDamage,
