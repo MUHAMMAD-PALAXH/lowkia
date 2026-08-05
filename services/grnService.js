@@ -2542,6 +2542,105 @@ const rejectGrn = async (id, reason = "", actor = {}) => {
     return populateGrn(GRN.findById(grn._id));
 };
 
+/**
+ * Reject phase receive when any line (or phase total) exceeds remaining
+ * supplier-sent qty for that specific delivery phase.
+ */
+const assertPhaseReceiveWithinSent = async (grn, phaseNo, session) => {
+    const po = await PurchaseOrder.findOne({
+        _id: grn.purchaseOrderId,
+        ...NOT_DELETED
+    }).session(session);
+    if (!po) throw new AppError("Linked purchase order not found.", 404);
+
+    const siblingGrns = await GRN.find({
+        purchaseOrderId: grn.purchaseOrderId,
+        ...NOT_DELETED,
+        _id: { $ne: grn._id }
+    })
+        .session(session)
+        .select("receiveBatches receivedDate")
+        .lean();
+    // Exclude this GRN's in-progress draft qty from prior batches only
+    const priorSelf = {
+        receiveBatches: Array.isArray(grn.receiveBatches)
+            ? grn.receiveBatches
+            : [],
+        receivedDate: grn.receivedDate || null
+    };
+    const receiveAgg = aggregateReceiveFromGrns([...siblingGrns, priorSelf]);
+    const deliveryPhases = buildDeliveryPhases(po, receiveAgg);
+    const phaseRow = deliveryPhases.find((p) => Number(p.phase) === phaseNo);
+    if (!phaseRow) {
+        throw new AppError(
+            `Phase ${phaseNo} is not a valid delivery phase on this PO.`,
+            400
+        );
+    }
+
+    const phasePending = Math.max(
+        0,
+        Number(phaseRow.totals?.pendingReceiveQty) || 0
+    );
+    const phaseSent = Math.max(0, Number(phaseRow.totals?.sentQty) || 0);
+
+    if (phaseSent <= 0.0001) {
+        throw new AppError(
+            `Phase ${phaseNo} has no supplier-sent quantity to receive yet.`,
+            400
+        );
+    }
+    if (phasePending <= 0.0001) {
+        throw new AppError(
+            `Phase ${phaseNo} is already fully received. Max receive for this phase is reached.`,
+            400
+        );
+    }
+
+    let batchGross = 0;
+    for (const gItem of grn.items || []) {
+        const received = Math.max(Number(gItem.receivedQuantity) || 0, 0);
+        const damaged = Math.max(Number(gItem.damagedQuantity) || 0, 0);
+        if (received <= 0.0001 && damaged <= 0.0001) continue;
+        if (damaged > received + 0.0001) {
+            throw new AppError(
+                `Damaged qty cannot exceed received for ${gItem.productName || "item"}.`,
+                400
+            );
+        }
+        batchGross += received;
+
+        const line = (phaseRow.lines || []).find(
+            (l) =>
+                linesLooselyMatch(l, gItem) ||
+                (gItem.purchaseOrderItemId &&
+                    String(l.purchaseOrderItemId || "") ===
+                        String(gItem.purchaseOrderItemId))
+        );
+        if (!line) {
+            // Line not on this phase schedule — block receiving it here
+            throw new AppError(
+                `Cannot receive ${gItem.productName || "item"} on Phase ${phaseNo}: not part of this phase's supplier send.`,
+                400
+            );
+        }
+        const maxLine = Math.max(0, Number(line.pendingReceiveQty) || 0);
+        if (received > maxLine + 0.0001) {
+            throw new AppError(
+                `Phase ${phaseNo}: "${gItem.productName || "item"}" receive ${received} exceeds max ${maxLine} (supplier sent remaining for this phase).`,
+                400
+            );
+        }
+    }
+
+    if (batchGross > phasePending + 0.0001) {
+        throw new AppError(
+            `Phase ${phaseNo}: total receive ${batchGross} exceeds max ${phasePending} (supplier sent remaining for this phase).`,
+            400
+        );
+    }
+};
+
 const completeGrn = async (id, actorId = null, opts = {}) => {
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -2581,6 +2680,12 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
             throw new AppError("Enter received quantities before stocking.", 400);
         }
 
+        // Hard guard: this phase receive cannot exceed supplier-sent remaining
+        const recvPhaseNo = Number(opts.receivePhase);
+        if (Number.isFinite(recvPhaseNo) && recvPhaseNo > 0) {
+            await assertPhaseReceiveWithinSent(grn, recvPhaseNo, session);
+        }
+
         // Link/create products FIRST so batch snapshot stores real productIds
         const productIds = await applyInventoryForGrn(
             grn,
@@ -2598,16 +2703,48 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
 
         const po = await applyPoReceiving(grn, session);
         fulfillmentCycle.createDamageCasesFromReceive(po, grn, batch);
-        // Sticky-lock the received schedule phase so later leftover clearing
-        // cannot reopen it as the GRN active phase.
-        const recvPhaseNo = Number(opts.receivePhase);
+        // Sticky-lock the received schedule phase only when this receive
+        // actually finishes the phase (sent remaining becomes 0).
         if (Number.isFinite(recvPhaseNo) && recvPhaseNo > 0) {
-            const sch = (po.supplierPartialSchedule || []).find(
+            const siblingGrns = await GRN.find({
+                purchaseOrderId: grn.purchaseOrderId,
+                ...NOT_DELETED,
+                _id: { $ne: grn._id }
+            })
+                .session(session)
+                .select("receiveBatches receivedDate")
+                .lean();
+            const withBatch = [
+                ...siblingGrns,
+                {
+                    ...grn.toObject(),
+                    receiveBatches: [
+                        ...(grn.receiveBatches || []).slice(0, -1),
+                        batch
+                    ]
+                }
+            ];
+            const receiveAgg = aggregateReceiveFromGrns(withBatch);
+            const deliveryPhases = buildDeliveryPhases(po, receiveAgg);
+            const phaseRow = deliveryPhases.find(
                 (p) => Number(p.phase) === recvPhaseNo
             );
-            if (sch) {
-                fulfillmentCycle.markPhaseReceiveComplete(sch, batch.receivedAt);
-                po.markModified("supplierPartialSchedule");
+            const phaseDone =
+                !!phaseRow &&
+                (phaseRow.isReceiveComplete ||
+                    (Number(phaseRow.totals?.pendingReceiveQty) || 0) <=
+                        0.0001);
+            if (phaseDone) {
+                const sch = (po.supplierPartialSchedule || []).find(
+                    (p) => Number(p.phase) === recvPhaseNo
+                );
+                if (sch) {
+                    fulfillmentCycle.markPhaseReceiveComplete(
+                        sch,
+                        batch.receivedAt
+                    );
+                    po.markModified("supplierPartialSchedule");
+                }
             }
         }
         if ((po.damageCases || []).length) {
