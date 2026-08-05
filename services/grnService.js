@@ -210,6 +210,13 @@ const effectiveSupplierSentForItem = (po, item) => {
     }
     let fromShipments = 0;
     for (const ship of po.supplierShipments || []) {
+        // Never count buyer→supplier returns as supplier-sent stock
+        if (
+            ship.kind === "ReturnToSupplier" ||
+            ship.direction === "BuyerToSupplier"
+        ) {
+            continue;
+        }
         for (const line of ship.lines || []) {
             if (
                 linesLooselyMatch(line, item) ||
@@ -678,9 +685,12 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
             effectiveSent > 0 &&
             grossReceivedQty + 0.0001 >= effectiveSent &&
             pendingReceiveQty <= 0.0001;
-        // Sticky lock: once marked on the PO schedule, never reopen as active
-        if (phase.receiveComplete) {
+        // Sticky lock only holds when nothing is still pending on this phase.
+        // A later supplier send that leaves pending reopens the phase for GRN.
+        if (phase.receiveComplete && pendingReceiveQty <= 0.0001) {
             isReceiveComplete = true;
+        } else if (phase.receiveComplete && pendingReceiveQty > 0.0001) {
+            isReceiveComplete = false;
         }
 
         return {
@@ -692,7 +702,8 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
             note: phase.note || "",
             isSentCompleted: !!phase.isCompleted,
             isReceiveComplete,
-            receiveComplete: !!phase.receiveComplete,
+            receiveComplete:
+                !!phase.receiveComplete && pendingReceiveQty <= 0.0001,
             completedAt: phase.completedAt || null,
             lines,
             shipments: phaseShipments.map((s) => ({

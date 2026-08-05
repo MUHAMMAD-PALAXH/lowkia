@@ -1926,12 +1926,39 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
     } else {
         fulfillmentCycle.restorePlanPhaseQuantitiesFromNegotiation(po);
         fulfillmentCycle.coalesceAllOpenPhases(po);
-        const schedule = po.supplierPartialSchedule || [];
+        let schedule = po.supplierPartialSchedule || [];
         phaseIndex = schedule.findIndex((p) => !p.isCompleted);
         const requestedPhase = payload.phase != null ? Number(payload.phase) : null;
 
+        // After all Plan phases are done, open Additional/Replacement so
+        // prev-remaining + damage sends get a tagged shipment phase for GRN.
+        if (phaseIndex < 0) {
+            const stillOwe = (po.items || []).some(
+                (i) => fulfillmentCycle.planRemainingToSend(i) > 0.0001
+            );
+            const stillDmg = (po.damageCases || []).some(
+                (c) => c.status === "SupplierReceived"
+            );
+            const stillPrev = (po.items || []).some(
+                (i) =>
+                    fulfillmentCycle.completedPhaseRemainingQty(po, i) > 0.0001
+            );
+            if (stillOwe || stillDmg || stillPrev) {
+                fulfillmentCycle.ensureOpenFulfillmentPhase(po, {
+                    kind: stillDmg && !stillOwe ? "Replacement" : "Additional",
+                    note: stillDmg
+                        ? "Additional phase for damaged replacement / remaining"
+                        : "Additional phase for remaining qty"
+                });
+                schedule = po.supplierPartialSchedule || [];
+                phaseIndex = schedule.findIndex((p) => !p.isCompleted);
+            }
+        }
+
         if (phaseIndex >= 0) {
             const phase = po.supplierPartialSchedule[phaseIndex];
+            // New send on a previously receive-complete phase must reopen GRN
+            fulfillmentCycle.reopenPhaseForReceive(phase);
             if (
                 requestedPhase != null &&
                 !Number.isNaN(requestedPhase) &&
@@ -2136,13 +2163,22 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 }
             }
             const sum = cur + prev + dmg;
-            if (Math.abs(sum - qty) > 0.0001 && qty > 0 && sum <= 0.0001) {
-                let left = qty;
-                cur = Math.min(curCap, left);
-                left -= cur;
-                prev = Math.min(prevCap, left);
-                left -= prev;
-                dmg = Math.min(dmgCap, left);
+            if (Math.abs(sum - qty) > 0.0001) {
+                if (qty > 0 && sum <= 0.0001) {
+                    let left = qty;
+                    cur = Math.min(curCap, left);
+                    left -= cur;
+                    prev = Math.min(prevCap, left);
+                    left -= prev;
+                    dmg = Math.min(dmgCap, left);
+                } else {
+                    throw new AppError(
+                        `Send breakdown (${cur}+${prev}+${dmg}=${sum}) must equal quantity ${qty} for ${
+                            meta.productName || "item"
+                        }.`,
+                        400
+                    );
+                }
             }
         } else {
             let left = qty;

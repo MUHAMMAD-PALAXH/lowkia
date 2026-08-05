@@ -18,6 +18,7 @@ const SHIP_KINDS = Object.freeze([
     "PlanPhase",
     "CatchUp",
     "Replacement",
+    "Additional",
     "ReturnToSupplier"
 ]);
 const DAMAGE_STATUSES = Object.freeze([
@@ -391,24 +392,41 @@ const nextPhaseNumber = (po) => {
     return max + 1;
 };
 
-/** Open-phase coverage uses plan qty only — never fold damage into Plan phases. */
+/** Open-phase coverage: plan leftover beyond completed-phase rem, plus damage debt. */
 const buildRemainingAllocations = (po) => {
     const rows = [];
+    const bySoft = {};
+    const bump = (item, qty) => {
+        const q = Math.max(0, Number(qty) || 0);
+        if (q <= 0.0001) return;
+        const soft = softMatchKey(item);
+        const key = soft !== "|" ? soft : lineMatchKey(item);
+        if (!bySoft[key]) {
+            bySoft[key] = {
+                productId: item.productId || null,
+                productVariantId: item.productVariantId || null,
+                productName: item.productName || "",
+                variantLabel: item.variantLabel || "",
+                sku: item.sku || "",
+                quantity: 0,
+                sentQuantity: 0
+            };
+        }
+        bySoft[key].quantity += q;
+    };
+
     for (const item of po.items || []) {
         const qty = planRemainingToSend(item);
-        // Subtract qty already sitting on completed phases (previous remaining)
         const onCompleted = completedPhaseRemainingQty(po, item);
-        const openNeed = Math.max(qty - onCompleted, 0);
-        if (openNeed <= 0.0001) continue;
-        rows.push({
-            productId: item.productId || null,
-            productVariantId: item.productVariantId || null,
-            productName: item.productName || "",
-            variantLabel: item.variantLabel || "",
-            sku: item.sku || "",
-            quantity: openNeed,
-            sentQuantity: 0
-        });
+        // Plan qty already covered by previous-remaining stays on completed phases.
+        // Only uncovered plan qty goes on the new open phase.
+        bump(item, Math.max(qty - onCompleted, 0));
+        // Damage replacement debt must get a real Additional/Replacement phase home
+        // so shipments are tagged and GRN can receive them.
+        bump(item, supplierReceivedDamageQty(po, item));
+    }
+    for (const row of Object.values(bySoft)) {
+        if (row.quantity > 0.0001) rows.push(row);
     }
     return rows;
 };
@@ -431,6 +449,25 @@ const ensureOpenFulfillmentPhase = (po, opts = {}) => {
     }
 
     const allocations = buildRemainingAllocations(po);
+    if (!allocations.length) {
+        // Prev-only / damage-only after plan phases are done still needs an
+        // open phase so supplier shipments are tagged for GRN receive.
+        for (const item of po.items || []) {
+            const prev = completedPhaseRemainingQty(po, item);
+            const dmg = supplierReceivedDamageQty(po, item);
+            if (prev <= 0.0001 && dmg <= 0.0001) continue;
+            allocations.push({
+                productId: item.productId || null,
+                productVariantId: item.productVariantId || null,
+                productName: item.productName || "",
+                variantLabel: item.variantLabel || "",
+                sku: item.sku || "",
+                // Current bucket stays 0 — send uses prev/damage fields only
+                quantity: 0,
+                sentQuantity: 0
+            });
+        }
+    }
     if (!allocations.length) return null;
 
     const kind = PHASE_KINDS.includes(opts.kind) ? opts.kind : "CatchUp";
@@ -448,10 +485,14 @@ const ensureOpenFulfillmentPhase = (po, opts = {}) => {
             String(opts.note || "").trim() ||
             (kind === "Replacement"
                 ? "Replacement / remaining send after damage or shortfall"
-                : "Catch-up send for under-sent or leftover qty"),
+                : kind === "Additional"
+                  ? "Additional phase for remaining / damaged replacement"
+                  : "Catch-up send for under-sent or leftover qty"),
         kind,
         isCompleted: false,
         completedAt: null,
+        receiveComplete: false,
+        receiveCompletedAt: null,
         lineAllocations: allocations
     };
     po.supplierPartialSchedule.push(phase);
@@ -574,15 +615,27 @@ const nextDamageCaseNo = (po) => {
 };
 
 /**
+ * Sticky receive-complete must clear when a new supplier send leaves pending
+ * on the same phase (additional / replacement wave).
+ */
+const reopenPhaseForReceive = (phase) => {
+    if (!phase) return;
+    phase.receiveComplete = false;
+    phase.receiveCompletedAt = null;
+};
+
+/**
  * Create BuyerHold damage cases from a GRN receive batch so returns and
  * replacements stay trackable across repeated damage cycles.
+ * Prefer per-bucket sourcePhase when wave buckets are present.
  */
 const createDamageCasesFromReceive = (po, grn, batch = {}) => {
     if (!Array.isArray(po.damageCases)) po.damageCases = [];
     const created = [];
-    for (const line of batch.lines || []) {
-        const qty = Math.max(0, Number(line.damagedQuantity) || 0);
-        if (qty <= 0.0001) continue;
+
+    const pushCase = (line, qty, phaseNo, imeis = []) => {
+        const q = Math.max(0, Number(qty) || 0);
+        if (q <= 0.0001) return;
         const entry = {
             caseNo: nextDamageCaseNo(po),
             purchaseOrderItemId: line.purchaseOrderItemId || null,
@@ -591,20 +644,57 @@ const createDamageCasesFromReceive = (po, grn, batch = {}) => {
             productName: line.productName || "",
             variantLabel: line.variantLabel || "",
             sku: line.sku || "",
-            quantity: qty,
+            quantity: q,
             status: "BuyerHold",
             grnId: grn?._id || null,
             receiveBatchNo: batch.batchNo || "",
-            phase: batch.phase == null ? null : Number(batch.phase),
+            phase:
+                phaseNo == null || !Number.isFinite(Number(phaseNo))
+                    ? null
+                    : Number(phaseNo),
             createdAt: batch.receivedAt || new Date(),
             returnedAt: null,
             supplierReceivedAt: null,
             returnNote: "",
             receiveNote: "",
-            imeis: Array.isArray(line.imeis) ? line.imeis.slice() : []
+            imeis: Array.isArray(imeis) ? imeis.slice() : []
         };
         po.damageCases.push(entry);
         created.push(entry);
+    };
+
+    for (const line of batch.lines || []) {
+        const buckets = Array.isArray(line.buckets) ? line.buckets : [];
+        const bucketDmg = buckets.reduce(
+            (s, b) => s + Math.max(0, Number(b.damagedQuantity) || 0),
+            0
+        );
+        if (buckets.length && bucketDmg > 0.0001) {
+            for (const b of buckets) {
+                const dmg = Math.max(0, Number(b.damagedQuantity) || 0);
+                if (dmg <= 0.0001) continue;
+                let phaseNo = batch.phase;
+                if (
+                    b.sourcePhase != null &&
+                    Number.isFinite(Number(b.sourcePhase))
+                ) {
+                    phaseNo = Number(b.sourcePhase);
+                } else if (
+                    b.kind === "CurrentPhase" &&
+                    batch.phase != null
+                ) {
+                    phaseNo = Number(batch.phase);
+                }
+                pushCase(line, dmg, phaseNo, b.imeis || line.imeis);
+            }
+            continue;
+        }
+        pushCase(
+            line,
+            line.damagedQuantity,
+            batch.phase == null ? null : Number(batch.phase),
+            line.imeis
+        );
     }
     if (created.length && typeof po.markModified === "function") {
         po.markModified("damageCases");
@@ -798,6 +888,7 @@ module.exports = {
     completedPhaseRemainingByPhase,
     applyQtyToCompletedPhases,
     markPhaseReceiveComplete,
+    reopenPhaseForReceive,
     closeSupplierReceivedDamage,
     okShortfall,
     nextPhaseNumber,
