@@ -2077,7 +2077,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         // Previous remaining and damage are separate buckets — never peel
         // current down by subtracting prev from planRemainingToSend.
 
-        // Parse optional per-phase previous remaining from client
+        // Parse optional per-phase previous remaining / damage from client
         const rawPrevByPhase = Array.isArray(b.previousByPhase)
             ? b.previousByPhase
             : Array.isArray(raw.previousByPhase)
@@ -2093,6 +2093,25 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             }
             previousByPhase.push({ phase: phaseNo, qty: q });
         }
+        const dmgByPhaseLive = item
+            ? fulfillmentCycle.supplierReceivedDamageByPhase(po, item)
+            : [];
+        const rawDmgByPhase = Array.isArray(b.damagedByPhase)
+            ? b.damagedByPhase
+            : Array.isArray(raw.damagedByPhase)
+              ? raw.damagedByPhase
+              : [];
+        const damagedByPhase = [];
+        for (const row of rawDmgByPhase) {
+            if (!row || typeof row !== "object") continue;
+            const phaseNo = Number(row.phase);
+            const q = Math.max(0, Number(row.qty ?? row.quantity) || 0);
+            // phase 0 = unknown original phase still allowed
+            if (!Number.isFinite(phaseNo) || phaseNo < 0 || q <= 0.0001) {
+                continue;
+            }
+            damagedByPhase.push({ phase: phaseNo, qty: q });
+        }
 
         if (hasBd) {
             cur = Math.max(0, Number.isFinite(cur) ? cur : 0);
@@ -2103,9 +2122,17 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                     (s, r) => s + r.qty,
                     0
                 );
-                // Prefer explicit per-phase sum when provided
                 if (Math.abs(byPhaseSum - prev) > 0.0001) {
                     prev = byPhaseSum;
+                }
+            }
+            if (damagedByPhase.length) {
+                const byPhaseSum = damagedByPhase.reduce(
+                    (s, r) => s + r.qty,
+                    0
+                );
+                if (Math.abs(byPhaseSum - dmg) > 0.0001) {
+                    dmg = byPhaseSum;
                 }
             }
             const sum = cur + prev + dmg;
@@ -2137,6 +2164,23 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 if (row.qty > rem + 0.0001) {
                     throw new AppError(
                         `Phase ${row.phase} remaining cannot exceed ${rem} for ${meta.productName || "item"}.`,
+                        400
+                    );
+                }
+            }
+        }
+        if (damagedByPhase.length) {
+            const remMap = {};
+            for (const r of dmgByPhaseLive) {
+                remMap[r.phase] = r.remaining;
+            }
+            for (const row of damagedByPhase) {
+                const rem = remMap[row.phase] || 0;
+                if (row.qty > rem + 0.0001) {
+                    const label =
+                        row.phase > 0 ? `Phase ${row.phase}` : "Unphased";
+                    throw new AppError(
+                        `${label} damage cannot exceed ${rem} for ${meta.productName || "item"}.`,
                         400
                     );
                 }
@@ -2177,11 +2221,13 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         meta.dmgCap = dmgCap;
         meta.expected = expected;
         meta.prevByPhaseLive = prevByPhaseLive;
+        meta.dmgByPhaseLive = dmgByPhaseLive;
         return {
             currentPhase: cur,
             previousRemaining: prev,
             damaged: dmg,
-            previousByPhase
+            previousByPhase,
+            damagedByPhase
         };
     };
 
@@ -2300,6 +2346,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 fulfillmentCycle.softItemMatch(i, row.meta.alloc || {})
             );
         row._prevFromPhases = [];
+        row._damageFromPhases = [];
         row._damageCaseNos = [];
         const explicit = Array.isArray(bd.previousByPhase)
             ? bd.previousByPhase
@@ -2344,10 +2391,52 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             }
         }
         if ((Number(bd.damaged) || 0) > 0.0001 && item) {
-            for (const c of po.damageCases || []) {
-                if (c.status !== "SupplierReceived") continue;
-                if (!fulfillmentCycle.softItemMatch(c, item)) continue;
-                if (c.caseNo) row._damageCaseNos.push(String(c.caseNo));
+            row._damageFromPhases = [];
+            const explicitDmg = Array.isArray(bd.damagedByPhase)
+                ? bd.damagedByPhase
+                : [];
+            if (explicitDmg.length) {
+                for (const r of explicitDmg) {
+                    const phaseNo = Number(r.phase);
+                    const q = Math.max(0, Number(r.qty ?? r.quantity) || 0);
+                    if (!Number.isFinite(phaseNo) || q <= 0.0001) continue;
+                    const caseNos = [];
+                    for (const c of po.damageCases || []) {
+                        if (c.status !== "SupplierReceived") continue;
+                        if (!fulfillmentCycle.softItemMatch(c, item)) continue;
+                        const cp =
+                            c.phase == null || !Number.isFinite(Number(c.phase))
+                                ? 0
+                                : Number(c.phase);
+                        if (cp !== phaseNo) continue;
+                        if (c.caseNo) caseNos.push(String(c.caseNo));
+                    }
+                    row._damageFromPhases.push({
+                        phase: phaseNo,
+                        quantity: q,
+                        caseNos: [...new Set(caseNos)]
+                    });
+                    for (const n of caseNos) row._damageCaseNos.push(n);
+                }
+            } else {
+                // FIFO attribute damaged qty across SupplierReceived by phase
+                let left = Math.max(0, Number(bd.damaged) || 0);
+                const byPhase =
+                    fulfillmentCycle.supplierReceivedDamageByPhase(po, item);
+                for (const r of byPhase) {
+                    if (left <= 0.0001) break;
+                    const take = Math.min(r.remaining, left);
+                    if (take <= 0.0001) continue;
+                    row._damageFromPhases.push({
+                        phase: r.phase,
+                        quantity: take,
+                        caseNos: r.caseNos || []
+                    });
+                    for (const n of r.caseNos || []) {
+                        row._damageCaseNos.push(n);
+                    }
+                    left -= take;
+                }
             }
             row._damageCaseNos = [...new Set(row._damageCaseNos)];
         }
@@ -2371,6 +2460,12 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         }
         const byPhase = Array.isArray(row._prevFromPhases)
             ? row._prevFromPhases.map((r) => ({
+                  phase: Number(r.phase),
+                  qty: Math.max(0, Number(r.quantity) || 0)
+              }))
+            : [];
+        const dmgByPhase = Array.isArray(row._damageFromPhases)
+            ? row._damageFromPhases.map((r) => ({
                   phase: Number(r.phase),
                   qty: Math.max(0, Number(r.quantity) || 0)
               }))
@@ -2406,7 +2501,12 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             }
         }
         if (dmgQty > 0.0001 && item) {
-            fulfillmentCycle.closeSupplierReceivedDamage(po, item, dmgQty);
+            fulfillmentCycle.closeSupplierReceivedDamage(
+                po,
+                item,
+                dmgQty,
+                dmgByPhase
+            );
         }
     }
 
@@ -2507,6 +2607,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                     damaged: Math.max(0, Number(bd.damaged) || 0)
                 },
                 previousFromPhases: row._prevFromPhases || [],
+                damageFromPhases: row._damageFromPhases || [],
                 damageCaseNos: row._damageCaseNos || []
             };
         })

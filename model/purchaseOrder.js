@@ -759,6 +759,11 @@ const purchaseOrderSchema = new mongoose.Schema(
                             type: [mongoose.Schema.Types.Mixed],
                             default: []
                         },
+                        /** [{ phase, quantity }] damage replacement provenance */
+                        damageFromPhases: {
+                            type: [mongoose.Schema.Types.Mixed],
+                            default: []
+                        },
                         damageCaseNos: { type: [String], default: [] }
                     }
                 ]

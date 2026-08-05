@@ -146,12 +146,39 @@ const softItemMatch = (a = {}, b = {}) => {
 /** Damaged qty supplier may send only after they confirmed receive of returned goods. */
 const supplierReceivedDamageQty = (po, item = {}) => {
     let sum = 0;
+    for (const row of supplierReceivedDamageByPhase(po, item)) {
+        sum += row.remaining;
+    }
+    return sum;
+};
+
+/**
+ * SupplierReceived damage debt grouped by original receive phase.
+ * @returns {{ phase: number, remaining: number, caseNos: string[] }[]}
+ */
+const supplierReceivedDamageByPhase = (po, item = {}) => {
+    const map = {};
     for (const c of po.damageCases || []) {
         if (c.status !== "SupplierReceived") continue;
         if (!softItemMatch(c, item)) continue;
-        sum += Math.max(0, Number(c.quantity) || 0);
+        const q = Math.max(0, Number(c.quantity) || 0);
+        if (q <= 0.0001) continue;
+        const phaseNo =
+            c.phase == null || !Number.isFinite(Number(c.phase))
+                ? 0
+                : Number(c.phase);
+        if (!map[phaseNo]) {
+            map[phaseNo] = { phase: phaseNo, remaining: 0, caseNos: [] };
+        }
+        map[phaseNo].remaining += q;
+        if (c.caseNo) map[phaseNo].caseNos.push(String(c.caseNo));
     }
-    return sum;
+    return Object.values(map)
+        .map((r) => ({
+            ...r,
+            caseNos: [...new Set(r.caseNos)]
+        }))
+        .sort((a, b) => a.phase - b.phase);
 };
 
 /** Under-send leftover sitting on completed phases (previous remaining field). */
@@ -266,46 +293,80 @@ const markPhaseReceiveComplete = (phase, at = new Date()) => {
  * Mark SupplierReceived cases Closed as replacement qty is sent.
  * Partial close SPLITS into Closed (sent) + remaining SupplierReceived so
  * lifetime case qty stays conserved (prevents GRN inventing BuyerHold).
+ * Prefer explicit byPhase [{ phase, qty }]; leftover uses FIFO across phases.
  */
-const closeSupplierReceivedDamage = (po, item = {}, qty = 0) => {
+const closeSupplierReceivedDamage = (po, item = {}, qty = 0, byPhase = []) => {
     let left = Math.max(0, Number(qty) || 0);
     if (left <= 0.0001) return;
     if (!Array.isArray(po.damageCases)) po.damageCases = [];
     const closedSplits = [];
-    for (const c of po.damageCases) {
-        if (left <= 0.0001) break;
-        if (c.status !== "SupplierReceived") continue;
-        if (!softItemMatch(c, item)) continue;
-        const q = Math.max(0, Number(c.quantity) || 0);
-        if (q <= 0.0001) continue;
-        if (q <= left + 0.0001) {
-            c.status = "Closed";
-            left -= q;
-        } else {
-            const take = left;
-            c.quantity = q - take;
-            closedSplits.push({
-                caseNo: `${c.caseNo || "DMG"}-R`,
-                purchaseOrderItemId: c.purchaseOrderItemId || null,
-                productId: c.productId || null,
-                productVariantId: c.productVariantId || null,
-                productName: c.productName || "",
-                variantLabel: c.variantLabel || "",
-                sku: c.sku || "",
-                quantity: take,
-                status: "Closed",
-                grnId: c.grnId || null,
-                receiveBatchNo: c.receiveBatchNo || "",
-                phase: c.phase == null ? null : Number(c.phase),
-                createdAt: c.createdAt || new Date(),
-                returnedAt: c.returnedAt || null,
-                supplierReceivedAt: c.supplierReceivedAt || null,
-                returnNote: c.returnNote || "",
-                receiveNote: c.receiveNote || "",
-                imeis: Array.isArray(c.imeis) ? c.imeis.slice() : []
-            });
-            left = 0;
+
+    const closeMatching = (want, phaseFilter) => {
+        let need = Math.max(0, Number(want) || 0);
+        if (need <= 0.0001) return 0;
+        let taken = 0;
+        for (const c of po.damageCases) {
+            if (need <= 0.0001) break;
+            if (c.status !== "SupplierReceived") continue;
+            if (!softItemMatch(c, item)) continue;
+            if (phaseFilter != null) {
+                const cp =
+                    c.phase == null || !Number.isFinite(Number(c.phase))
+                        ? 0
+                        : Number(c.phase);
+                if (cp !== phaseFilter) continue;
+            }
+            const q = Math.max(0, Number(c.quantity) || 0);
+            if (q <= 0.0001) continue;
+            if (q <= need + 0.0001) {
+                c.status = "Closed";
+                need -= q;
+                taken += q;
+            } else {
+                const take = need;
+                c.quantity = q - take;
+                closedSplits.push({
+                    caseNo: `${c.caseNo || "DMG"}-R`,
+                    purchaseOrderItemId: c.purchaseOrderItemId || null,
+                    productId: c.productId || null,
+                    productVariantId: c.productVariantId || null,
+                    productName: c.productName || "",
+                    variantLabel: c.variantLabel || "",
+                    sku: c.sku || "",
+                    quantity: take,
+                    status: "Closed",
+                    grnId: c.grnId || null,
+                    receiveBatchNo: c.receiveBatchNo || "",
+                    phase: c.phase == null ? null : Number(c.phase),
+                    createdAt: c.createdAt || new Date(),
+                    returnedAt: c.returnedAt || null,
+                    supplierReceivedAt: c.supplierReceivedAt || null,
+                    returnNote: c.returnNote || "",
+                    receiveNote: c.receiveNote || "",
+                    imeis: Array.isArray(c.imeis) ? c.imeis.slice() : []
+                });
+                taken += take;
+                need = 0;
+            }
         }
+        return taken;
+    };
+
+    const explicit = Array.isArray(byPhase) ? byPhase : [];
+    for (const row of explicit) {
+        if (left <= 0.0001) break;
+        const phaseNo = Number(row.phase);
+        const want = Math.min(
+            left,
+            Math.max(0, Number(row.qty ?? row.quantity) || 0)
+        );
+        if (!Number.isFinite(phaseNo) || want <= 0.0001) continue;
+        const taken = closeMatching(want, phaseNo);
+        left -= taken;
+    }
+    // FIFO for any remainder (legacy / unallocated)
+    if (left > 0.0001) {
+        left -= closeMatching(left, null);
     }
     if (closedSplits.length) {
         po.damageCases.push(...closedSplits);
@@ -732,6 +793,7 @@ module.exports = {
     remainingToSend,
     restorePlanPhaseQuantitiesFromNegotiation,
     supplierReceivedDamageQty,
+    supplierReceivedDamageByPhase,
     completedPhaseRemainingQty,
     completedPhaseRemainingByPhase,
     applyQtyToCompletedPhases,
