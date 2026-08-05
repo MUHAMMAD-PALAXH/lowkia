@@ -2743,8 +2743,61 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
             throw new AppError("Enter received quantities before stocking.", 400);
         }
 
-        // Hard guard: this phase receive cannot exceed supplier-sent remaining
-        const recvPhaseNo = Number(opts.receivePhase);
+        // Hard guard: this phase receive cannot exceed supplier-sent remaining.
+        // When receivePhase is omitted on a multi-phase PO, resolve the single
+        // pending phase if unambiguous — otherwise require an explicit phase.
+        let recvPhaseNo = Number(opts.receivePhase);
+        if (!(Number.isFinite(recvPhaseNo) && recvPhaseNo > 0)) {
+            const poForPhase = await PurchaseOrder.findOne({
+                _id: grn.purchaseOrderId,
+                ...NOT_DELETED
+            }).session(session);
+            if (
+                poForPhase &&
+                poForPhase.supplierDeliveryType === "Partial" &&
+                (poForPhase.supplierPartialSchedule || []).length > 0
+            ) {
+                const siblingGrns = await GRN.find({
+                    purchaseOrderId: grn.purchaseOrderId,
+                    ...NOT_DELETED,
+                    _id: { $ne: grn._id }
+                })
+                    .session(session)
+                    .select("receiveBatches receivedDate")
+                    .lean();
+                const priorSelf = {
+                    receiveBatches: Array.isArray(grn.receiveBatches)
+                        ? grn.receiveBatches
+                        : [],
+                    receivedDate: grn.receivedDate || null
+                };
+                const receiveAgg = aggregateReceiveFromGrns([
+                    ...siblingGrns,
+                    priorSelf
+                ]);
+                const deliveryPhases = buildDeliveryPhases(
+                    poForPhase,
+                    receiveAgg
+                );
+                const pendingPhases = deliveryPhases.filter(
+                    (p) =>
+                        (Number(p.totals?.pendingReceiveQty) || 0) > 0.0001 ||
+                        ((Number(p.totals?.sentQty) || 0) > 0 &&
+                            (Number(p.totals?.grossReceivedQty) || 0) +
+                                0.0001 <
+                                (Number(p.totals?.sentQty) || 0))
+                );
+                if (pendingPhases.length === 1) {
+                    recvPhaseNo = Number(pendingPhases[0].phase);
+                    opts = { ...opts, receivePhase: recvPhaseNo };
+                } else if (pendingPhases.length > 1) {
+                    throw new AppError(
+                        "receivePhase is required when multiple delivery phases still have supplier-sent qty to receive.",
+                        400
+                    );
+                }
+            }
+        }
         if (Number.isFinite(recvPhaseNo) && recvPhaseNo > 0) {
             await assertPhaseReceiveWithinSent(grn, recvPhaseNo, session);
         }
@@ -2757,7 +2810,10 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
         );
 
         const batch = snapshotReceiveBatch(grn, actorId, {
-            receivePhase: opts.receivePhase,
+            receivePhase:
+                Number.isFinite(recvPhaseNo) && recvPhaseNo > 0
+                    ? recvPhaseNo
+                    : opts.receivePhase,
             note: opts.note || "",
             lineBuckets: opts.lineBuckets
         });

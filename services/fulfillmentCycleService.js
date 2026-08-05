@@ -280,6 +280,30 @@ const applyQtyToCompletedPhases = (po, item = {}, qty = 0, byPhase = []) => {
     return left;
 };
 
+const nextDamageCaseNo = (po) => {
+    const n = (po.damageCases || []).length + 1;
+    return `DMG-${String(n).padStart(3, "0")}`;
+};
+
+/** Unique closed-split case id (avoids colliding DMG-001-R on repeated partials). */
+const nextClosedSplitCaseNo = (po, baseCaseNo, reserved = null) => {
+    const base = String(baseCaseNo || "DMG").trim() || "DMG";
+    const existing = new Set(
+        (po.damageCases || []).map((c) => String(c.caseNo || "").trim())
+    );
+    if (reserved) {
+        for (const r of reserved) existing.add(String(r || "").trim());
+    }
+    let i = 1;
+    let candidate = `${base}-R${i}`;
+    while (existing.has(candidate)) {
+        i += 1;
+        candidate = `${base}-R${i}`;
+    }
+    if (reserved) reserved.add(candidate);
+    return candidate;
+};
+
 /**
  * Mark a schedule phase receive-complete so later leftover-clearing /
  * accounting cannot make GRN treat it as the active receive phase again.
@@ -301,6 +325,7 @@ const closeSupplierReceivedDamage = (po, item = {}, qty = 0, byPhase = []) => {
     if (left <= 0.0001) return;
     if (!Array.isArray(po.damageCases)) po.damageCases = [];
     const closedSplits = [];
+    const reservedCaseNos = new Set();
 
     const closeMatching = (want, phaseFilter) => {
         let need = Math.max(0, Number(want) || 0);
@@ -327,7 +352,11 @@ const closeSupplierReceivedDamage = (po, item = {}, qty = 0, byPhase = []) => {
                 const take = need;
                 c.quantity = q - take;
                 closedSplits.push({
-                    caseNo: `${c.caseNo || "DMG"}-R`,
+                    caseNo: nextClosedSplitCaseNo(
+                        po,
+                        c.caseNo,
+                        reservedCaseNos
+                    ),
                     purchaseOrderItemId: c.purchaseOrderItemId || null,
                     productId: c.productId || null,
                     productVariantId: c.productVariantId || null,
@@ -607,11 +636,6 @@ const rollPhaseShortfallToCatchUp = (po, closedPhase, shipmentLines = []) => {
         closedPhase.note = "Under-sent — leftover stays as previous remaining";
     }
     return null;
-};
-
-const nextDamageCaseNo = (po) => {
-    const n = (po.damageCases || []).length + 1;
-    return `DMG-${String(n).padStart(3, "0")}`;
 };
 
 /**
