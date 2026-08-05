@@ -661,11 +661,14 @@ const purchaseOrderSchema = new mongoose.Schema(
                 /** Plan = agreed schedule; CatchUp = under-send leftover; Replacement = damage / OK shortfall */
                 kind: {
                     type: String,
-                    enum: ["Plan", "CatchUp", "Replacement"],
+                    enum: ["Plan", "CatchUp", "Replacement", "Additional"],
                     default: "Plan"
                 },
                 isCompleted: { type: Boolean, default: false },
                 completedAt: { type: Date, default: null },
+                /** Sticky: once GRN fully received this phase's sent wave, never reopen as active */
+                receiveComplete: { type: Boolean, default: false },
+                receiveCompletedAt: { type: Date, default: null },
                 lineAllocations: [
                     {
                         productId: {
@@ -738,7 +741,19 @@ const purchaseOrderSchema = new mongoose.Schema(
                         variantLabel: { type: String, default: "" },
                         sku: { type: String, default: "" },
                         quantity: { type: Number, default: 0, min: 0 },
-                        expectedQuantity: { type: Number, default: 0, min: 0 }
+                        expectedQuantity: { type: Number, default: 0, min: 0 },
+                        breakdown: {
+                            currentPhase: { type: Number, default: 0, min: 0 },
+                            previousRemaining: {
+                                type: Number,
+                                default: 0,
+                                min: 0
+                            },
+                            damaged: { type: Number, default: 0, min: 0 }
+                        },
+                        /** Provenance for GRN multi-bucket receive */
+                        previousFromPhases: { type: [Number], default: [] },
+                        damageCaseNos: { type: [String], default: [] }
                     }
                 ]
             }

@@ -651,10 +651,14 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
         }, 0);
         const effectiveSent =
             sentQty > 0 ? sentQty : Math.min(shipmentQty, agreedQty || shipmentQty);
-        const isReceiveComplete =
+        let isReceiveComplete =
             effectiveSent > 0 &&
             grossReceivedQty + 0.0001 >= effectiveSent &&
             pendingReceiveQty <= 0.0001;
+        // Sticky lock: once marked on the PO schedule, never reopen as active
+        if (phase.receiveComplete) {
+            isReceiveComplete = true;
+        }
 
         return {
             phase: phaseNo,
@@ -665,6 +669,7 @@ const buildDeliveryPhases = (po, receiveAgg = {}) => {
             note: phase.note || "",
             isSentCompleted: !!phase.isCompleted,
             isReceiveComplete,
+            receiveComplete: !!phase.receiveComplete,
             completedAt: phase.completedAt || null,
             lines,
             shipments: phaseShipments.map((s) => ({
@@ -2570,10 +2575,22 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
 
         const po = await applyPoReceiving(grn, session);
         fulfillmentCycle.createDamageCasesFromReceive(po, grn, batch);
+        // Sticky-lock the received schedule phase so later leftover clearing
+        // cannot reopen it as the GRN active phase.
+        const recvPhaseNo = Number(opts.receivePhase);
+        if (Number.isFinite(recvPhaseNo) && recvPhaseNo > 0) {
+            const sch = (po.supplierPartialSchedule || []).find(
+                (p) => Number(p.phase) === recvPhaseNo
+            );
+            if (sch) {
+                fulfillmentCycle.markPhaseReceiveComplete(sch, batch.receivedAt);
+                po.markModified("supplierPartialSchedule");
+            }
+        }
         if ((po.damageCases || []).length) {
             po.markModified("damageCases");
-            await po.save({ session });
         }
+        await po.save({ session });
         const fullyReceived = po.isFullyReceived === true;
 
         if (!Array.isArray(grn.receiveBatches)) grn.receiveBatches = [];

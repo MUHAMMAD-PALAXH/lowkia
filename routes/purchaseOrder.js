@@ -177,6 +177,13 @@ router.post(
 );
 
 router.post(
+    "/:id/additional-phase",
+    idValidator,
+    validate,
+    purchaseOrderController.addAdditionalPhase
+);
+
+router.post(
     "/:id/supplier-payments",
     idValidator,
     validate,

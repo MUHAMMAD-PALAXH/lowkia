@@ -170,7 +170,32 @@ const receiveBatchLineSchema = new mongoose.Schema(
         damagedQuantity: { type: Number, default: 0, min: 0 },
         acceptedQuantity: { type: Number, default: 0, min: 0 },
         purchasePrice: { type: Number, default: 0, min: 0 },
-        imeis: { type: [String], default: [] }
+        imeis: { type: [String], default: [] },
+        /**
+         * Multi-bucket receive on mixed shipments:
+         * current phase + previous-phase remaining + damage replacements.
+         * Totals above = sum of buckets (kept for backward compatibility).
+         */
+        buckets: [
+            {
+                kind: {
+                    type: String,
+                    enum: [
+                        "CurrentPhase",
+                        "PreviousRemaining",
+                        "DamageReplacement"
+                    ],
+                    default: "CurrentPhase"
+                },
+                receivedQuantity: { type: Number, default: 0, min: 0 },
+                damagedQuantity: { type: Number, default: 0, min: 0 },
+                acceptedQuantity: { type: Number, default: 0, min: 0 },
+                sourcePhase: { type: Number, default: null },
+                damageCaseNo: { type: String, default: "" },
+                label: { type: String, default: "" },
+                imeis: { type: [String], default: [] }
+            }
+        ]
     },
     { _id: false }
 );

@@ -8,7 +8,12 @@
  */
 const AppError = require("../utils/appError");
 
-const PHASE_KINDS = Object.freeze(["Plan", "CatchUp", "Replacement"]);
+const PHASE_KINDS = Object.freeze([
+    "Plan",
+    "CatchUp",
+    "Replacement",
+    "Additional"
+]);
 const SHIP_KINDS = Object.freeze([
     "PlanPhase",
     "CatchUp",
@@ -130,11 +135,27 @@ const applyQtyToCompletedPhases = (po, item = {}, qty = 0) => {
                 Math.max(0, Number(a.sentQuantity) || 0);
             if (rem <= 0.0001) continue;
             const take = Math.min(rem, left);
-            a.sentQuantity = Math.max(0, Number(a.sentQuantity) || 0) + take;
+            // Clear leftover WITHOUT increasing sentQuantity — raising sent
+            // would reopen GRN "pending receive" on an already-received phase.
+            const sent = Math.max(0, Number(a.sentQuantity) || 0);
+            a.quantity = Math.max(sent, Math.max(0, Number(a.quantity) || 0) - take);
             left -= take;
         }
     }
+    if (typeof po.markModified === "function") {
+        po.markModified("supplierPartialSchedule");
+    }
     return left;
+};
+
+/**
+ * Mark a schedule phase receive-complete so later leftover-clearing /
+ * accounting cannot make GRN treat it as the active receive phase again.
+ */
+const markPhaseReceiveComplete = (phase, at = new Date()) => {
+    if (!phase) return;
+    phase.receiveComplete = true;
+    phase.receiveCompletedAt = at;
 };
 
 /** Mark SupplierReceived cases Closed as replacement qty is sent. */
@@ -541,6 +562,7 @@ module.exports = {
     supplierReceivedDamageQty,
     completedPhaseRemainingQty,
     applyQtyToCompletedPhases,
+    markPhaseReceiveComplete,
     closeSupplierReceivedDamage,
     okShortfall,
     nextPhaseNumber,

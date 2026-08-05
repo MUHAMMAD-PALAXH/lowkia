@@ -204,6 +204,15 @@ exports.supplierAcknowledgeDamaged = asyncHandler(async (req, res) => {
     return success(res, "Supplier received damaged return.", po);
 });
 
+exports.addAdditionalPhase = asyncHandler(async (req, res) => {
+    const po = await purchaseOrderService.addAdditionalPhase(
+        req.params.id,
+        getActorId(req),
+        req.body || {}
+    );
+    return success(res, "Additional phase added.", po);
+});
+
 exports.buyerAcceptDemand = asyncHandler(async (req, res) => {
     const po = await purchaseOrderService.buyerAcceptDemand(
         req.params.id,

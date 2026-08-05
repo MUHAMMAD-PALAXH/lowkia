@@ -2293,6 +2293,45 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         throw new AppError("Enter at least one quantity greater than 0.", 400);
     }
 
+    // Capture previous-remaining provenance BEFORE clearing completed leftovers
+    for (const row of shipmentLines) {
+        if (row.quantity <= 0) continue;
+        const bd = row.breakdown || {};
+        const prevQty = Math.max(0, Number(bd.previousRemaining) || 0);
+        const item =
+            row.meta.item ||
+            (po.items || []).find((i) =>
+                fulfillmentCycle.softItemMatch(i, row.meta.alloc || {})
+            );
+        row._prevFromPhases = [];
+        row._damageCaseNos = [];
+        if (prevQty > 0.0001 && item) {
+            for (const p of po.supplierPartialSchedule || []) {
+                if (!p.isCompleted) continue;
+                for (const a of p.lineAllocations || []) {
+                    if (!fulfillmentCycle.softItemMatch(a, item)) continue;
+                    const rem =
+                        Math.max(0, Number(a.quantity) || 0) -
+                        Math.max(0, Number(a.sentQuantity) || 0);
+                    if (rem > 0.0001) {
+                        row._prevFromPhases.push(Number(p.phase) || 0);
+                    }
+                }
+            }
+            row._prevFromPhases = [
+                ...new Set(row._prevFromPhases.filter((n) => n > 0))
+            ];
+        }
+        if ((Number(bd.damaged) || 0) > 0.0001 && item) {
+            for (const c of po.damageCases || []) {
+                if (c.status !== "SupplierReceived") continue;
+                if (!fulfillmentCycle.softItemMatch(c, item)) continue;
+                if (c.caseNo) row._damageCaseNos.push(String(c.caseNo));
+            }
+            row._damageCaseNos = [...new Set(row._damageCaseNos)];
+        }
+    }
+
     // Apply sent quantities onto PO items / phase allocations / damage cases
     for (const row of shipmentLines) {
         if (row.quantity <= 0) continue;
@@ -2365,6 +2404,26 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         if (typeof po.markModified === "function") {
             po.markModified("supplierPartialSchedule");
         }
+        // If schedule has no open phase but qty still owed → Additional phase
+        const stillOpen = (po.supplierPartialSchedule || []).some(
+            (p) => !p.isCompleted
+        );
+        const stillOwe = (po.items || []).some(
+            (i) => fulfillmentCycle.planRemainingToSend(i) > 0.0001
+        );
+        const stillDmg = (po.damageCases || []).some(
+            (c) => c.status === "SupplierReceived"
+        );
+        const stillPrev = (po.items || []).some(
+            (i) =>
+                fulfillmentCycle.completedPhaseRemainingQty(po, i) > 0.0001
+        );
+        if (!stillOpen && (stillOwe || stillDmg || stillPrev)) {
+            fulfillmentCycle.ensureOpenFulfillmentPhase(po, {
+                kind: "Additional",
+                note: "Additional phase for remaining / damaged replacement"
+            });
+        }
     }
 
     const activePhase =
@@ -2393,18 +2452,34 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         direction: "SupplierToBuyer",
         varianceReason,
         note,
-        lines: shipmentLines.map((row) => ({
-            productId: row.meta.item?.productId || row.meta.alloc?.productId || null,
-            productVariantId:
-                row.meta.item?.productVariantId ||
-                row.meta.alloc?.productVariantId ||
-                null,
-            productName: row.meta.productName || "",
-            variantLabel: row.meta.variantLabel || "",
-            sku: row.meta.sku || "",
-            quantity: row.quantity,
-            expectedQuantity: row.expectedQuantity
-        }))
+        lines: shipmentLines.map((row) => {
+            const bd = row.breakdown || {};
+            return {
+                productId:
+                    row.meta.item?.productId ||
+                    row.meta.alloc?.productId ||
+                    null,
+                productVariantId:
+                    row.meta.item?.productVariantId ||
+                    row.meta.alloc?.productVariantId ||
+                    null,
+                productName: row.meta.productName || "",
+                variantLabel: row.meta.variantLabel || "",
+                sku: row.meta.sku || "",
+                quantity: row.quantity,
+                expectedQuantity: row.expectedQuantity,
+                breakdown: {
+                    currentPhase: Math.max(0, Number(bd.currentPhase) || 0),
+                    previousRemaining: Math.max(
+                        0,
+                        Number(bd.previousRemaining) || 0
+                    ),
+                    damaged: Math.max(0, Number(bd.damaged) || 0)
+                },
+                previousFromPhases: row._prevFromPhases || [],
+                damageCaseNos: row._damageCaseNos || []
+            };
+        })
     });
 
     // Derive status from remaining send qty (keep Partially Received when buyer already stocked some)
@@ -2646,8 +2721,11 @@ const supplierAcknowledgeDamaged = async (id, actorId = null, payload = {}) => {
         c.receiveNote = note;
     }
 
-    // Damage field on send form unlocks from SupplierReceived cases —
-    // do not merge replacement qty into a Plan/CatchUp phase.
+    // Ensure an open wave exists so Damaged field + next send have a phase home
+    fulfillmentCycle.ensureOpenFulfillmentPhase(po, {
+        kind: "Additional",
+        note: "Additional phase after damaged goods received by supplier"
+    });
 
     po.markModified("damageCases");
     po.updatedBy = toObjectId(actorId);
@@ -2665,6 +2743,52 @@ const supplierAcknowledgeDamaged = async (id, actorId = null, payload = {}) => {
         );
     }
 
+    return populatePo(PurchaseOrder.findById(po._id));
+};
+
+/**
+ * Supplier manually opens an Additional phase covering remaining plan qty
+ * (+ optional note). Used when agreed phases are exhausted but qty remains.
+ */
+const addAdditionalPhase = async (id, actorId = null, payload = {}) => {
+    const po = await findPoOrFail(id);
+    if (po.supplierDeliveryType !== "Partial") {
+        throw new AppError(
+            "Additional phases are only for partial delivery orders.",
+            400
+        );
+    }
+    const openIdx = fulfillmentCycle.findOpenPhaseIndex(po);
+    if (openIdx >= 0) {
+        throw new AppError(
+            `Phase ${po.supplierPartialSchedule[openIdx].phase} is still open. Send or complete it first.`,
+            400
+        );
+    }
+    const note = String(payload.note || "").trim();
+    const phase = fulfillmentCycle.ensureOpenFulfillmentPhase(po, {
+        kind: "Additional",
+        note: note || "Additional phase (manual)"
+    });
+    if (!phase) {
+        throw new AppError(
+            "Nothing left to send — no additional phase needed.",
+            400
+        );
+    }
+    po.updatedBy = toObjectId(actorId);
+    await po.save();
+    try {
+        const grnService = require("./grnService");
+        if (typeof grnService.syncOpenDraftGrnLinesForPo === "function") {
+            await grnService.syncOpenDraftGrnLinesForPo(po._id);
+        }
+    } catch (err) {
+        console.error(
+            "[PO] sync GRN after additional phase failed:",
+            err?.message || err
+        );
+    }
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
@@ -3495,6 +3619,7 @@ module.exports = {
     supplierSendPurchaseOrder,
     returnDamagedToSupplier,
     supplierAcknowledgeDamaged,
+    addAdditionalPhase,
     buyerAcceptDemand,
     buyerRejectDemand,
     sendNewDemand,
