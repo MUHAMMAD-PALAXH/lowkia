@@ -708,6 +708,7 @@ const purchaseOrderSchema = new mongoose.Schema(
                         "PlanPhase",
                         "CatchUp",
                         "Replacement",
+                        "Additional",
                         "ReturnToSupplier"
                     ],
                     default: "PlanPhase"

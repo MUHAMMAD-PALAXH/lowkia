@@ -2565,7 +2565,9 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             ? "Replacement"
             : activePhase?.kind === "CatchUp"
               ? "CatchUp"
-              : "PlanPhase";
+              : activePhase?.kind === "Additional"
+                ? "Additional"
+                : "PlanPhase";
 
     if (!Array.isArray(po.supplierShipments)) po.supplierShipments = [];
     po.supplierShipments.push({
