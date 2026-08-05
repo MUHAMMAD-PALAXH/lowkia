@@ -1924,6 +1924,7 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
             throw new AppError("All ordered quantities are already sent.", 400);
         }
     } else {
+        fulfillmentCycle.restorePlanPhaseQuantitiesFromNegotiation(po);
         fulfillmentCycle.coalesceAllOpenPhases(po);
         const schedule = po.supplierPartialSchedule || [];
         phaseIndex = schedule.findIndex((p) => !p.isCompleted);
@@ -1956,37 +1957,9 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
                 const dmg = item
                     ? fulfillmentCycle.supplierReceivedDamageQty(po, item)
                     : 0;
-                if (item) {
-                    let futureLocked = 0;
-                    for (const p of po.supplierPartialSchedule || []) {
-                        if (p.isCompleted || p === phase) continue;
-                        for (const a of p.lineAllocations || []) {
-                            if (!fulfillmentCycle.softItemMatch(a, item)) {
-                                continue;
-                            }
-                            futureLocked += Math.max(
-                                0,
-                                (Number(a.quantity) || 0) -
-                                    (Number(a.sentQuantity) || 0)
-                            );
-                        }
-                    }
-                    const planFair = Math.max(
-                        0,
-                        fulfillmentCycle.planRemainingToSend(item) -
-                            prev -
-                            futureLocked
-                    );
-                    if (currentCap > planFair + 0.0001) {
-                        currentCap = planFair;
-                    }
-                    // Repair inflated Plan allocation quantity
-                    const sent = Math.max(0, Number(alloc.sentQuantity) || 0);
-                    const fairQty = sent + currentCap;
-                    if ((Number(alloc.quantity) || 0) > fairQty + 0.0001) {
-                        alloc.quantity = fairQty;
-                    }
-                }
+                // Current cap = this phase allocation remaining only.
+                // Do NOT peel by planRemaining − prev (that wrongly shrinks
+                // Phase 3 agreed 20 → 13 when earlier phases still have rem).
                 if (currentCap <= 0.0001 && prev <= 0.0001 && dmg <= 0.0001) {
                     continue;
                 }
@@ -2100,29 +2073,9 @@ const supplierSendPurchaseOrder = async (id, actorId = null, payload = {}) => {
         );
         let curCap = Math.max(0, Number(meta.currentCap) || 0);
 
-        // Re-peel current phase to agreed fair share (exclude prev + later phases)
-        if (item) {
-            let futureLocked = 0;
-            const openPhase =
-                phaseIndex >= 0 ? po.supplierPartialSchedule[phaseIndex] : null;
-            for (const p of po.supplierPartialSchedule || []) {
-                if (p.isCompleted || p === openPhase) continue;
-                for (const a of p.lineAllocations || []) {
-                    if (!fulfillmentCycle.softItemMatch(a, item)) continue;
-                    futureLocked += Math.max(
-                        0,
-                        (Number(a.quantity) || 0) - (Number(a.sentQuantity) || 0)
-                    );
-                }
-            }
-            const planFair = Math.max(
-                0,
-                fulfillmentCycle.planRemainingToSend(item) -
-                    prevCap -
-                    futureLocked
-            );
-            if (curCap > planFair + 0.0001) curCap = planFair;
-        }
+        // Keep currentCap as active-phase allocation remaining.
+        // Previous remaining and damage are separate buckets — never peel
+        // current down by subtracting prev from planRemainingToSend.
 
         // Parse optional per-phase previous remaining from client
         const rawPrevByPhase = Array.isArray(b.previousByPhase)

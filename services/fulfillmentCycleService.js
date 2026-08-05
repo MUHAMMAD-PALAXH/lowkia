@@ -49,6 +49,53 @@ const softMatchKey = (row = {}) => {
     return `${String(pid)}|${String(vid)}`;
 };
 
+/**
+ * Restore open Plan-phase allocation qty from negotiation history when a
+ * prior send peel wrongly shrunk agreed qty (e.g. Phase 3 20 → 13).
+ */
+const restorePlanPhaseQuantitiesFromNegotiation = (po) => {
+    const hist = po.negotiationHistory || [];
+    let agreedSchedule = null;
+    for (let i = hist.length - 1; i >= 0; i--) {
+        const ps =
+            hist[i].partialSchedule || hist[i].deliverySchedule || null;
+        if (Array.isArray(ps) && ps.length) {
+            agreedSchedule = ps;
+            break;
+        }
+    }
+    if (!agreedSchedule) return false;
+    let changed = false;
+    for (const phase of po.supplierPartialSchedule || []) {
+        if (phase.isCompleted) continue;
+        const kind = phase.kind || "Plan";
+        if (kind !== "Plan") continue;
+        const phaseNo = Number(phase.phase);
+        const agreedPhase = agreedSchedule.find(
+            (p) => Number(p.phase) === phaseNo
+        );
+        if (!agreedPhase) continue;
+        for (const alloc of phase.lineAllocations || []) {
+            const agreedAlloc = (agreedPhase.lineAllocations || []).find(
+                (a) => softItemMatch(a, alloc)
+            );
+            if (!agreedAlloc) continue;
+            const agreedQty = Math.max(0, Number(agreedAlloc.quantity) || 0);
+            if (agreedQty <= 0.0001) continue;
+            const sent = Math.max(0, Number(alloc.sentQuantity) || 0);
+            const target = Math.max(agreedQty, sent);
+            if ((Number(alloc.quantity) || 0) + 0.0001 < target) {
+                alloc.quantity = target;
+                changed = true;
+            }
+        }
+    }
+    if (changed && typeof po.markModified === "function") {
+        po.markModified("supplierPartialSchedule");
+    }
+    return changed;
+};
+
 /** Plan qty still owed (ordered − sent). Damage replacements are tracked separately. */
 const planRemainingToSend = (item = {}) => {
     const ordered = Math.max(0, Number(item.quantity) || 0);
@@ -683,6 +730,7 @@ module.exports = {
     softItemMatch,
     planRemainingToSend,
     remainingToSend,
+    restorePlanPhaseQuantitiesFromNegotiation,
     supplierReceivedDamageQty,
     completedPhaseRemainingQty,
     completedPhaseRemainingByPhase,
