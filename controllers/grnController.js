@@ -109,7 +109,8 @@ exports.completeGrn = asyncHandler(async (req, res) => {
     const grn = await grnService.completeGrn(req.params.id, getActorId(req), {
         actorType: getActor(req).type,
         receivePhase: req.body?.receivePhase ?? req.body?.phase,
-        note: req.body?.note || ""
+        note: req.body?.note || "",
+        lineBuckets: req.body?.lineBuckets
     });
     return success(res, "GRN completed. Stock updated.", grn);
 });

@@ -929,6 +929,38 @@ const buildLinesFromPo = async (po) => {
 };
 
 const snapshotReceiveBatch = (grn, actorId, opts = {}) => {
+    const lineBuckets = Array.isArray(opts.lineBuckets) ? opts.lineBuckets : [];
+    const bucketForItem = (item) => {
+        for (const row of lineBuckets) {
+            if (
+                item.purchaseOrderItemId &&
+                row.purchaseOrderItemId &&
+                String(row.purchaseOrderItemId) ===
+                    String(item.purchaseOrderItemId)
+            ) {
+                return Array.isArray(row.buckets) ? row.buckets : [];
+            }
+            if (
+                row.productId &&
+                item.productId &&
+                String(row.productId) === String(item.productId) &&
+                String(row.productVariantId || "") ===
+                    String(item.productVariantId || "")
+            ) {
+                return Array.isArray(row.buckets) ? row.buckets : [];
+            }
+            if (
+                row.productName &&
+                String(row.productName).trim().toLowerCase() ===
+                    String(item.productName || "").trim().toLowerCase() &&
+                String(row.variantLabel || "").trim().toLowerCase() ===
+                    String(item.variantLabel || "").trim().toLowerCase()
+            ) {
+                return Array.isArray(row.buckets) ? row.buckets : [];
+            }
+        }
+        return [];
+    };
     const lines = [];
     let subtotal = 0;
     for (const item of grn.items || []) {
@@ -942,6 +974,25 @@ const snapshotReceiveBatch = (grn, actorId, opts = {}) => {
         const price = Math.max(Number(item.purchasePrice) || 0, 0);
         const lineTotal = accepted * price;
         subtotal += lineTotal;
+        const buckets = bucketForItem(item).map((b) => ({
+            kind: b.kind || "CurrentPhase",
+            sourcePhase:
+                b.sourcePhase == null || b.sourcePhase === ""
+                    ? null
+                    : Number(b.sourcePhase),
+            damageCaseNo: String(b.damageCaseNo || "").trim(),
+            receivedQuantity: Math.max(Number(b.receivedQuantity) || 0, 0),
+            damagedQuantity: Math.max(Number(b.damagedQuantity) || 0, 0),
+            acceptedQuantity: Math.max(
+                Number(b.acceptedQuantity) ||
+                    Math.max(Number(b.receivedQuantity) || 0, 0) -
+                        Math.max(Number(b.damagedQuantity) || 0, 0),
+                0
+            ),
+            imeis: Array.isArray(b.imeis)
+                ? b.imeis.map((e) => String(e)).filter(Boolean)
+                : []
+        }));
         lines.push({
             purchaseOrderItemId: item.purchaseOrderItemId || null,
             productId: item.productId || null,
@@ -955,7 +1006,8 @@ const snapshotReceiveBatch = (grn, actorId, opts = {}) => {
             purchasePrice: price,
             imeis: Array.isArray(item.imeis)
                 ? item.imeis.map((e) => String(e)).filter(Boolean)
-                : []
+                : [],
+            buckets
         });
     }
     if (!lines.length) return null;
@@ -2695,7 +2747,8 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
 
         const batch = snapshotReceiveBatch(grn, actorId, {
             receivePhase: opts.receivePhase,
-            note: opts.note || ""
+            note: opts.note || "",
+            lineBuckets: opts.lineBuckets
         });
         if (!batch) {
             throw new AppError("Enter received quantities before stocking.", 400);
