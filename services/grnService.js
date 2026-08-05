@@ -262,6 +262,18 @@ const summarizePoProgress = (po, damagedByKey = {}) => {
     const remainingQty = Math.max(orderedQty - receivedQty, 0);
     const handledQty = receivedQty + damagedQty;
     const pendingFromSentQty = Math.max(sentQty - handledQty, 0);
+    // Prefer live open damage debt (BuyerHold + ReturnShipped + SupplierReceived)
+    // over lifetime damagedQty so partial replacement sends reduce "still due".
+    const dmgSummary = fulfillmentCycle.damageCasesSummary(po || {});
+    const openDebt =
+        Number(dmgSummary.replacementOpenQty) ||
+        (Number(dmgSummary.openBuyerHoldQty) || 0) +
+            (Number(dmgSummary.returnShippedQty) || 0) +
+            (Number(dmgSummary.supplierReceivedQty) || 0);
+    const replacementBasis =
+        openDebt > 0.0001 || (po.damageCases || []).length > 0
+            ? openDebt
+            : damagedQty;
     return {
         orderedQty,
         sentQty,
@@ -269,8 +281,10 @@ const summarizePoProgress = (po, damagedByKey = {}) => {
         damagedQty,
         handledQty,
         remainingQty,
-        // Damaged units that still leave OK shortfall (need replacement send)
-        replacementDueQty: Math.min(damagedQty, remainingQty),
+        // Still-open damage debt that leaves OK shortfall (need replacement)
+        replacementDueQty: Math.min(replacementBasis, remainingQty),
+        supplierReceivedDamageQty: Number(dmgSummary.supplierReceivedQty) || 0,
+        closedDamageReplacementQty: Number(dmgSummary.closedQty) || 0,
         sentNotReceivedQty: pendingFromSentQty,
         pendingReceiveQty: pendingFromSentQty,
         grossReceivedQty: handledQty,

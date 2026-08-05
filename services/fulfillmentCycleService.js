@@ -158,22 +158,53 @@ const markPhaseReceiveComplete = (phase, at = new Date()) => {
     phase.receiveCompletedAt = at;
 };
 
-/** Mark SupplierReceived cases Closed as replacement qty is sent. */
+/**
+ * Mark SupplierReceived cases Closed as replacement qty is sent.
+ * Partial close SPLITS into Closed (sent) + remaining SupplierReceived so
+ * lifetime case qty stays conserved (prevents GRN inventing BuyerHold).
+ */
 const closeSupplierReceivedDamage = (po, item = {}, qty = 0) => {
     let left = Math.max(0, Number(qty) || 0);
     if (left <= 0.0001) return;
-    for (const c of po.damageCases || []) {
+    if (!Array.isArray(po.damageCases)) po.damageCases = [];
+    const closedSplits = [];
+    for (const c of po.damageCases) {
         if (left <= 0.0001) break;
         if (c.status !== "SupplierReceived") continue;
         if (!softItemMatch(c, item)) continue;
         const q = Math.max(0, Number(c.quantity) || 0);
+        if (q <= 0.0001) continue;
         if (q <= left + 0.0001) {
             c.status = "Closed";
             left -= q;
         } else {
-            c.quantity = q - left;
+            const take = left;
+            c.quantity = q - take;
+            closedSplits.push({
+                caseNo: `${c.caseNo || "DMG"}-R`,
+                purchaseOrderItemId: c.purchaseOrderItemId || null,
+                productId: c.productId || null,
+                productVariantId: c.productVariantId || null,
+                productName: c.productName || "",
+                variantLabel: c.variantLabel || "",
+                sku: c.sku || "",
+                quantity: take,
+                status: "Closed",
+                grnId: c.grnId || null,
+                receiveBatchNo: c.receiveBatchNo || "",
+                phase: c.phase == null ? null : Number(c.phase),
+                createdAt: c.createdAt || new Date(),
+                returnedAt: c.returnedAt || null,
+                supplierReceivedAt: c.supplierReceivedAt || null,
+                returnNote: c.returnNote || "",
+                receiveNote: c.receiveNote || "",
+                imeis: Array.isArray(c.imeis) ? c.imeis.slice() : []
+            });
             left = 0;
         }
+    }
+    if (closedSplits.length) {
+        po.damageCases.push(...closedSplits);
     }
     if (typeof po.markModified === "function") {
         po.markModified("damageCases");
@@ -429,38 +460,74 @@ const openDamageHoldQtyByKey = (po) => {
 const damageCasesSummary = (po) => {
     const cases = po.damageCases || [];
     const byStatus = {};
-    for (const s of DAMAGE_STATUSES) byStatus[s] = 0;
+    const qtyByStatus = {};
+    for (const s of DAMAGE_STATUSES) {
+        byStatus[s] = 0;
+        qtyByStatus[s] = 0;
+    }
     let openQty = 0;
     let returnShippedQty = 0;
+    let supplierReceivedQty = 0;
+    let closedQty = 0;
+    const byPhaseMap = {};
     for (const c of cases) {
         const st = c.status || "BuyerHold";
-        byStatus[st] = (byStatus[st] || 0) + 1;
         const q = Math.max(0, Number(c.quantity) || 0);
+        byStatus[st] = (byStatus[st] || 0) + 1;
+        qtyByStatus[st] = (qtyByStatus[st] || 0) + q;
         if (st === "BuyerHold") openQty += q;
         if (st === "ReturnShipped") returnShippedQty += q;
+        if (st === "SupplierReceived") supplierReceivedQty += q;
+        if (st === "Closed") closedQty += q;
+        const phaseKey =
+            c.phase == null || !Number.isFinite(Number(c.phase))
+                ? "unknown"
+                : String(Number(c.phase));
+        if (!byPhaseMap[phaseKey]) {
+            byPhaseMap[phaseKey] = {
+                phase: phaseKey === "unknown" ? null : Number(phaseKey),
+                totalQty: 0,
+                buyerHoldQty: 0,
+                returnShippedQty: 0,
+                supplierReceivedQty: 0,
+                closedQty: 0
+            };
+        }
+        byPhaseMap[phaseKey].totalQty += q;
+        if (st === "BuyerHold") byPhaseMap[phaseKey].buyerHoldQty += q;
+        if (st === "ReturnShipped") byPhaseMap[phaseKey].returnShippedQty += q;
+        if (st === "SupplierReceived") {
+            byPhaseMap[phaseKey].supplierReceivedQty += q;
+        }
+        if (st === "Closed") byPhaseMap[phaseKey].closedQty += q;
     }
-    // Fallback: PO damaged counters only when NO damage cases exist yet
+    // Fallback: PO damaged counters ONLY when no damage cases exist yet
+    // (legacy receives). Never invent BuyerHold from lifetime counter when
+    // cases already track the cycle — partial replacement shrink used to
+    // make damagedOnPo > trackedAll and falsely reopen return-to-supplier.
     let damagedOnPo = 0;
     for (const item of po.items || []) {
         damagedOnPo += Math.max(0, Number(item.damagedQuantity) || 0);
     }
-    const trackedAll = cases.reduce(
-        (s, c) => s + Math.max(0, Number(c.quantity) || 0),
-        0
-    );
-    // Never re-open BuyerHold for qty already ReturnShipped / SupplierReceived / Closed
     if (cases.length === 0 && damagedOnPo > 0.0001) {
         openQty = damagedOnPo;
-    } else if (damagedOnPo > trackedAll + 0.0001) {
-        openQty += damagedOnPo - trackedAll;
     }
+    // Open replacement debt still owed by supplier (not yet Closed)
+    const replacementOpenQty =
+        openQty + returnShippedQty + supplierReceivedQty;
     return {
         totalCases: cases.length,
         openBuyerHoldQty: openQty,
         returnShippedQty,
+        supplierReceivedQty,
+        closedQty,
+        replacementOpenQty,
+        lifetimeDamagedQty: Math.max(damagedOnPo, openQty + returnShippedQty + supplierReceivedQty + closedQty),
         awaitingSupplierReceive: cases.filter((c) => c.status === "ReturnShipped")
             .length,
         byStatus,
+        qtyByStatus,
+        byPhase: Object.values(byPhaseMap),
         cases: cases.map((c) => ({
             id: c._id || c.id || null,
             caseNo: c.caseNo || "",
