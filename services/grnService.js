@@ -1246,9 +1246,9 @@ const createStockMovement = async ({
 };
 
 /**
- * GRN complete must stock against an existing catalog product only.
- * Products are created via the Product Add form — never auto-created here.
- * Inherit productId / variantId from the linked PO line when present.
+ * Optionally inherit productId from the PO line when present.
+ * Never auto-create catalog products — GRN may complete without a product link.
+ * Inventory is only updated for lines that already have productId.
  */
 const ensureProductForGrnLine = async (
     line,
@@ -1257,7 +1257,6 @@ const ensureProductForGrnLine = async (
     purchaseOrderNo,
     session
 ) => {
-    // Inherit link from PO line when GRN draft never stored productId
     if (!line.productId && line.purchaseOrderItemId && purchaseOrderId) {
         const po = await PurchaseOrder.findOne({
             _id: purchaseOrderId,
@@ -1279,12 +1278,8 @@ const ensureProductForGrnLine = async (
     }
 
     if (!line.productId) {
-        const label = String(line.productName || "item").trim() || "item";
-        throw new AppError(
-            `Cannot complete GRN: "${label}" has no product linked. ` +
-                `Add the product in the Product form, link it to the PO/GRN line, then receive again.`,
-            400
-        );
+        // Allowed: receive/complete GRN without catalog link (no stock upsert)
+        return line;
     }
 
     const product = await Product.findOne({
@@ -1292,12 +1287,10 @@ const ensureProductForGrnLine = async (
         ...NOT_DELETED
     }).session(session);
     if (!product) {
-        const label = String(line.productName || "item").trim() || "item";
-        throw new AppError(
-            `Cannot complete GRN: product for "${label}" was not found. ` +
-                `Add it via the Product form and link the line again.`,
-            400
-        );
+        // Stale id — treat as unlinked rather than blocking complete
+        line.productId = null;
+        line.productVariantId = null;
+        return line;
     }
 
     const trackingType = resolveTrackingType(
@@ -1308,22 +1301,16 @@ const ensureProductForGrnLine = async (
     if (!line.barcode && product.barcode) line.barcode = product.barcode;
 
     if (trackingType === "IMEI" && !line.productVariantId) {
-        // Reuse an existing variant only — never invent one on GRN complete
         const existing = await ProductVariant.findOne({
             productId: line.productId,
             isDeleted: { $ne: true }
         })
             .sort({ createdAt: 1 })
             .session(session);
-        if (!existing) {
-            throw new AppError(
-                `Cannot complete GRN: IMEI product "${product.name || line.productName}" ` +
-                    `needs a variant. Add the variant in the Product form, then receive again.`,
-                400
-            );
+        if (existing) {
+            line.productVariantId = existing._id;
+            if (!line.sku && existing.sku) line.sku = existing.sku;
         }
-        line.productVariantId = existing._id;
-        if (!line.sku && existing.sku) line.sku = existing.sku;
     }
 
     return line;
@@ -1333,7 +1320,7 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
     const productIds = new Set();
     const allImeis = [];
 
-    // Require existing catalog products (no auto-create on GRN complete)
+    // Soft-resolve product links from PO when present (never auto-create)
     for (const item of grn.items || []) {
         const accepted = Math.max(Number(item.acceptedQuantity) || 0, 0);
         if (accepted <= 0) continue;
@@ -1349,6 +1336,8 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
     for (const item of grn.items || []) {
         const accepted = Math.max(Number(item.acceptedQuantity) || 0, 0);
         if (accepted <= 0) continue;
+        // IMEI uniqueness only when stocking into a linked product
+        if (!item.productId) continue;
 
         if (item.trackingType === "IMEI") {
             const imeis = (item.imeis || []).map(normalizeImei).filter(Boolean);
@@ -1367,13 +1356,8 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
     for (const item of grn.items || []) {
         const accepted = Math.max(Number(item.acceptedQuantity) || 0, 0);
         if (accepted <= 0) continue;
-        if (!item.productId) {
-            throw new AppError(
-                `Product link missing for ${item.productName}. ` +
-                    `Add the product via the Product form, link it to this line, then complete again.`,
-                400
-            );
-        }
+        // Complete GRN without catalog link — skip stock until product is linked later
+        if (!item.productId) continue;
 
         const stockResult = await upsertInventory({
             warehouseId: grn.warehouseId,
@@ -1405,10 +1389,8 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
         if (item.trackingType === "IMEI") {
             const imeis = (item.imeis || []).map(normalizeImei).filter(Boolean);
             if (!item.productVariantId) {
-                throw new AppError(
-                    `Variant required for IMEI product ${item.productName}.`,
-                    400
-                );
+                // Linked IMEI product without variant — skip track insert, keep GRN complete
+                continue;
             }
             const rows = imeis.map((imei) => ({
                 imei,
