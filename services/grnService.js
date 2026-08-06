@@ -1246,8 +1246,9 @@ const createStockMovement = async ({
 };
 
 /**
- * New-product PO lines may arrive without productId.
- * On GRN complete, create (or reuse by name) a catalog product and link it.
+ * GRN complete must stock against an existing catalog product only.
+ * Products are created via the Product Add form — never auto-created here.
+ * Inherit productId / variantId from the linked PO line when present.
  */
 const ensureProductForGrnLine = async (
     line,
@@ -1256,157 +1257,83 @@ const ensureProductForGrnLine = async (
     purchaseOrderNo,
     session
 ) => {
-    if (line.productId) {
-        // If IMEI and variant missing, create a default variant under existing product
-        if (
-            resolveTrackingType(line.trackingType) === "IMEI" &&
-            !line.productVariantId
-        ) {
-            const variant = await createDefaultVariantForProduct(
-                line.productId,
-                line,
-                session
-            );
-            line.productVariantId = variant._id;
-            if (!line.sku && variant.sku) line.sku = variant.sku;
+    // Inherit link from PO line when GRN draft never stored productId
+    if (!line.productId && line.purchaseOrderItemId && purchaseOrderId) {
+        const po = await PurchaseOrder.findOne({
+            _id: purchaseOrderId,
+            ...NOT_DELETED
+        })
+            .session(session)
+            .select("items");
+        const poItem = po?.items?.id?.(line.purchaseOrderItemId);
+        if (poItem?.productId) {
+            line.productId = poItem.productId;
+            if (!line.productVariantId && poItem.productVariantId) {
+                line.productVariantId = poItem.productVariantId;
+            }
+            if (!line.trackingType && poItem.trackingType) {
+                line.trackingType = poItem.trackingType;
+            }
+            if (!line.sku && poItem.sku) line.sku = poItem.sku;
         }
-        return line;
     }
 
-    const name = String(line.productName || "").trim();
-    if (!name) {
+    if (!line.productId) {
+        const label = String(line.productName || "item").trim() || "item";
         throw new AppError(
-            "Cannot complete GRN: a line has no product name and no productId.",
+            `Cannot complete GRN: "${label}" has no product linked. ` +
+                `Add the product in the Product form, link it to the PO/GRN line, then receive again.`,
             400
         );
     }
 
-    const trackingType = resolveTrackingType(line.trackingType);
-    const purchasePrice = Math.max(Number(line.purchasePrice) || 0, 0);
-
-    // Reuse existing catalog product with same name when possible
-    let product = await Product.findOne({
-        name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
+    const product = await Product.findOne({
+        _id: line.productId,
         ...NOT_DELETED
     }).session(session);
-
     if (!product) {
-        const productCode = await generateProductCode();
-        let barcode = "";
-        let barcodeType = "None";
-        if (trackingType === "Non-IMEI") {
-            barcode = await generateProductBarcode();
-            barcodeType = "EAN13";
-        }
-
-        const [created] = await Product.create(
-            [
-                {
-                    name,
-                    productCode,
-                    sku: (line.sku || "").toString().trim().toUpperCase(),
-                    slug: name
-                        .toLowerCase()
-                        .replace(/[^a-z0-9]+/g, "-")
-                        .replace(/(^-|-$)/g, ""),
-                    trackingType,
-                    productType: trackingType === "IMEI" ? "Variant" : "Simple",
-                    hasVariants: trackingType === "IMEI",
-                    barcode,
-                    barcodeType,
-                    barcodeGeneratedAt: barcode ? new Date() : null,
-                    purchasePrice,
-                    sellingPrice: purchasePrice,
-                    approvalStatus: "Approved",
-                    approvalRequired: false,
-                    approvedAt: new Date(),
-                    approvedBy: toObjectId(actorId),
-                    createdBy: toObjectId(actorId),
-                    vendorId: toObjectId(actorId),
-                    uploadedByType: "Owner",
-                    uploadedById: toObjectId(actorId),
-                    uploadedAt: new Date(),
-                    productSourceType: "PurchaseOrder",
-                    ownershipType: "Owned",
-                    sourcePurchaseOrderId: purchaseOrderId || null,
-                    sourcePurchaseOrderItemId: line.purchaseOrderItemId || null,
-                    sourcePurchaseOrderNo: purchaseOrderNo || ""
-                }
-            ],
-            { session }
+        const label = String(line.productName || "item").trim() || "item";
+        throw new AppError(
+            `Cannot complete GRN: product for "${label}" was not found. ` +
+                `Add it via the Product form and link the line again.`,
+            400
         );
-        product = created;
     }
 
-    line.productId = product._id;
+    const trackingType = resolveTrackingType(
+        line.trackingType || product.trackingType
+    );
+    line.trackingType = trackingType;
     if (!line.sku && product.sku) line.sku = product.sku;
     if (!line.barcode && product.barcode) line.barcode = product.barcode;
-    line.trackingType = trackingType;
 
     if (trackingType === "IMEI" && !line.productVariantId) {
-        const variant = await createDefaultVariantForProduct(
-            product._id,
-            line,
-            session
-        );
-        line.productVariantId = variant._id;
-        if (!line.sku && variant.sku) line.sku = variant.sku;
+        // Reuse an existing variant only — never invent one on GRN complete
+        const existing = await ProductVariant.findOne({
+            productId: line.productId,
+            isDeleted: { $ne: true }
+        })
+            .sort({ createdAt: 1 })
+            .session(session);
+        if (!existing) {
+            throw new AppError(
+                `Cannot complete GRN: IMEI product "${product.name || line.productName}" ` +
+                    `needs a variant. Add the variant in the Product form, then receive again.`,
+                400
+            );
+        }
+        line.productVariantId = existing._id;
+        if (!line.sku && existing.sku) line.sku = existing.sku;
     }
 
     return line;
-};
-
-const createDefaultVariantForProduct = async (productId, line, session) => {
-    // Prefer an existing default / only variant
-    const existing = await ProductVariant.findOne({
-        productId,
-        isDeleted: { $ne: true }
-    })
-        .sort({ createdAt: 1 })
-        .session(session);
-    if (existing) return existing;
-
-    const purchasePrice = Math.max(Number(line.purchasePrice) || 0, 0);
-    const sku =
-        (line.sku || "").toString().trim().toUpperCase() ||
-        (await generateProductVariantCode());
-
-    const [variant] = await ProductVariant.create(
-        [
-            {
-                productId,
-                attributes: [],
-                combinationString: "Default",
-                sku,
-                purchasePrice,
-                costPrice: purchasePrice,
-                sellingPrice: purchasePrice,
-                price: purchasePrice,
-                quantity: 0
-            }
-        ],
-        { session }
-    );
-
-    await Product.updateOne(
-        { _id: productId },
-        {
-            $set: {
-                hasVariants: true,
-                productType: "Variant"
-            }
-        },
-        { session }
-    );
-
-    return variant;
 };
 
 const applyInventoryForGrn = async (grn, actorId, session) => {
     const productIds = new Set();
     const allImeis = [];
 
-    // Link / create products for New-product lines before stock update
+    // Require existing catalog products (no auto-create on GRN complete)
     for (const item of grn.items || []) {
         const accepted = Math.max(Number(item.acceptedQuantity) || 0, 0);
         if (accepted <= 0) continue;
@@ -1442,7 +1369,8 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
         if (accepted <= 0) continue;
         if (!item.productId) {
             throw new AppError(
-                `Product link missing for ${item.productName}. Create or link a product on this line, then complete again.`,
+                `Product link missing for ${item.productName}. ` +
+                    `Add the product via the Product form, link it to this line, then complete again.`,
                 400
             );
         }
@@ -2802,7 +2730,7 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
             await assertPhaseReceiveWithinSent(grn, recvPhaseNo, session);
         }
 
-        // Link/create products FIRST so batch snapshot stores real productIds
+        // Stock only against already-linked catalog products (no auto-create)
         const productIds = await applyInventoryForGrn(
             grn,
             toObjectId(actorId),
