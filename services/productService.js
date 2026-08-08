@@ -1204,6 +1204,7 @@ const createProduct = async (payload = {}, actorId = null) => {
         await syncVariants(product, payload.productVariants, actorId);
         if (product.isModified()) await product.save();
         // Persist stock/profit summary from Inventory or Manual opening qty.
+        await seedManualOpeningInventory(product);
         await syncProductStockSummary(product);
     } catch (err) {
         // Product row was already persisted — soft-delete so the same name
@@ -1577,6 +1578,277 @@ const syncProductStockSummary = async (productDoc) => {
     return productDoc;
 };
 
+const isImeiTracking = (trackingType) =>
+    String(trackingType || "")
+        .toUpperCase()
+        .includes("IMEI") &&
+    !String(trackingType || "")
+        .toUpperCase()
+        .includes("NON");
+
+const isManualLikeSource = (sourceType) => {
+    const s = String(sourceType || "");
+    return s === "Manual" || s === "ThirdParty";
+};
+
+/**
+ * Prefer product.warehouseIds; else first warehouse linked to product.branchIds.
+ */
+const resolveOpeningWarehouseId = async (product) => {
+    const preferred = (product.warehouseIds || [])
+        .map((id) => toObjectId(id))
+        .filter(Boolean);
+    if (preferred.length) return preferred[0];
+
+    const branchIds = (product.branchIds || [])
+        .map((id) => toObjectId(id))
+        .filter(Boolean);
+    if (!branchIds.length) return null;
+
+    const Warehouse = require("../model/warehouse");
+    const wh = await Warehouse.findOne({
+        ...NOT_DELETED,
+        branchIds: { $in: branchIds }
+    })
+        .select("_id")
+        .lean();
+    return wh?._id || null;
+};
+
+/**
+ * Manual / ThirdParty opening qty lives on ProductVariant.quantity for the UI,
+ * but Sales Order confirm deducts Inventory rows. Materialize opening stock
+ * into one warehouse inventory row when none exist yet (never multiply across
+ * warehouses; never overwrite GRN / existing stock).
+ */
+const seedManualOpeningInventory = async (product) => {
+    if (!product?._id || !isManualLikeSource(product.productSourceType)) {
+        return;
+    }
+    if (isImeiTracking(product.trackingType)) return;
+
+    const warehouseId = await resolveOpeningWarehouseId(product);
+    if (!warehouseId) return;
+
+    const variants = await ProductVariant.find({
+        productId: product._id,
+        isDeleted: { $ne: true }
+    }).select("_id quantity costPrice purchasePrice sellingPrice");
+
+    const branchId =
+        toObjectId((product.branchIds || [])[0]) || product.branchId || null;
+    const unitCost =
+        Number(product.costPrice) ||
+        Number(product.purchasePrice) ||
+        Number(product.averagePurchasePrice) ||
+        0;
+
+    for (const variant of variants) {
+        const opening = Math.max(Number(variant.quantity) || 0, 0);
+        if (opening <= 0) continue;
+
+        const hasLiveInv = await Inventory.exists({
+            productId: product._id,
+            productVariantId: variant._id,
+            isDeleted: { $ne: true },
+            $or: [
+                { availableStock: { $gt: 0 } },
+                { currentStock: { $gt: 0 } }
+            ]
+        });
+        if (hasLiveInv) continue;
+
+        let inv = await Inventory.findOne({
+            warehouseId,
+            productId: product._id,
+            productVariantId: variant._id,
+            isDeleted: { $ne: true }
+        });
+
+        if (!inv) {
+            const soft = await Inventory.findOne({
+                warehouseId,
+                productId: product._id,
+                productVariantId: variant._id,
+                isDeleted: true
+            });
+            if (soft) {
+                soft.isDeleted = false;
+                soft.deletedAt = null;
+                soft.deletedBy = null;
+                soft.status = "Active";
+                inv = soft;
+            }
+        }
+
+        if (!inv) {
+            inv = new Inventory({
+                warehouseId,
+                branchId,
+                productId: product._id,
+                productVariantId: variant._id,
+                currentStock: 0,
+                availableStock: 0,
+                reservedStock: 0
+            });
+        }
+
+        const cost =
+            Number(variant.costPrice) ||
+            Number(variant.purchasePrice) ||
+            unitCost;
+        inv.currentStock = opening;
+        inv.availableStock = opening;
+        inv.reservedStock = 0;
+        if (!inv.averageCost || inv.averageCost <= 0) {
+            inv.averageCost = cost;
+        }
+        inv.inventoryValue = (Number(inv.averageCost) || cost) * opening;
+        inv.stockStatus = opening > 0 ? "In Stock" : "Out Of Stock";
+        inv.lastMovementDate = new Date();
+        if (branchId && !inv.branchId) inv.branchId = branchId;
+        await inv.save();
+    }
+};
+
+/**
+ * On SO stock-out: if Manual/ThirdParty opening qty exists but Inventory was
+ * never created for this warehouse, create the row so confirm can proceed.
+ * Returns the inventory doc or null.
+ */
+const materializeOpeningInventoryForWarehouse = async ({
+    warehouseId,
+    branchId = null,
+    productId,
+    productVariantId = null,
+    session = null
+} = {}) => {
+    const wid = toObjectId(warehouseId);
+    const pid = toObjectId(productId);
+    const vid = toObjectId(productVariantId);
+    if (!wid || !pid) return null;
+
+    const product = await Product.findOne({ _id: pid, ...NOT_DELETED })
+        .session(session || null)
+        .select(
+            "productSourceType trackingType costPrice purchasePrice averagePurchasePrice"
+        );
+    if (!product || !isManualLikeSource(product.productSourceType)) {
+        return null;
+    }
+    if (isImeiTracking(product.trackingType)) return null;
+
+    let opening = 0;
+    let unitCost =
+        Number(product.costPrice) ||
+        Number(product.purchasePrice) ||
+        Number(product.averagePurchasePrice) ||
+        0;
+
+    if (vid) {
+        const variant = await ProductVariant.findOne({
+            _id: vid,
+            productId: pid,
+            isDeleted: { $ne: true }
+        })
+            .session(session || null)
+            .select("quantity costPrice purchasePrice");
+        if (!variant) return null;
+        opening = Math.max(Number(variant.quantity) || 0, 0);
+        unitCost =
+            Number(variant.costPrice) ||
+            Number(variant.purchasePrice) ||
+            unitCost;
+    } else {
+        const variants = await ProductVariant.find({
+            productId: pid,
+            isDeleted: { $ne: true }
+        })
+            .session(session || null)
+            .select("quantity");
+        opening = variants.reduce(
+            (s, v) => s + Math.max(Number(v.quantity) || 0, 0),
+            0
+        );
+    }
+
+    if (opening <= 0) return null;
+
+    // Stock already booked elsewhere — do not invent a second pile.
+    const elsewhereFilter = {
+        productId: pid,
+        warehouseId: { $ne: wid },
+        isDeleted: { $ne: true },
+        $or: [{ availableStock: { $gt: 0 } }, { currentStock: { $gt: 0 } }]
+    };
+    if (vid) elsewhereFilter.productVariantId = vid;
+    else {
+        elsewhereFilter.$and = [
+            {
+                $or: [
+                    { productVariantId: null },
+                    { productVariantId: { $exists: false } }
+                ]
+            }
+        ];
+    }
+    const elsewhere = await Inventory.exists(elsewhereFilter).session(
+        session || null
+    );
+    if (elsewhere) return null;
+
+    let inv = await Inventory.findOne({
+        warehouseId: wid,
+        productId: pid,
+        ...(vid
+            ? { productVariantId: vid }
+            : {
+                  $or: [
+                      { productVariantId: null },
+                      { productVariantId: { $exists: false } }
+                  ]
+              }),
+        isDeleted: { $ne: true }
+    }).session(session || null);
+
+    if (!inv) {
+        const [created] = await Inventory.create(
+            [
+                {
+                    warehouseId: wid,
+                    branchId: toObjectId(branchId) || null,
+                    productId: pid,
+                    productVariantId: vid || null,
+                    currentStock: opening,
+                    availableStock: opening,
+                    reservedStock: 0,
+                    averageCost: unitCost,
+                    inventoryValue: unitCost * opening,
+                    stockStatus: "In Stock",
+                    lastMovementDate: new Date(),
+                    isDeleted: false
+                }
+            ],
+            session ? { session } : undefined
+        );
+        return created;
+    }
+
+    const current = Number(inv.currentStock) || 0;
+    const available = Number(inv.availableStock) || 0;
+    if (current > 0 || available > 0) return inv;
+
+    inv.currentStock = opening;
+    inv.availableStock = opening;
+    if (!inv.averageCost || inv.averageCost <= 0) inv.averageCost = unitCost;
+    inv.inventoryValue = (Number(inv.averageCost) || unitCost) * opening;
+    inv.stockStatus = "In Stock";
+    inv.lastMovementDate = new Date();
+    if (branchId && !inv.branchId) inv.branchId = toObjectId(branchId);
+    await inv.save(session ? { session } : undefined);
+    return inv;
+};
+
 /** Align unit profit with current cost rules (cost > purchase + otherCost). */
 const applyUnitProfit = (p) => {
     const selling = Number(p.sellingPrice) || 0;
@@ -1751,6 +2023,7 @@ const updateProduct = async (id, payload = {}, actorId = null) => {
 
     await syncVariants(product, payload.productVariants, actorId);
     if (product.isModified()) await product.save();
+    await seedManualOpeningInventory(product);
     await syncProductStockSummary(product);
 
     return populateProduct(Product.findById(product._id));
@@ -2219,5 +2492,7 @@ module.exports = {
     bulkPermanentDeleteProducts,
     refreshStockSummary,
     getProductStats,
-    getCompletedPurchaseOrderSourceLines
+    getCompletedPurchaseOrderSourceLines,
+    seedManualOpeningInventory,
+    materializeOpeningInventoryForWarehouse
 };

@@ -1111,12 +1111,13 @@ const findInventoryRow = async ({
     session
 }) => {
     const filter = {
-        warehouseId,
-        productId,
+        warehouseId: toObjectId(warehouseId) || warehouseId,
+        productId: toObjectId(productId) || productId,
         isDeleted: { $ne: true }
     };
-    if (productVariantId) {
-        filter.productVariantId = productVariantId;
+    const vid = toObjectId(productVariantId);
+    if (vid) {
+        filter.productVariantId = vid;
     } else {
         filter.$or = [
             { productVariantId: null },
@@ -1125,6 +1126,51 @@ const findInventoryRow = async ({
     }
 
     return Inventory.findOne(filter).session(session || null);
+};
+
+const describeOtherWarehouses = async ({
+    productId,
+    productVariantId,
+    excludeWarehouseId,
+    session
+}) => {
+    const filter = {
+        productId: toObjectId(productId) || productId,
+        warehouseId: {
+            $ne: toObjectId(excludeWarehouseId) || excludeWarehouseId
+        },
+        isDeleted: { $ne: true },
+        $or: [{ availableStock: { $gt: 0 } }, { currentStock: { $gt: 0 } }]
+    };
+    const vid = toObjectId(productVariantId);
+    if (vid) filter.productVariantId = vid;
+    else {
+        filter.$and = [
+            {
+                $or: [
+                    { productVariantId: null },
+                    { productVariantId: { $exists: false } }
+                ]
+            }
+        ];
+    }
+
+    const rows = await Inventory.find(filter)
+        .populate("warehouseId", "warehouseCode warehouseName")
+        .session(session || null)
+        .lean();
+
+    return rows
+        .map((r) => {
+            const wh = r.warehouseId;
+            const name =
+                wh?.warehouseName ||
+                wh?.warehouseCode ||
+                String(wh?._id || r.warehouseId || "");
+            const qty = Number(r.availableStock) || Number(r.currentStock) || 0;
+            return qty > 0 ? `${name} (${qty})` : null;
+        })
+        .filter(Boolean);
 };
 
 const deductInventory = async ({
@@ -1141,7 +1187,7 @@ const deductInventory = async ({
     orderCreatedBy,
     session
 }) => {
-    const inv = await findInventoryRow({
+    let inv = await findInventoryRow({
         warehouseId,
         productId,
         productVariantId,
@@ -1149,8 +1195,33 @@ const deductInventory = async ({
     });
 
     if (!inv) {
+        // Manual / ThirdParty opening qty may exist without an Inventory row yet.
+        inv = await productService.materializeOpeningInventoryForWarehouse({
+            warehouseId,
+            branchId,
+            productId,
+            productVariantId,
+            session
+        });
+    }
+
+    if (!inv) {
+        const elsewhere = await describeOtherWarehouses({
+            productId,
+            productVariantId,
+            excludeWarehouseId: warehouseId,
+            session
+        });
+        if (elsewhere.length) {
+            throw new AppError(
+                `No inventory for "${productName}" in this warehouse. Stock is in: ${elsewhere.join(
+                    ", "
+                )}. Change the order warehouse or transfer stock.`,
+                400
+            );
+        }
         throw new AppError(
-            `No inventory for "${productName}" in this warehouse.`,
+            `No inventory for "${productName}" in this warehouse. Receive stock via GRN, or for Manual/Third Party products set opening qty and link a warehouse, then save the product again.`,
             400
         );
     }
