@@ -123,7 +123,42 @@ const PERMISSIONS = {
     // Dashboard
     // ======================================================
 
-    DASHBOARD_VIEW: "dashboard.view"
+    DASHBOARD_VIEW: "dashboard.view",
+
+    // ======================================================
+    // HR / Attendance
+    // ======================================================
+
+    EMPLOYEE_VIEW: "employee.view",
+    EMPLOYEE_CREATE: "employee.create",
+    EMPLOYEE_UPDATE: "employee.update",
+    EMPLOYEE_DELETE: "employee.delete",
+
+    SHIFT_VIEW: "shift.view",
+    SHIFT_CREATE: "shift.create",
+    SHIFT_UPDATE: "shift.update",
+    SHIFT_DELETE: "shift.delete",
+
+    ATTENDANCE_POLICY_VIEW: "attendancePolicy.view",
+    ATTENDANCE_POLICY_CREATE: "attendancePolicy.create",
+    ATTENDANCE_POLICY_UPDATE: "attendancePolicy.update",
+    ATTENDANCE_POLICY_DELETE: "attendancePolicy.delete",
+
+    ATTENDANCE_VIEW: "attendance.view",
+    ATTENDANCE_MANAGE: "attendance.manage",
+    ATTENDANCE_APPROVE: "attendance.approve",
+    ATTENDANCE_REPORT: "attendance.report",
+    ATTENDANCE_CORRECTION_VIEW: "attendanceCorrection.view",
+    ATTENDANCE_CORRECTION_APPROVE: "attendanceCorrection.approve",
+    OVERTIME_VIEW: "overtime.view",
+    OVERTIME_APPROVE: "overtime.approve",
+
+    HOLIDAY_VIEW: "holiday.view",
+    HOLIDAY_MANAGE: "holiday.manage",
+
+    LEAVE_VIEW: "leave.view",
+    LEAVE_CREATE: "leave.create",
+    LEAVE_APPROVE: "leave.approve"
 
 };
 

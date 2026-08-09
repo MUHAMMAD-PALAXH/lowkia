@@ -72,6 +72,27 @@ const branchSchema = new mongoose.Schema(
         },
 
         // ==========================================================
+        // Attendance geofence (optional — policy.locationRequired)
+        // ==========================================================
+
+        attendanceLatitude: {
+            type: Number,
+            default: null
+        },
+
+        attendanceLongitude: {
+            type: Number,
+            default: null
+        },
+
+        /** Allowed check-in radius in meters (e.g. 100) */
+        attendanceRadiusMeters: {
+            type: Number,
+            default: 100,
+            min: 0
+        },
+
+        // ==========================================================
         // Many-to-many Warehouses
         // One Branch → many Warehouses
         // One Warehouse → many Branches (synced on Warehouse.branchIds)

@@ -1,0 +1,222 @@
+const mongoose = require("mongoose");
+const Holiday = require("../model/holiday");
+const { generateHolidayCode } = require("./codeGenerator");
+const AppError = require("../utils/appError");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const settingsService = require("./settingsService");
+const { eachWorkDate } = require("../utils/workDates");
+
+const NOT_DELETED = { isDeleted: { $ne: true } };
+
+const trash = createTrashOps(Holiday, {
+    label: "Holiday",
+    nameField: "holidayName",
+    softDeleteExtra: (doc) => {
+        doc.status = "Inactive";
+    },
+    restoreStatus: "Active"
+});
+
+const PROTECTED = [
+    "holidayCode",
+    "workDates",
+    "isDeleted",
+    "deletedAt",
+    "deletedBy",
+    "createdBy",
+    "createdAt",
+    "updatedAt"
+];
+
+const escapeRegex = (value = "") =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const toObjectId = (value) => {
+    if (!value) return null;
+    const id = String(value);
+    return mongoose.Types.ObjectId.isValid(id)
+        ? new mongoose.Types.ObjectId(id)
+        : null;
+};
+
+const pickFields = (payload = {}) => {
+    const data = { ...payload };
+    PROTECTED.forEach((f) => delete data[f]);
+    return data;
+};
+
+const buildWorkDates = async (startDate, endDate) => {
+    const timezone = await settingsService.getTimezone();
+    return eachWorkDate(startDate, endDate, timezone);
+};
+
+const createHoliday = async (payload = {}, actorId = null) => {
+    const data = pickFields(payload);
+    const holidayName = String(data.holidayName || "").trim();
+    if (!holidayName) throw new AppError("Holiday name is required.", 400);
+    if (!data.startDate || !data.endDate) {
+        throw new AppError("Start date and end date are required.", 400);
+    }
+
+    const startDate = new Date(data.startDate);
+    const endDate = new Date(data.endDate);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        throw new AppError("Invalid holiday dates.", 400);
+    }
+    if (endDate < startDate) {
+        throw new AppError("End date cannot be before start date.", 400);
+    }
+
+    const workDates = await buildWorkDates(startDate, endDate);
+    const holidayCode = await generateHolidayCode();
+    const applicableBranchIds = Array.isArray(data.applicableBranchIds)
+        ? data.applicableBranchIds.map(toObjectId).filter(Boolean)
+        : [];
+
+    const doc = await Holiday.create({
+        ...data,
+        holidayName,
+        holidayCode,
+        startDate,
+        endDate,
+        workDates,
+        applicableBranchIds,
+        createdBy: actorId || null
+    });
+
+    try {
+        const { writeActivityLog } = require("./activityLogService");
+        const AdminUser = require("../model/adminUser");
+        const user = actorId
+            ? await AdminUser.findById(actorId).select(
+                  "firstName lastName email username role"
+              )
+            : null;
+        if (user) {
+            await writeActivityLog({
+                user,
+                activityType: "Create",
+                module: "Holiday",
+                description: `Holiday created: ${holidayName}`,
+                referenceType: "Holiday",
+                referenceId: doc._id,
+                securityLevel: "Sensitive"
+            });
+        }
+    } catch (_) {
+        /* ignore */
+    }
+
+    return doc;
+};
+
+const getHolidays = async (query = {}) => {
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+    const trashMode = isTrashQuery(query);
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+
+    if (query.status) filter.status = query.status;
+    if (query.year) {
+        const y = Number(query.year);
+        filter.startDate = {
+            $gte: new Date(`${y}-01-01T00:00:00.000Z`),
+            $lte: new Date(`${y}-12-31T23:59:59.999Z`)
+        };
+    }
+    if (query.search) {
+        const s = escapeRegex(String(query.search).trim());
+        filter.$or = [
+            { holidayName: { $regex: s, $options: "i" } },
+            { holidayCode: { $regex: s, $options: "i" } }
+        ];
+    }
+
+    const [items, total] = await Promise.all([
+        Holiday.find(filter).sort({ startDate: 1 }).skip(skip).limit(limit),
+        Holiday.countDocuments(filter)
+    ]);
+
+    return {
+        items,
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit) || 0
+        }
+    };
+};
+
+const getHolidayById = async (id) => {
+    const doc = await Holiday.findOne({ _id: id, ...NOT_DELETED });
+    if (!doc) throw new AppError("Holiday not found.", 404);
+    return doc;
+};
+
+/**
+ * Find active holiday covering workDate for an optional branch.
+ */
+const findHolidayForWorkDate = async (workDate, branchId = null) => {
+    if (!workDate) return null;
+    const filter = {
+        ...NOT_DELETED,
+        status: "Active",
+        workDates: workDate
+    };
+    const holidays = await Holiday.find(filter).lean();
+    if (!holidays.length) return null;
+
+    const bid = branchId ? String(branchId) : null;
+    for (const h of holidays) {
+        const branches = (h.applicableBranchIds || []).map(String);
+        if (!branches.length) return h;
+        if (bid && branches.includes(bid)) return h;
+    }
+    return null;
+};
+
+const updateHoliday = async (id, payload = {}, actorId = null) => {
+    const doc = await getHolidayById(id);
+    const data = pickFields(payload);
+
+    if (data.holidayName) data.holidayName = String(data.holidayName).trim();
+
+    if (data.startDate || data.endDate) {
+        const startDate = new Date(data.startDate || doc.startDate);
+        const endDate = new Date(data.endDate || doc.endDate);
+        if (endDate < startDate) {
+            throw new AppError("End date cannot be before start date.", 400);
+        }
+        data.startDate = startDate;
+        data.endDate = endDate;
+        data.workDates = await buildWorkDates(startDate, endDate);
+    }
+
+    if (data.applicableBranchIds) {
+        data.applicableBranchIds = data.applicableBranchIds
+            .map(toObjectId)
+            .filter(Boolean);
+    }
+
+    Object.assign(doc, data);
+    doc.updatedBy = actorId || null;
+    await doc.save();
+    return doc;
+};
+
+const deleteHoliday = (id, actorId) => trash.softDelete(id, actorId);
+const restoreHoliday = (id, actorId) => trash.restore(id, actorId);
+const permanentDeleteHoliday = (id) => trash.permanentDelete(id);
+
+module.exports = {
+    createHoliday,
+    getHolidays,
+    getHolidayById,
+    findHolidayForWorkDate,
+    updateHoliday,
+    deleteHoliday,
+    restoreHoliday,
+    permanentDeleteHoliday
+};

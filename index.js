@@ -76,6 +76,15 @@ require('./model/counter');
 require('./model/unit');
 require('./model/itemTrack');
 require('./model/inventory');
+require('./model/attendancePolicy');
+require('./model/shift');
+require('./model/employee');
+require('./model/attendance');
+require('./model/leave');
+require('./model/holiday');
+require('./model/attendanceCorrection');
+require('./model/overtimeRequest');
+require('./model/settings');
 
 // ============================================================
 // ROUTES
@@ -106,6 +115,17 @@ app.use('/api/customers', require('./routes/customer'));
 app.use('/api/sales-orders', require('./routes/salesOrder'));
 app.use('/api/sales-returns', require('./routes/salesReturn'));
 app.use('/api/repair-tickets', require('./routes/repairTicket'));
+
+// HR / Attendance (Phase 1 — policy, shift, employees, settings)
+app.use('/api/settings', require('./routes/settings'));
+app.use('/api/attendance-policies', require('./routes/attendancePolicy'));
+app.use('/api/shifts', require('./routes/shift'));
+app.use('/api/employees', require('./routes/employee'));
+app.use('/api/attendances', require('./routes/attendance'));
+app.use('/api/holidays', require('./routes/holiday'));
+app.use('/api/leaves', require('./routes/leave'));
+app.use('/api/attendance-corrections', require('./routes/attendanceCorrection'));
+app.use('/api/overtime-requests', require('./routes/overtime'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');

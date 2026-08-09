@@ -1,0 +1,89 @@
+const express = require("express");
+const router = express.Router();
+
+const { protect } = require("../middleware/auth");
+const {
+    attendanceAdminOnly,
+    blockVendor,
+    attachBranchScope
+} = require("../middleware/hrAccess");
+const validate = require("../middleware/validate");
+const controller = require("../controllers/leaveController");
+const {
+    listValidator,
+    createLeaveValidator,
+    rejectValidator,
+    approveValidator,
+    cancelValidator,
+    idValidator
+} = require("../validators/leaveValidator");
+
+// Base: /api/leaves
+router.use(protect, blockVendor);
+
+// Employee self
+router.get("/me", listValidator, validate, controller.getMyLeaves);
+router.post(
+    "/me",
+    createLeaveValidator,
+    validate,
+    controller.createMyLeave
+);
+router.patch(
+    "/me/:id/cancel",
+    cancelValidator,
+    validate,
+    controller.cancelMyLeave
+);
+
+// Admin
+router.get(
+    "/",
+    attendanceAdminOnly,
+    attachBranchScope,
+    listValidator,
+    validate,
+    controller.getLeaves
+);
+router.post(
+    "/",
+    attendanceAdminOnly,
+    attachBranchScope,
+    createLeaveValidator,
+    validate,
+    controller.createLeaveAdmin
+);
+router.get(
+    "/:id",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    controller.getLeaveById
+);
+router.patch(
+    "/:id/approve",
+    attendanceAdminOnly,
+    attachBranchScope,
+    approveValidator,
+    validate,
+    controller.approveLeave
+);
+router.patch(
+    "/:id/reject",
+    attendanceAdminOnly,
+    attachBranchScope,
+    rejectValidator,
+    validate,
+    controller.rejectLeave
+);
+router.patch(
+    "/:id/cancel",
+    attendanceAdminOnly,
+    attachBranchScope,
+    cancelValidator,
+    validate,
+    controller.cancelLeaveAdmin
+);
+
+module.exports = router;

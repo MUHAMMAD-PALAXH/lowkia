@@ -127,6 +127,66 @@ checkOut:{
     type:Date
 },
 
+/**
+ * Workday key in company timezone (YYYY-MM-DD).
+ * Used with attendanceDate (UTC start-of-day) for night shifts.
+ */
+workDate:{
+
+    type:String,
+    default:"",
+    index:true
+},
+
+policyId:{
+
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"AttendancePolicy",
+    default:null
+},
+
+attendanceCode:{
+
+    type:String,
+    default:"",
+    trim:true,
+    uppercase:true
+},
+
+// ===================================================
+// Breaks
+// ===================================================
+
+breaks:[
+    {
+        startTime:{ type:Date, required:true },
+        endTime:{ type:Date, default:null },
+        durationMinutes:{ type:Number, default:0 },
+        type:{
+            type:String,
+            enum:["lunch","prayer","personal","other"],
+            default:"other"
+        }
+    }
+],
+
+checkInSelfie:{ type:String, default:"" },
+checkOutSelfie:{ type:String, default:"" },
+
+checkInPlatform:{ type:String, default:"" },
+checkOutPlatform:{ type:String, default:"" },
+checkInAppVersion:{ type:String, default:"" },
+checkOutAppVersion:{ type:String, default:"" },
+
+checkOutLatitude:{ type:Number },
+checkOutLongitude:{ type:Number },
+checkOutIpAddress:{ type:String, default:"" },
+checkOutDeviceId:{ type:String, default:"" },
+
+grossWorkedMinutes:{ type:Number, default:0 },
+actualWorkedMinutes:{ type:Number, default:0 },
+approvedOvertimeMinutes:{ type:Number, default:0 },
+
 // ===================================================
 // Attendance Status
 // ===================================================
@@ -142,6 +202,7 @@ attendanceStatus:{
         "Leave",
         "Holiday",
         "Weekend",
+        "Incomplete",
         "Remote",
         "Work From Home"
     ],
@@ -444,13 +505,24 @@ deletedAt:{
 // INDEXES
 // ==========================================================
 
-// One employee cannot have duplicate attendance for same date
+// One employee cannot have duplicate attendance for same workday
 attendanceSchema.index({ employeeId:1,
     attendanceDate:1
  }, {
 
     unique:true
 });
+
+attendanceSchema.index(
+    { employeeId: 1, workDate: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            workDate: { $exists: true, $gt: "" },
+            isDeleted: { $ne: true }
+        }
+    }
+);
 
 
 attendanceSchema.index({ branchId:1,

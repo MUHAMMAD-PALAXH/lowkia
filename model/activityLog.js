@@ -151,6 +151,16 @@ module:{
 
         "Employee",
 
+        "Attendance",
+
+        "Shift",
+
+        "Leave",
+
+        "Holiday",
+
+        "AttendancePolicy",
+
         "Account",
 
         "Settings",
@@ -226,6 +236,16 @@ referenceType:{
         "Employee",
 
         "User",
+
+        "Attendance",
+
+        "AttendanceCorrection",
+
+        "OvertimeRequest",
+
+        "Leave",
+
+        "Holiday",
 
         "System"
 

@@ -13,6 +13,11 @@ const MODULE_CONFIG = {
     shift: { prefix: "SHF", padding: 6 },
     leave_type: { prefix: "LVT", padding: 6 },
     holiday: { prefix: "HOL", padding: 6 },
+    leave: { prefix: "LV", padding: 6 },
+    attendance_policy: { prefix: "ATP", padding: 6 },
+    attendance: { prefix: "ATT", padding: 6 },
+    attendance_correction: { prefix: "ACR", padding: 6 },
+    overtime_request: { prefix: "OTR", padding: 6 },
 
     supplier: { prefix: "SUP", padding: 6 },
     customer: { prefix: "CUS", padding: 6 },
@@ -140,6 +145,13 @@ const generateEmployeeCode = () => generateCode("employee");
 const generateShiftCode = () => generateCode("shift");
 const generateLeaveTypeCode = () => generateCode("leave_type");
 const generateHolidayCode = () => generateCode("holiday");
+const generateLeaveCode = () => generateCode("leave");
+const generateAttendancePolicyCode = () => generateCode("attendance_policy");
+const generateAttendanceCode = () => generateCode("attendance");
+const generateAttendanceCorrectionCode = () =>
+    generateCode("attendance_correction");
+const generateOvertimeRequestCode = () => generateCode("overtime_request");
+const generateActivityLogCode = () => generateCode("activity_log");
 
 // =====================================================
 // Business partners
@@ -226,6 +238,12 @@ module.exports = {
     generateShiftCode,
     generateLeaveTypeCode,
     generateHolidayCode,
+    generateLeaveCode,
+    generateAttendancePolicyCode,
+    generateAttendanceCode,
+    generateAttendanceCorrectionCode,
+    generateOvertimeRequestCode,
+    generateActivityLogCode,
 
     generateSupplierCode,
     generateCustomerCode,
