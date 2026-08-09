@@ -111,25 +111,48 @@ const assertRefs = async (data) => {
 
 const createEmployee = async (payload = {}, actorId = null) => {
     const data = pickFields(payload);
-    const firstName = String(data.firstName || "").trim();
-    const lastName = String(data.lastName || "").trim();
-    const phone = String(data.phone || "").trim();
-    const branchId = toObjectId(data.branchId);
     const userId = toObjectId(data.userId);
+    const branchId = toObjectId(data.branchId);
+
+    if (!userId) throw new AppError("Linked admin user (userId) is required.", 400);
+    if (!branchId) throw new AppError("Branch is required.", 400);
+
+    const adminUser = await AdminUser.findOne({
+        _id: userId,
+        isDeleted: { $ne: true },
+    });
+    if (!adminUser) throw new AppError("Admin user not found.", 404);
+    if (adminUser.role === "vendor") {
+        throw new AppError(
+            "Cannot link a vendor account as an employee without converting role first.",
+            400
+        );
+    }
+    if (!adminUser.isVerified || !adminUser.isPhoneVerified) {
+        throw new AppError(
+            "Only email- and phone-verified accounts can be added to attendance.",
+            400
+        );
+    }
+
+    const firstName = String(
+        data.firstName || adminUser.firstName || ""
+    ).trim();
+    const lastName = String(data.lastName || adminUser.lastName || "").trim();
+    const phone = String(data.phone || adminUser.phone || "").trim();
+    const email = String(data.email || adminUser.email || "")
+        .trim()
+        .toLowerCase();
+    const joiningDate = data.joiningDate || new Date();
 
     if (!firstName || !lastName) {
         throw new AppError("First name and last name are required.", 400);
     }
-    if (!phone) throw new AppError("Phone is required.", 400);
-    if (!branchId) throw new AppError("Branch is required.", 400);
-    if (!userId) throw new AppError("Linked admin user (userId) is required.", 400);
-    if (!data.joiningDate) {
-        throw new AppError("Joining date is required.", 400);
-    }
+    if (!phone) throw new AppError("Phone is required on the selected account.", 400);
 
     const userTaken = await Employee.findOne({
         userId,
-        ...NOT_DELETED
+        ...NOT_DELETED,
     });
     if (userTaken) {
         throw new AppError(
@@ -143,7 +166,7 @@ const createEmployee = async (payload = {}, actorId = null) => {
         userId,
         shiftId: toObjectId(data.shiftId),
         departmentId: toObjectId(data.departmentId),
-        designationId: toObjectId(data.designationId)
+        designationId: toObjectId(data.designationId),
     });
 
     const employeeCode = await generateEmployeeCode();
@@ -153,6 +176,8 @@ const createEmployee = async (payload = {}, actorId = null) => {
         lastName,
         fullName: `${firstName} ${lastName}`.trim(),
         phone,
+        email: email || undefined,
+        joiningDate,
         branchId,
         userId,
         shiftId: toObjectId(data.shiftId),
@@ -160,12 +185,37 @@ const createEmployee = async (payload = {}, actorId = null) => {
         designationId: toObjectId(data.designationId),
         employeeCode,
         createdBy: actorId || null,
-        isActive: data.isActive !== false
+        isActive: data.isActive !== false,
     });
 
     if (doc.shiftId) await shiftService.syncEmployeeCount(doc.shiftId);
 
     return populateEmployee(Employee.findById(doc._id));
+};
+
+const getAvailableUsers = async () => {
+    const linked = await Employee.find({ ...NOT_DELETED })
+        .select("userId")
+        .lean();
+    const linkedIds = linked
+        .map((e) => e.userId)
+        .filter(Boolean)
+        .map((id) => String(id));
+
+    const filter = {
+        isDeleted: { $ne: true },
+        isVerified: true,
+        isPhoneVerified: true,
+        role: { $in: ["admin", "branch_manager"] },
+        ...(linkedIds.length ? { _id: { $nin: linkedIds } } : {}),
+    };
+
+    return AdminUser.find(filter)
+        .select(
+            "firstName lastName email phone role isVerified isPhoneVerified isApproved status createdAt"
+        )
+        .sort({ firstName: 1, lastName: 1 })
+        .lean();
 };
 
 const getEmployees = async (query = {}) => {
@@ -311,6 +361,7 @@ const permanentDeleteEmployee = (id) => trash.permanentDelete(id);
 
 module.exports = {
     createEmployee,
+    getAvailableUsers,
     getEmployees,
     getEmployeeById,
     updateEmployee,

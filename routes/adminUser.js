@@ -12,21 +12,77 @@ const { Resend } = require('resend');
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const otpStore = {}; // Use Redis in production
+const AppError = require('../utils/appError');
 
-const sendOTP = async (email, purpose) => {
-  const otp = otpGenerator.generate(6, { digits: true, alphabets: false, upperCase: false, specialChars: false });
-  otpStore[email] = { otp, purpose, expires: Date.now() + 10 * 60 * 1000 };
+const normalizePhone = (value = "") =>
+  String(value)
+    .trim()
+    .replace(/[\s\-()]/g, "");
 
-  const { data, error } = await resend.emails.send({
-    from: 'Admin App <onboarding@resend.dev>',
-    to: [email],
-    subject: `${purpose} OTP`,
-    text: `OTP: ${otp}. Valid 10 min.`,
-    html: `<strong>${otp}</strong><p>Valid 10 min.</p>`,
+/** Account is usable only after email + phone verification. */
+const isFullyVerified = (user) =>
+  Boolean(user?.isVerified && user?.isPhoneVerified);
+
+const isPendingRegistration = (user) =>
+  Boolean(user) && !isFullyVerified(user);
+
+const sendOTP = async (email, purpose, { phone } = {}) => {
+  const otp = otpGenerator.generate(6, {
+    digits: true,
+    alphabets: false,
+    upperCase: false,
+    specialChars: false,
   });
+  const key = email.toLowerCase();
+  otpStore[key] = { otp, purpose, expires: Date.now() + 10 * 60 * 1000 };
 
-  if (error) throw new Error(error.message);
-  return data;
+  const phoneLine =
+    purpose === "Phone Verification" && phone
+      ? `<p>Confirm phone number <strong>${phone}</strong> with this code.</p>`
+      : "";
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: "Admin App <onboarding@resend.dev>",
+      to: [email],
+      subject: `${purpose} OTP`,
+      text:
+        purpose === "Phone Verification" && phone
+          ? `Phone verification OTP for ${phone}: ${otp}. Valid 10 min.`
+          : `OTP: ${otp}. Valid 10 min.`,
+      html: `<strong>${otp}</strong>${phoneLine}<p>Valid 10 min.</p>`,
+    });
+
+    if (error) {
+      delete otpStore[key];
+      throw new AppError(
+        error.message ||
+          'Could not send verification email. Please try again.',
+        502
+      );
+    }
+    return data;
+  } catch (err) {
+    delete otpStore[key];
+    if (err instanceof AppError) throw err;
+    throw new AppError(
+      err.message ||
+        'Could not send verification email. Please try again.',
+      502
+    );
+  }
+};
+
+/** Remove incomplete signup rows so failed OTP never leaves a stuck account. */
+const rollbackPendingUser = async (userId) => {
+  if (!userId) return;
+  await AdminUser.deleteOne({
+    _id: userId,
+    $or: [
+      { isVerified: { $ne: true } },
+      { isPhoneVerified: { $ne: true } },
+    ],
+  });
 };
 
 // Protect middleware
@@ -49,9 +105,16 @@ const adminOnly = (req, res, next) => {
 router.post('/:id/approve', protect, adminOnly, asyncHandler(async (req, res) => {
   const user = await AdminUser.findById(req.params.id);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  if (!user.isVerified || !user.isPhoneVerified) {
+    return res.status(400).json({
+      success: false,
+      message: 'User must verify email and phone before approval',
+    });
+  }
   if (user.isApproved) return res.status(400).json({ success: false, message: 'User already approved' });
 
   user.isApproved = true;
+  user.status = 'Active';
   await user.save();
   res.json({ success: true, message: 'User approved successfully' });
 }));
@@ -117,58 +180,298 @@ router.delete('/:id', protect, adminOnly, asyncHandler(async (req, res) => {
   res.json({ success: true, message: `${user.role} deleted successfully` });
 }));
 
-// Register
+// Register — incomplete until email + phone OTP succeed.
+// If Resend fails, pending DB row is rolled back so "email exists" cannot trap users.
 router.post('/register', asyncHandler(async (req, res) => {
-  const { firstName, lastName, email, password, role } = req.body;
-  if (!firstName || !lastName || !email || !password || !role) return res.status(400).json({ success: false, message: 'All fields required' });
+  const { firstName, lastName, email, password, role, phone } = req.body;
+  if (!firstName || !lastName || !email || !password || !role || !phone) {
+    return res.status(400).json({
+      success: false,
+      message: 'All fields required (including phone)',
+    });
+  }
 
-  // UPDATED: Added 'branch_manager' to allowed roles
-  if (!['admin', 'vendor', 'branch_manager'].includes(role)) return res.status(400).json({ success: false, message: 'Invalid role' });
+  if (!['admin', 'vendor', 'branch_manager'].includes(role)) {
+    return res.status(400).json({ success: false, message: 'Invalid role' });
+  }
 
-  const existing = await AdminUser.findOne({ email: email.toLowerCase() });
-  if (existing) return res.status(400).json({ success: false, message: 'Email exists' });
+  const emailKey = String(email).toLowerCase().trim();
+  const normalizedPhone = normalizePhone(phone);
+  if (normalizedPhone.length < 8) {
+    return res.status(400).json({
+      success: false,
+      message: 'Enter a valid phone number',
+    });
+  }
 
-  const user = new AdminUser({ 
-    firstName, 
-    lastName, 
-    email: email.toLowerCase(), 
-    password, 
-    role,
-    isVerified: false,
-    isApproved: false 
-  });
-  await user.save();
+  let existing = await AdminUser.findOne({ email: emailKey });
 
-  await sendOTP(email.toLowerCase(), 'Registration');
-  res.json({ success: true, message: 'Registration started. Check email for OTP.' });
+  if (existing && isFullyVerified(existing)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Email already registered. Please sign in.',
+    });
+  }
+
+  const phoneOwner = await AdminUser.findOne({ phone: normalizedPhone });
+  if (
+    phoneOwner &&
+    String(phoneOwner._id) !== String(existing?._id) &&
+    isFullyVerified(phoneOwner)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: 'Phone number already registered',
+    });
+  }
+
+  // Free phone from another incomplete signup so resume can proceed.
+  if (
+    phoneOwner &&
+    isPendingRegistration(phoneOwner) &&
+    String(phoneOwner._id) !== String(existing?._id)
+  ) {
+    await AdminUser.deleteOne({ _id: phoneOwner._id });
+  }
+
+  let user = existing;
+  let createdNow = false;
+
+  try {
+    if (user && isPendingRegistration(user)) {
+      user.firstName = String(firstName).trim();
+      user.lastName = String(lastName).trim();
+      user.phone = normalizedPhone;
+      user.password = password;
+      user.role = role;
+      user.isVerified = false;
+      user.isPhoneVerified = false;
+      user.isApproved = false;
+      user.status = 'Pending';
+      await user.save();
+    } else {
+      user = await AdminUser.create({
+        firstName: String(firstName).trim(),
+        lastName: String(lastName).trim(),
+        email: emailKey,
+        phone: normalizedPhone,
+        password,
+        role,
+        isVerified: false,
+        isPhoneVerified: false,
+        isApproved: false,
+        status: 'Pending',
+      });
+      createdNow = true;
+    }
+
+    await sendOTP(emailKey, 'Registration');
+
+    return res.json({
+      success: true,
+      message: 'Registration started. Check email for OTP.',
+      data: { nextStep: 'email', phone: normalizedPhone },
+    });
+  } catch (err) {
+    delete otpStore[emailKey];
+    // Never leave a half-created / stuck pending account after mail failure.
+    if (user?._id && (createdNow || isPendingRegistration(user))) {
+      await rollbackPendingUser(user._id);
+    }
+    const status = err.statusCode || 502;
+    return res.status(status).json({
+      success: false,
+      message:
+        err.message ||
+        'Could not send verification email. Please try again.',
+      data: null,
+      errors: null,
+    });
+  }
 }));
 
-// Verify OTP
+// Resend OTP (email registration or phone verification)
+router.post('/resend-otp', asyncHandler(async (req, res) => {
+  const email = String(req.body.email || '').toLowerCase().trim();
+  const purpose = req.body.purpose === 'Phone Verification'
+    ? 'Phone Verification'
+    : 'Registration';
+
+  if (!email) {
+    return res.status(400).json({ success: false, message: 'Email is required' });
+  }
+
+  const user = await AdminUser.findOne({ email });
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: 'No pending registration found for this email. Please sign up again.',
+    });
+  }
+
+  if (isFullyVerified(user)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Account already verified. Please sign in.',
+    });
+  }
+
+  try {
+    if (purpose === 'Registration') {
+      if (user.isVerified) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already verified. Continue with phone verification.',
+          data: { nextStep: 'phone', phone: user.phone },
+        });
+      }
+      await sendOTP(email, 'Registration');
+      return res.json({ success: true, message: 'Email OTP resent' });
+    }
+
+    if (!user.isVerified) {
+      return res.status(400).json({ success: false, message: 'Verify email first' });
+    }
+    if (user.isPhoneVerified) {
+      return res.status(400).json({ success: false, message: 'Phone already verified' });
+    }
+    if (!user.phone) {
+      return res.status(400).json({ success: false, message: 'No phone on account' });
+    }
+
+    await sendOTP(email, 'Phone Verification', { phone: user.phone });
+    return res.json({
+      success: true,
+      message: 'Phone verification OTP resent to your email',
+    });
+  } catch (err) {
+    const status = err.statusCode || 502;
+    return res.status(status).json({
+      success: false,
+      message:
+        err.message ||
+        'Could not send verification email. Please try again.',
+      data: null,
+      errors: null,
+    });
+  }
+}));
+
+// Verify email OTP
 router.post('/verify', asyncHandler(async (req, res) => {
   const { email, otp } = req.body;
-  const stored = otpStore[email.toLowerCase()];
+  const key = String(email || '').toLowerCase();
+  const stored = otpStore[key];
   if (!stored || stored.purpose !== 'Registration' || Date.now() > stored.expires || stored.otp !== otp) {
     return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
   }
 
-  await AdminUser.findOneAndUpdate({ email: email.toLowerCase() }, { isVerified: true });
-  const updatedUser = await AdminUser.findOne({ email: email.toLowerCase() });
-  delete otpStore[email.toLowerCase()];
-  res.json({ success: true, message: 'Email verified. Awaiting admin approval.' });
+  const user = await AdminUser.findOne({ email: key });
+  if (!user) {
+    delete otpStore[key];
+    return res.status(404).json({
+      success: false,
+      message: 'Registration not found. Please sign up again.',
+    });
+  }
+
+  user.isVerified = true;
+  await user.save();
+  delete otpStore[key];
+
+  if (user.phone && !user.isPhoneVerified) {
+    try {
+      await sendOTP(key, 'Phone Verification', { phone: user.phone });
+      return res.json({
+        success: true,
+        message: 'Email verified. Check email for phone verification OTP.',
+        data: { nextStep: 'phone', phone: user.phone },
+      });
+    } catch (err) {
+      return res.json({
+        success: true,
+        message:
+          'Email verified, but phone OTP email failed. Tap Resend on the phone step.',
+        data: { nextStep: 'phone', phone: user.phone, otpSendFailed: true },
+      });
+    }
+  }
+
+  res.json({
+    success: true,
+    message: 'Email verified. Awaiting admin approval.',
+    data: { nextStep: 'done' },
+  });
 }));
 
-// Login
+// Verify phone OTP (delivered via Resend email — Resend has no SMS API)
+router.post('/verify-phone', asyncHandler(async (req, res) => {
+  const { email, otp } = req.body;
+  const key = String(email || '').toLowerCase();
+  const stored = otpStore[key];
+  if (
+    !stored ||
+    stored.purpose !== 'Phone Verification' ||
+    Date.now() > stored.expires ||
+    stored.otp !== otp
+  ) {
+    return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
+  }
+
+  const user = await AdminUser.findOne({ email: key });
+  if (!user) {
+    delete otpStore[key];
+    return res.status(404).json({
+      success: false,
+      message: 'Registration not found. Please sign up again.',
+    });
+  }
+  if (!user.isVerified) {
+    return res.status(400).json({ success: false, message: 'Verify email first' });
+  }
+
+  user.isPhoneVerified = true;
+  await user.save();
+  delete otpStore[key];
+
+  res.json({
+    success: true,
+    message: 'Phone verified. Awaiting admin approval.',
+    data: { nextStep: 'done' },
+  });
+}));
+
+// Login — only fully verified (+ approved) accounts
 router.post('/login', asyncHandler(async (req, res) => {
   const { email, password } = req.body;
-  const user = await AdminUser.findOne({ email: email.toLowerCase() });
-  if (!user || !(await user.comparePassword(password))) return res.status(401).json({ success: false, message: 'Invalid credentials' });
-  if (!user.isVerified) return res.status(401).json({ success: false, message: 'Verify email first' });
-  if (!user.isApproved) return res.status(403).json({ success: false, message: 'Account pending admin approval' });
+  const user = await AdminUser.findOne({ email: String(email || '').toLowerCase() });
+  if (!user || !(await user.comparePassword(password))) {
+    return res.status(401).json({ success: false, message: 'Invalid credentials' });
+  }
+  if (!user.isVerified) {
+    return res.status(401).json({
+      success: false,
+      message: 'Verify email first',
+      data: { nextStep: 'email', email: user.email },
+    });
+  }
+  if (user.phone && !user.isPhoneVerified) {
+    return res.status(401).json({
+      success: false,
+      message: 'Verify phone first',
+      data: { nextStep: 'phone', phone: user.phone, email: user.email },
+    });
+  }
+  if (!user.isApproved) {
+    return res.status(403).json({
+      success: false,
+      message: 'Account pending admin approval',
+    });
+  }
 
   const token = user.generateToken();
   res.json({ success: true, data: { user, token } });
 }));
-
 // Forgot password
 router.post('/forgot-password', asyncHandler(async (req, res) => {
   const { email } = req.body;

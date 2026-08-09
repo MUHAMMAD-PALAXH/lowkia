@@ -14,6 +14,11 @@ exports.getEmployees = asyncHandler(async (req, res) => {
     return success(res, "Employees retrieved.", result);
 });
 
+exports.getAvailableUsers = asyncHandler(async (req, res) => {
+    const users = await employeeService.getAvailableUsers();
+    return success(res, "Available users retrieved.", { items: users });
+});
+
 exports.getEmployeeById = asyncHandler(async (req, res) => {
     const doc = await employeeService.getEmployeeById(req.params.id);
     return success(res, "Employee retrieved.", doc);

@@ -17,6 +17,7 @@ const {
 router.use(protect, attendanceAdminOnly);
 
 router.get("/", listValidator, validate, controller.getEmployees);
+router.get("/available-users", controller.getAvailableUsers);
 router.get("/:id", idValidator, validate, controller.getEmployeeById);
 router.post("/", createEmployeeValidator, validate, controller.createEmployee);
 router.put(

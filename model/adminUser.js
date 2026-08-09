@@ -47,7 +47,8 @@ const adminUserSchema = new mongoose.Schema(
     phone: {
 
         type: String,
-        default: ""
+        default: "",
+        trim: true
     },
 
     password: {
@@ -96,6 +97,12 @@ const adminUserSchema = new mongoose.Schema(
     // ==================================================
 
     isVerified: {
+
+        type: Boolean,
+        default: false
+    },
+
+    isPhoneVerified: {
 
         type: Boolean,
         default: false
@@ -171,6 +178,7 @@ const adminUserSchema = new mongoose.Schema(
 // ======================================================
 
 adminUserSchema.index({ email: 1 });
+adminUserSchema.index({ phone: 1 }, { unique: true, sparse: true });
 adminUserSchema.index({ username: 1 });
 adminUserSchema.index({ role: 1 });
 

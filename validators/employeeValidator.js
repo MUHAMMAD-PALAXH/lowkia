@@ -17,27 +17,23 @@ const listValidator = [
 ];
 
 const createEmployeeValidator = [
-    body("firstName").notEmpty().withMessage("First name is required.").trim(),
-    body("lastName").notEmpty().withMessage("Last name is required.").trim(),
-    body("phone").notEmpty().withMessage("Phone is required.").trim(),
-    body("branchId")
-        .notEmpty()
-        .withMessage("Branch is required.")
-        .isMongoId()
-        .withMessage("Invalid branchId."),
     body("userId")
         .notEmpty()
         .withMessage("userId (AdminUser) is required.")
         .isMongoId()
         .withMessage("Invalid userId."),
-    body("joiningDate")
+    body("branchId")
         .notEmpty()
-        .withMessage("Joining date is required.")
-        .isISO8601()
-        .withMessage("joiningDate must be a valid date."),
+        .withMessage("Branch is required.")
+        .isMongoId()
+        .withMessage("Invalid branchId."),
+    body("joiningDate").optional().isISO8601(),
     body("shiftId").optional({ nullable: true }).isMongoId(),
     body("departmentId").optional({ nullable: true }).isMongoId(),
     body("designationId").optional({ nullable: true }).isMongoId(),
+    body("firstName").optional().trim(),
+    body("lastName").optional().trim(),
+    body("phone").optional().trim(),
     body("email").optional({ checkFalsy: true }).isEmail(),
     body("employmentType")
         .optional()
