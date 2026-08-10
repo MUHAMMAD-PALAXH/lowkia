@@ -28,7 +28,7 @@ const run = (seed) => {
     assert.strictEqual(p.payableDueMinor, 0);
     assert.strictEqual(p.outstandingMinor, 0);
     assert.strictEqual(p.remainingExposureMinor, 3000000); // 100k-70k unreceived
-    assert.strictEqual(p.status, "settled");
+    assert.strictEqual(p.status, "partial"); // still exposed on unreceived goods
 }
 
 // Advance before GRN

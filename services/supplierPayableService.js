@@ -80,11 +80,12 @@ const recomputeHybridBalances = (payable) => {
         return payable;
     }
 
-    if (payableDue === 0 && received > 0) {
-        payable.status = "settled";
-    } else if (payable.totalPaidMinor > 0 || received > 0) {
+    // Never mark settled while unreceived commitment (net of advances) remains.
+    if (payableDue > 0 || remainingExposure > 0) {
         payable.status =
-            payableDue > 0 || remainingExposure > 0 ? "partial" : "settled";
+            payable.totalPaidMinor > 0 || received > 0 ? "partial" : "open";
+    } else if (received > 0 || payable.totalPaidMinor > 0) {
+        payable.status = "settled";
     } else {
         payable.status = "open";
     }
@@ -131,6 +132,44 @@ const resolveCompanyId = async (actorId, explicitCompanyId = null) => {
     return company._id;
 };
 
+/**
+ * Received goods value aligned to PO commercial total (line tax/discount +
+ * header tax/shipping/other), not bare qty × purchasePrice.
+ */
+const computeReceivedValueMajorFromPo = (po) => {
+    const items = Array.isArray(po?.items) ? po.items : [];
+    const subtotal = Math.max(Number(po?.subtotal) || 0, 0);
+    const grandTotal = Math.max(Number(po?.grandTotal) || 0, 0);
+
+    let receivedLinePortion = 0;
+    for (const item of items) {
+        const ordered = Math.max(Number(item.quantity) || 0, 0);
+        const recv = Math.max(Number(item.receivedQuantity) || 0, 0);
+        if (ordered <= 0 || recv <= 0) continue;
+        const fraction = Math.min(1, recv / ordered);
+
+        const explicitTotal = Number(item.total);
+        if (Number.isFinite(explicitTotal)) {
+            receivedLinePortion += fraction * Math.max(explicitTotal, 0);
+            continue;
+        }
+
+        const price = Math.max(Number(item.purchasePrice) || 0, 0);
+        const discount = Math.max(Number(item.discount) || 0, 0);
+        const tax = Math.max(Number(item.tax) || 0, 0);
+        const lineTotal = Math.max(ordered * price - discount + tax, 0);
+        receivedLinePortion += fraction * lineTotal;
+    }
+
+    if (subtotal > 0 && grandTotal >= 0) {
+        return (receivedLinePortion / subtotal) * grandTotal;
+    }
+
+    const legacy = Number(po?.totalReceivedAmount);
+    if (Number.isFinite(legacy) && legacy > 0) return legacy;
+    return receivedLinePortion;
+};
+
 const sumCompletedGrnValueMinor = async (purchaseOrderId, currency, session) => {
     const q = GRN.find({
         purchaseOrderId,
@@ -151,33 +190,45 @@ const sumCompletedGrnValueMinor = async (purchaseOrderId, currency, session) => 
         const batches = Array.isArray(g.receiveBatches) ? g.receiveBatches : [];
         if (batches.length) {
             for (const b of batches) {
-                const batchTotal =
-                    Number(b.totalAmount) ||
-                    Number(b.grandTotal) ||
-                    Number(b.subtotal) ||
-                    0;
-                if (batchTotal > 0) {
-                    totalMajor += batchTotal;
-                    continue;
-                }
                 const lines = Array.isArray(b.lines) ? b.lines : [];
+                let fromLines = 0;
                 for (const line of lines) {
-                    totalMajor +=
+                    const qty =
+                        Number(line.acceptedQuantity) ||
+                        Math.max(
+                            (Number(line.receivedQuantity) ||
+                                Number(line.receivedQty) ||
+                                0) -
+                                (Number(line.damagedQuantity) || 0),
+                            0
+                        );
+                    const price =
+                        Number(line.purchasePrice) ||
+                        Number(line.unitPrice) ||
+                        0;
+                    fromLines +=
                         Number(line.lineTotal) ||
                         Number(line.total) ||
-                        (Number(line.receivedQty) || 0) *
-                            (Number(line.purchasePrice) ||
-                                Number(line.unitPrice) ||
-                                0);
+                        qty * price;
                 }
+                const batchTotal =
+                    fromLines > 0
+                        ? fromLines
+                        : Number(b.grandTotal) ||
+                          Number(b.subtotal) ||
+                          Number(b.totalAmount) ||
+                          0;
+                totalMajor += batchTotal;
             }
         } else if (g.inventoryUpdated || g.purchaseStatus === "Completed") {
             totalMajor += Number(g.grandTotal) || Number(g.subtotal) || 0;
         }
     }
 
-    // Fallback to PO field if GRN scan yields nothing but PO tracks received
-    return { fromGrnsMinor: toMinor(totalMajor, currency), grnIds: grns.map((g) => g._id) };
+    return {
+        fromGrnsMinor: toMinor(totalMajor, currency),
+        grnIds: grns.map((g) => g._id),
+    };
 };
 
 /**
@@ -204,30 +255,41 @@ const syncFromPurchaseOrder = async (
         throw new AppError("Purchase order has no supplier.", 400);
     }
 
-    const tenantId = await resolveCompanyId(actorId, companyId);
+    const tenantId =
+        toObjectId(po.companyId) ||
+        (await resolveCompanyId(actorId, companyId));
     const currency = assertCurrency(DEFAULT_CURRENCY);
 
     const commitmentMinor = toMinor(po.grandTotal || 0, currency);
-    const poReceivedMinor = toMinor(po.totalReceivedAmount || 0, currency);
+    // Align received value to PO commercial totals (tax / discount / shipping).
+    const poCommercialReceivedMinor = toMinor(
+        computeReceivedValueMajorFromPo(po),
+        currency
+    );
     const { fromGrnsMinor, grnIds } = await sumCompletedGrnValueMinor(
         poId,
         currency,
         session
     );
-    // Prefer the higher of PO rollup vs GRN scan (PO.totalReceivedAmount is authoritative when set)
-    const grnReceivedValueMinor = Math.max(poReceivedMinor, fromGrnsMinor);
+    // Prefer commercial PO allocation; GRN qty×price is only a floor for legacy gaps.
+    const grnReceivedValueMinor = Math.max(
+        poCommercialReceivedMinor,
+        fromGrnsMinor
+    );
     const linkedGrnIds =
         Array.isArray(po.grnIds) && po.grnIds.length
             ? po.grnIds
             : grnIds;
 
     let payableQuery = SupplierPayable.findOne({
-        companyId: tenantId,
         purchaseOrderId: poId,
         ...NOT_DELETED,
     });
     if (session) payableQuery = payableQuery.session(session);
     let payable = await payableQuery;
+    if (payable && tenantId && String(payable.companyId) !== String(tenantId)) {
+        payable.companyId = tenantId;
+    }
 
     const isNew = !payable;
     if (!payable) {
@@ -447,6 +509,8 @@ const listPayables = async (companyId, query = {}) => {
         SupplierPayable.countDocuments(filter),
     ]);
 
+    await refreshPayablesCommercialFromPos(items);
+
     return {
         items: items.map(serializePayable),
         pagination: {
@@ -528,8 +592,61 @@ const syncAfterGrnSafe = async (purchaseOrderId, actorId) => {
     }
 };
 
+/**
+ * Refresh commitment + received commercial value from live PO rows,
+ * then recompute outstanding. Persists only when values change.
+ */
+const refreshPayablesCommercialFromPos = async (payableDocs = []) => {
+    const docs = (payableDocs || []).filter((p) => p && p.purchaseOrderId);
+    if (!docs.length) return docs;
+
+    const poIds = [
+        ...new Set(docs.map((p) => String(p.purchaseOrderId))),
+    ];
+    const pos = await PurchaseOrder.find({
+        _id: { $in: poIds },
+        ...NOT_DELETED,
+    }).select("items subtotal grandTotal totalReceivedAmount");
+    const byPo = new Map(pos.map((p) => [String(p._id), p]));
+
+    const saves = [];
+    for (const payable of docs) {
+        const po = byPo.get(String(payable.purchaseOrderId));
+        if (!po) continue;
+        const currency = assertCurrency(payable.currency || DEFAULT_CURRENCY);
+        const nextCommitment = toMinor(po.grandTotal || 0, currency);
+        const nextReceived = toMinor(
+            computeReceivedValueMajorFromPo(po),
+            currency
+        );
+        if (
+            Number(payable.poCommitmentMinor) === nextCommitment &&
+            Number(payable.grnReceivedValueMinor) === nextReceived
+        ) {
+            const beforeStatus = payable.status;
+            const beforeDue = Number(payable.outstandingMinor) || 0;
+            recomputeHybridBalances(payable);
+            if (
+                payable.status !== beforeStatus ||
+                (Number(payable.outstandingMinor) || 0) !== beforeDue
+            ) {
+                saves.push(payable.save());
+            }
+            continue;
+        }
+        payable.poCommitmentMinor = nextCommitment;
+        payable.grnReceivedValueMinor = nextReceived;
+        payable.lastSyncedAt = new Date();
+        recomputeHybridBalances(payable);
+        saves.push(payable.save());
+    }
+    if (saves.length) await Promise.all(saves);
+    return docs;
+};
+
 module.exports = {
     recomputeHybridBalances,
+    computeReceivedValueMajorFromPo,
     serializePayable,
     syncFromPurchaseOrder,
     applyAdvancePayment,
@@ -540,4 +657,5 @@ module.exports = {
     listPayables,
     getSupplierOutstanding,
     syncAfterGrnSafe,
+    refreshPayablesCommercialFromPos,
 };

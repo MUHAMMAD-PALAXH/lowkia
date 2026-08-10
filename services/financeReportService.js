@@ -17,6 +17,9 @@ const {
     getEmployeePaymentReceipt,
 } = require("./employeePaymentService");
 const { getLineById, getRunById } = require("./payrollRunService");
+const {
+    refreshPayablesCommercialFromPos,
+} = require("./supplierPayableService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -80,7 +83,12 @@ const getDashboard = async (companyId, query = {}) => {
     const payableFilter = {
         companyId,
         ...NOT_DELETED,
-        status: { $in: ["open", "partial"] },
+        status: { $ne: "cancelled" },
+        $or: [
+            { status: { $in: ["open", "partial"] } },
+            { outstandingMinor: { $gt: 0 } },
+            { remainingExposureMinor: { $gt: 0 } },
+        ],
     };
     if (branchId) payableFilter.branchId = branchId;
 
@@ -105,9 +113,7 @@ const getDashboard = async (companyId, query = {}) => {
         paidSupplierMinor,
         paidEmployeeMinor,
     ] = await Promise.all([
-        SupplierPayable.find(payableFilter)
-            .select("outstandingMinor currency status")
-            .lean(),
+        SupplierPayable.find(payableFilter),
         EmployeeAdvance.find(advanceFilter)
             .select("outstandingMinor currency status")
             .lean(),
@@ -149,7 +155,17 @@ const getDashboard = async (companyId, query = {}) => {
         ]),
     ]);
 
-    const payableOutstandingMinor = sumMinor(payables, "outstandingMinor");
+    // Refresh GRN/PO commercial received value so due matches PO totals
+    // (tax / discount / shipping), then recompute outstanding.
+    await refreshPayablesCommercialFromPos(payables);
+
+    const openPayables = payables.filter(
+        (p) =>
+            ["open", "partial"].includes(p.status) ||
+            (Number(p.outstandingMinor) || 0) > 0
+    );
+    const payableOutstandingMinor = sumMinor(openPayables, "outstandingMinor");
+    const payableExposureMinor = sumMinor(openPayables, "remainingExposureMinor");
     const advanceOutstandingMinor = sumMinor(advances, "outstandingMinor");
     const payrollNetPendingMinor = sumMinor(openRuns, "totalNetMinor");
     const supplierPaidMinor = paidSupplierMinor[0]?.total || 0;
@@ -162,10 +178,15 @@ const getDashboard = async (companyId, query = {}) => {
         currency: company.currency || DEFAULT_CURRENCY,
         cards: {
             supplierPayableOutstanding: {
-                count: payables.length,
+                count: openPayables.filter(
+                    (p) => (Number(p.outstandingMinor) || 0) > 0
+                ).length,
                 amountMinor: payableOutstandingMinor,
                 amount: toMajor(payableOutstandingMinor),
                 formatted: formatMoney(payableOutstandingMinor),
+                remainingExposureMinor: payableExposureMinor,
+                remainingExposure: toMajor(payableExposureMinor),
+                remainingExposureFormatted: formatMoney(payableExposureMinor),
             },
             employeeAdvanceOutstanding: {
                 count: advances.length,
@@ -209,12 +230,17 @@ const getSupplierPayablesReport = async (companyId, query = {}) => {
         .populate("supplierId", "supplierCode name companyName")
         .populate("purchaseOrderId", "purchaseOrderNo status grandTotal")
         .sort({ updatedAt: -1 })
-        .limit(Math.min(500, parseInt(query.limit, 10) || 200))
-        .lean();
+        .limit(Math.min(500, parseInt(query.limit, 10) || 200));
+
+    await refreshPayablesCommercialFromPos(items);
 
     const outstandingMinor = sumMinor(
         items.filter((i) => ["open", "partial"].includes(i.status)),
         "outstandingMinor"
+    );
+    const remainingExposureMinor = sumMinor(
+        items.filter((i) => ["open", "partial"].includes(i.status)),
+        "remainingExposureMinor"
     );
 
     return {
@@ -232,19 +258,28 @@ const getSupplierPayablesReport = async (companyId, query = {}) => {
             outstandingMinor,
             outstanding: toMajor(outstandingMinor),
             outstandingFormatted: formatMoney(outstandingMinor),
+            remainingExposureMinor,
+            remainingExposure: toMajor(remainingExposureMinor),
+            remainingExposureFormatted: formatMoney(remainingExposureMinor),
             payableDueMinor: sumMinor(items, "payableDueMinor"),
             paidAgainstPayableMinor: sumMinor(items, "paidAgainstPayableMinor"),
             advancePaidMinor: sumMinor(items, "advancePaidMinor"),
         },
-        items: items.map((row) => ({
-            ...row,
-            amounts: {
-                outstanding: toMajor(row.outstandingMinor || 0),
-                payableDue: toMajor(row.payableDueMinor || 0),
-                paidAgainst: toMajor(row.paidAgainstPayableMinor || 0),
-                advancePaid: toMajor(row.advancePaidMinor || 0),
-            },
-        })),
+        items: items.map((doc) => {
+            const row = doc.toObject ? doc.toObject({ virtuals: true }) : doc;
+            return {
+                ...row,
+                amounts: {
+                    outstanding: toMajor(row.outstandingMinor || 0),
+                    payableDue: toMajor(row.payableDueMinor || 0),
+                    paidAgainst: toMajor(row.paidAgainstPayableMinor || 0),
+                    advancePaid: toMajor(row.advancePaidMinor || 0),
+                    remainingExposure: toMajor(row.remainingExposureMinor || 0),
+                    grnReceivedValue: toMajor(row.grnReceivedValueMinor || 0),
+                    poCommitment: toMajor(row.poCommitmentMinor || 0),
+                },
+            };
+        }),
     };
 };
 
