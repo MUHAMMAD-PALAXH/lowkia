@@ -84,7 +84,7 @@ router.get('/', asyncHandler(async (req, res) => {
       { name: { $regex: search, $options: 'i' } },
       { productCode: { $regex: search, $options: 'i' } },
       { sku: { $regex: search, $options: 'i' } },
-      { shortDescription: { $regex: search, $options: 'i' } }
+      { description: { $regex: search, $options: 'i' } }
     ];
   }
 
@@ -166,8 +166,6 @@ router.post('/', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
       vendorId: req.user._id,
 
       name: body.name,
-      shortName: body.shortName,
-      shortDescription: body.shortDescription,
       description: body.description,
 
       productCode: body.productCode?.toUpperCase(),
@@ -291,8 +289,6 @@ router.put('/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
 
     // Update All Fields
     product.name = body.name || product.name;
-    product.shortName = body.shortName || product.shortName;
-    product.shortDescription = body.shortDescription || product.shortDescription;
     product.description = body.description || product.description;
     product.productCode = body.productCode ? body.productCode.toUpperCase() : product.productCode;
     product.sku = body.sku ? body.sku.toUpperCase() : product.sku;

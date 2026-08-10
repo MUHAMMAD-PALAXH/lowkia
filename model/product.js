@@ -106,19 +106,6 @@ const productSchema = new mongoose.Schema(
             maxlength: 200
         },
 
-        shortName: {
-            type: String,
-            default: "",
-            trim: true,
-            maxlength: 100
-        },
-
-        shortDescription: {
-            type: String,
-            default: "",
-            maxlength: 500
-        },
-
         description: {
             type: String,
             default: ""
@@ -1085,7 +1072,6 @@ productSchema.index({ sku: 1 });
 // Text Search
 productSchema.index({
     name: "text",
-    shortDescription: "text",
     description: "text"
 });
 

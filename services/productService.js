@@ -24,6 +24,8 @@ const PROTECTED_FIELDS = [
     "barcode",
     "barcodeType",
     "barcodeGeneratedAt",
+    "shortName",
+    "shortDescription",
     "uploadedByType",
     "uploadedById",
     "uploadedByModel",
@@ -1294,7 +1296,7 @@ const getProducts = async (query = {}) => {
             { productCode: { $regex: search, $options: "i" } },
             { sku: { $regex: search, $options: "i" } },
             { barcode: { $regex: search, $options: "i" } },
-            { shortDescription: { $regex: search, $options: "i" } }
+            { description: { $regex: search, $options: "i" } }
         ];
     }
 
