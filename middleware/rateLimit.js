@@ -44,4 +44,11 @@ setInterval(() => {
     }
 }, 120_000).unref?.();
 
-module.exports = { rateLimit };
+/** Punch endpoints: tighter than general API traffic. */
+const punchRateLimit = rateLimit({
+    windowMs: 60_000,
+    max: 20,
+    keyPrefix: "punch",
+});
+
+module.exports = { rateLimit, punchRateLimit };

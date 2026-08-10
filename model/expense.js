@@ -478,13 +478,6 @@ notes:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-
-expenseSchema.index({ expenseNumber:1 }, {
-
-    unique:true
-});
 
 
 expenseSchema.index({ expenseDate:-1 });

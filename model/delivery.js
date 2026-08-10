@@ -509,13 +509,6 @@ deletedBy:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-
-deliverySchema.index({ deliveryNumber:1 }, {
-
-    unique:true
-});
 
 
 deliverySchema.index({ salesOrderId:1 });
@@ -525,9 +518,6 @@ deliverySchema.index({ customerId:1 });
 
 
 deliverySchema.index({ warehouseId:1 });
-
-
-deliverySchema.index({ status:1 });
 
 
 deliverySchema.index({ deliveryDate:-1 });

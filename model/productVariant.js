@@ -315,9 +315,7 @@ const productVariantSchema = new mongoose.Schema(
         isDeleted: {
 
             type: Boolean,
-            default: false,
-            index: true
-        },
+            default: false},
 
         deletedAt: {
 
@@ -374,9 +372,6 @@ productVariantSchema.index(
         partialFilterExpression: { isDeleted: false }
     }
 );
-
-// Product Wise
-productVariantSchema.index({ productId: 1 });
 
 // Status
 productVariantSchema.index({ status: 1 });

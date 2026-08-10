@@ -471,13 +471,6 @@ deletedBy:{
 
 // ==========================================================
 // DATABASE INDEXES
-// ==========================================================
-
-
-activityLogSchema.index({ activityNumber:1 }, {
-
-    unique:true
-});
 
 
 activityLogSchema.index({

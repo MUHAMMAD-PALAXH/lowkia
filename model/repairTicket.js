@@ -598,17 +598,12 @@ isDeleted:{
 
 // ======================================================
 // INDEXES
-// ======================================================
-
-repairTicketSchema.index({ ticketNumber:1 }, {unique:true});
-repairTicketSchema.index({status:1});
 repairTicketSchema.index({phone:1});
 repairTicketSchema.index({customerId:1});
 repairTicketSchema.index({assignedTechnician:1});
 repairTicketSchema.index({receivedDate:-1});
 repairTicketSchema.index({expectedDeliveryDate:1});
 repairTicketSchema.index({pickupDate:1});
-repairTicketSchema.index({ branchId:1 });
 
 
 module.exports = mongoose.model("RepairTicket",repairTicketSchema);

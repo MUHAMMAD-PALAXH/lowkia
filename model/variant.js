@@ -105,9 +105,7 @@ const variantSchema = new mongoose.Schema(
 
     isDeleted: {
         type: Boolean,
-        default: false,
-        index: true
-    },
+        default: false},
 
     deletedAt: {
         type: Date,
@@ -140,8 +138,6 @@ variantSchema.index({ variantTypeId: 1,
 variantSchema.index({ code: 1 });
 
 variantSchema.index({ status: 1 });
-
-variantSchema.index({ variantTypeId: 1 });
 
 variantSchema.index({ displayOrder: 1 });
 

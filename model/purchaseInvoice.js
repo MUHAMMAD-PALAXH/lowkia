@@ -521,9 +521,6 @@ const purchaseInvoiceSchema = new mongoose.Schema(
 // DATABASE INDEXES
 // ==========================================================
 
-// Invoice Number Unique
-purchaseInvoiceSchema.index({ invoiceNumber: 1 }, { unique: true });
-
 // Invoice Listing
 purchaseInvoiceSchema.index({ invoiceDate: -1  });
 

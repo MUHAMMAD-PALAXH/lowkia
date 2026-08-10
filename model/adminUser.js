@@ -187,11 +187,7 @@ const adminUserSchema = new mongoose.Schema(
 
 // ======================================================
 // Indexes
-// ======================================================
-
-adminUserSchema.index({ email: 1 });
 adminUserSchema.index({ phone: 1 }, { unique: true, sparse: true });
-adminUserSchema.index({ username: 1 });
 adminUserSchema.index({ role: 1 });
 adminUserSchema.index({ companyId: 1, role: 1 });
 

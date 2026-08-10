@@ -128,9 +128,7 @@ const subCategorySchema = new mongoose.Schema(
 
     isDeleted: {
         type: Boolean,
-        default: false,
-        index: true
-    },
+        default: false},
 
     deletedAt: {
         type: Date,
@@ -160,10 +158,6 @@ subCategorySchema.index({ categoryId: 1,
     });
 
 subCategorySchema.index({ slug: 1 });
-
-subCategorySchema.index({ status: 1 });
-
-subCategorySchema.index({ categoryId: 1 });
 
 subCategorySchema.index({ isFeatured: 1 });
 

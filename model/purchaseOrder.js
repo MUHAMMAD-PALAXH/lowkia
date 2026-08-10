@@ -959,12 +959,6 @@ const purchaseOrderSchema = new mongoose.Schema(
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-purchaseOrderSchema.index({ purchaseOrderNo: 1 }, {
-
-        unique: true
-    });
 
 purchaseOrderSchema.index({
 

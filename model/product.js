@@ -437,8 +437,7 @@ const productSchema = new mongoose.Schema(
 
         sourcePurchaseOrderItemId: {
             type: mongoose.Schema.Types.ObjectId,
-            default: null,
-            index: true
+            default: null
         },
 
         sourcePurchaseOrderNo: {
@@ -1023,15 +1022,6 @@ productSchema.index({ productCode: 1 }, {
 
 // Product Name Search
 productSchema.index({ name: 1 });
-
-// Category Wise Products
-productSchema.index({ proCategoryId: 1 });
-
-// Sub Category Wise Products
-productSchema.index({ proSubCategoryId: 1 });
-
-// Brand Wise Products
-productSchema.index({ proBrandId: 1 });
 
 // Product Status
 productSchema.index({ status: 1,

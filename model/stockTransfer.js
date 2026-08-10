@@ -606,13 +606,6 @@ deletedBy:{
 
 // ==========================================================
 // DATABASE INDEXES
-// ==========================================================
-
-
-stockTransferSchema.index({ transferNumber:1 }, {
-
-    unique:true
-});
 
 
 stockTransferSchema.index({

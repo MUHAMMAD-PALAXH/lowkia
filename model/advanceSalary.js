@@ -456,13 +456,6 @@ notes:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-
-advanceSalarySchema.index({ requestNumber:1 }, {
-
-    unique:true
-});
 
 
 advanceSalarySchema.index({

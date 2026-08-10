@@ -533,13 +533,6 @@ notes:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-
-payslipSchema.index({ payslipNumber:1 }, {
-
-    unique:true
-});
 
 
 payslipSchema.index({
@@ -552,9 +545,6 @@ payslipSchema.index({
     payrollMonth:-1
 
 });
-
-
-payslipSchema.index({ payrollId:1 });
 
 
 payslipSchema.index({ approvalStatus:1 });

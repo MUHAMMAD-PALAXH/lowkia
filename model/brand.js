@@ -150,9 +150,7 @@ const brandSchema = new mongoose.Schema(
 
     isDeleted: {
         type: Boolean,
-        default: false,
-        index: true
-    },
+        default: false},
 
     deletedAt: {
         type: Date,
@@ -183,10 +181,6 @@ brandSchema.index({ subcategoryId: 1,
     });
 
 brandSchema.index({ slug: 1 });
-
-brandSchema.index({ status: 1 });
-
-brandSchema.index({ subcategoryId: 1 });
 
 brandSchema.index({ isFeatured: 1 });
 

@@ -493,13 +493,6 @@ deletedAt:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-
-salesReturnSchema.index({ returnNumber:1 }, {
-
-    unique:true
-});
 
 
 salesReturnSchema.index({ salesInvoiceId:1 });

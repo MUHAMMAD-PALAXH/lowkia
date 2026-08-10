@@ -537,13 +537,6 @@ notes:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-
-employeeLoanSchema.index({ loanNumber:1 }, {
-
-    unique:true
-});
 
 
 employeeLoanSchema.index({

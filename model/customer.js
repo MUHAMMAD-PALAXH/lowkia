@@ -523,13 +523,6 @@ deletedAt:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-
-customerSchema.index({ customerCode:1 }, {
-
-    unique:true
-});
 
 
 customerSchema.index({ name:1 });

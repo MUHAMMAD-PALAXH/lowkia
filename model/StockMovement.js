@@ -479,12 +479,6 @@ const stockMovementSchema = new mongoose.Schema(
 // DATABASE INDEXES
 // ==========================================================
 
-// Movement Number (already unique in field definition)
-stockMovementSchema.index({ movementNumber: 1 }, { unique: true });
-
-// Date Report
-stockMovementSchema.index({ movementDate: -1  });
-
 // Warehouse Stock History
 stockMovementSchema.index({ warehouseId: 1, movementDate: -1  });
 

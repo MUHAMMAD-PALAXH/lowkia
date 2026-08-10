@@ -463,9 +463,6 @@ const purchaseReturnSchema = new mongoose.Schema(
 // DATABASE INDEXES
 // ==========================================================
 
-// Return Number Unique
-purchaseReturnSchema.index({ returnNumber: 1 }, { unique: true });
-
 // Return Report
 purchaseReturnSchema.index({ returnDate: -1  });
 

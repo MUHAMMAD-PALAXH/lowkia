@@ -639,27 +639,15 @@ remarks:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-grnSchema.index({ grnNumber:1 }, {
-
-    unique:true
-});
 
 
 grnSchema.index({ purchaseOrderId:1 });
-
-
-grnSchema.index({ supplierId:1 });
 
 
 grnSchema.index({ warehouseId:1 });
 
 
 grnSchema.index({ receivedDate:-1 });
-
-
-grnSchema.index({ status:1 });
 
 
 grnSchema.index({ qualityStatus:1 });

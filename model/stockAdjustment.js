@@ -374,9 +374,6 @@ const stockAdjustmentSchema = new mongoose.Schema(
 
 // ==========================================================
 // DATABASE INDEXES
-// ==========================================================
-
-stockAdjustmentSchema.index({ adjustmentNumber: 1  }, { unique: true });
 stockAdjustmentSchema.index({ adjustmentDate: -1  });
 stockAdjustmentSchema.index({ warehouseId: 1, adjustmentDate: -1 });
 stockAdjustmentSchema.index({ status: 1 });

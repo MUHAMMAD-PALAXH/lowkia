@@ -569,13 +569,6 @@ deletedAt:{
 
 // ==========================================================
 // DATABASE INDEXES
-// ==========================================================
-
-
-salesInvoiceSchema.index({ invoiceNumber:1 }, {
-
-    unique:true
-});
 
 
 salesInvoiceSchema.index({ customerId:1 });

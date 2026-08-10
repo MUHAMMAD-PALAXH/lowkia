@@ -469,13 +469,6 @@ deletedBy:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-
-salesQuotationSchema.index({ quotationNumber:1 }, {
-
-    unique:true
-});
 
 
 salesQuotationSchema.index({ customerId:1 });

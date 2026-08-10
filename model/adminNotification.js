@@ -555,13 +555,6 @@ deletedBy:{
 
 // ==========================================================
 // DATABASE INDEXES
-// ==========================================================
-
-
-notificationSchema.index({ notificationNumber:1 }, {
-
-    unique:true
-});
 
 
 notificationSchema.index({
@@ -574,9 +567,6 @@ notificationSchema.index({
     createdAt:-1
 
 });
-
-
-notificationSchema.index({ notificationType:1 });
 
 
 notificationSchema.index({ priority:1 });

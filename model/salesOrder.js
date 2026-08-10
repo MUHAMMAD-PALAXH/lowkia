@@ -758,13 +758,6 @@ deletedBy:{
 
 // ==========================================================
 // INDEXES
-// ==========================================================
-
-
-salesOrderSchema.index({ orderNumber:1 }, {
-
-    unique:true
-});
 
 
 salesOrderSchema.index({ customerId:1 });
