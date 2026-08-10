@@ -171,7 +171,13 @@ class StripePaymentProvider extends PaymentProvider {
             currency,
             customer: customerId || undefined,
             description: input.description || undefined,
-            metadata: input.metadata || {},
+            metadata: {
+                ...(input.metadata || {}),
+                // ERP method (CARD / APPLE_PAY). Apple Pay is a card wallet in Stripe —
+                // not a separate payment_method_types value.
+                erpPaymentMethod: String(input.erpPaymentMethod || "CARD"),
+            },
+            // Enables card + wallets (Apple Pay / Google Pay) when turned on in Dashboard.
             automatic_payment_methods: { enabled: true },
         });
 

@@ -276,12 +276,14 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
                     payload.customerName,
                 description: `SO ${order.orderNumber || order._id}`,
                 createEphemeralKey: payload.createEphemeralKey === true,
+                erpPaymentMethod: paymentMethod,
                 metadata: {
                     companyId: String(companyId),
                     paymentId: String(payment._id),
                     paymentNumber: payment.paymentNumber,
                     salesOrderId: String(order._id),
                     orderNumber: String(order.orderNumber || ""),
+                    paymentMethod: String(paymentMethod),
                 },
             });
             payment.providerPaymentIntentId = intent.providerPaymentIntentId;
@@ -517,11 +519,13 @@ const completeCheckout = async (paymentId, user, meta = {}) => {
                     paymentMethod:
                         payment.paymentMethod === "CARD"
                             ? "Card"
-                            : payment.paymentMethod === "CASH"
-                              ? "Cash"
-                              : payment.paymentMethod === "BANK_TRANSFER"
-                                ? "Bank"
-                                : order.paymentMethod,
+                            : payment.paymentMethod === "APPLE_PAY"
+                              ? "Apple Pay"
+                              : payment.paymentMethod === "CASH"
+                                ? "Cash"
+                                : payment.paymentMethod === "BANK_TRANSFER"
+                                  ? "Bank"
+                                  : order.paymentMethod,
                 },
                 user?._id || null
             );
@@ -702,7 +706,7 @@ const getProviderInfo = () => ({
     stripeConfigured: isStripeConfigured(),
     publishableKey: getStripePublishableKey() || null,
     supportedMethods: ["CARD", "APPLE_PAY", "CASH", "BANK_TRANSFER"],
-    note: "Card data never touches Lowkia servers — Stripe PaymentIntents only.",
+    note: "Card / Apple Pay never touch Lowkia servers — Stripe PaymentIntents + wallets only. Enable Apple Pay in Stripe Dashboard → Settings → Payment methods.",
 });
 
 module.exports = {
