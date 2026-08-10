@@ -184,59 +184,120 @@ const getSuppliers = async (query = {}) => {
 };
 
 /**
- * Live PO rollups for purchase / paid / due (stored supplier totals are often stale).
+ * Live supplier rollups:
+ * - Total / Due do NOT include PO commitment on create
+ * - After GRN: recognize received commercial value
+ * - Advance payment agreements (Agreed+): recognize planned advance schedule
+ */
+const ADVANCE_PAYMENT_TYPES = new Set([
+    "Advance Full",
+    "Partial",
+    "Advance Partial"
+]);
+
+const AGREED_OR_LATER = new Set([
+    "Agreed",
+    "Supplier Accepted",
+    "Partially Delivered",
+    "Completely Delivered",
+    "Partially Received",
+    "Received",
+    "Completed",
+    "Closed"
+]);
+
+const plannedScheduleAmount = (phase, grandTotal) => {
+    const raw = Math.max(Number(phase?.amount) || 0, 0);
+    if (String(phase?.amountType || "Fixed") === "Percentage") {
+        return Math.max(((Number(grandTotal) || 0) * raw) / 100, 0);
+    }
+    return raw;
+};
+
+const roundMoney2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+const computePoSupplierFinancialSlice = (po) => {
+    const status = String(po?.status || "");
+    if (["Cancelled", "Rejected"].includes(status)) {
+        return { purchase: 0, paid: 0, due: 0 };
+    }
+
+    const grand = Math.max(Number(po?.grandTotal) || 0, 0);
+    const paid = roundMoney2(Math.max(Number(po?.paidAmount) || 0, 0));
+    const { computeReceivedValueMajorFromPo } = require("./supplierPayableService");
+    const received = roundMoney2(computeReceivedValueMajorFromPo(po));
+    const payType = String(po?.supplierPaymentType || "").trim();
+    const schedule = Array.isArray(po?.supplierPaymentSchedule)
+        ? po.supplierPaymentSchedule
+        : [];
+
+    // Agreement-recognized amount (advance) only after both sides Agreed.
+    let agreementRecognized = 0;
+    if (ADVANCE_PAYMENT_TYPES.has(payType) && AGREED_OR_LATER.has(status)) {
+        if (schedule.length) {
+            let planned = 0;
+            for (const phase of schedule) {
+                planned += plannedScheduleAmount(phase, grand);
+            }
+            agreementRecognized = Math.min(roundMoney2(planned), grand);
+        } else if (payType === "Advance Full") {
+            agreementRecognized = grand;
+        }
+    }
+
+    // Purchase/Total = goods received, or advance agreement amount if earlier.
+    const purchase = roundMoney2(Math.max(received, agreementRecognized));
+    const due = roundMoney2(Math.max(0, purchase - paid));
+    return { purchase, paid, due };
+};
+
+const PO_FIN_SELECT =
+    "supplierId status grandTotal paidAmount subtotal items totalReceivedAmount supplierPaymentType supplierPaymentSchedule orderDate";
+
+const rollupSupplierFinancialsFromPos = (purchaseOrders = []) => {
+    const bySupplier = new Map();
+    for (const po of purchaseOrders) {
+        const sid = String(po.supplierId?._id || po.supplierId || "");
+        if (!sid) continue;
+        const slice = computePoSupplierFinancialSlice(po);
+        const prev = bySupplier.get(sid) || {
+            totalPurchaseAmount: 0,
+            totalPaidAmount: 0,
+            totalDueAmount: 0,
+            lastPurchaseDate: null
+        };
+        prev.totalPurchaseAmount = roundMoney2(
+            prev.totalPurchaseAmount + slice.purchase
+        );
+        prev.totalPaidAmount = roundMoney2(prev.totalPaidAmount + slice.paid);
+        prev.totalDueAmount = roundMoney2(prev.totalDueAmount + slice.due);
+        const od = po.orderDate ? new Date(po.orderDate) : null;
+        if (
+            od &&
+            (!prev.lastPurchaseDate || od > new Date(prev.lastPurchaseDate))
+        ) {
+            prev.lastPurchaseDate = od;
+        }
+        bySupplier.set(sid, prev);
+    }
+    return bySupplier;
+};
+
+/**
+ * Live PO rollups for purchase / paid / due (GRN + payment agreement based).
  */
 const attachLiveFinancials = async (suppliers = []) => {
     const docs = Array.isArray(suppliers) ? suppliers : [];
     if (!docs.length) return [];
 
     const ids = docs.map((s) => s._id).filter(Boolean);
-    const rows = await PurchaseOrder.aggregate([
-        {
-            $match: {
-                supplierId: { $in: ids },
-                isDeleted: { $ne: true },
-                status: { $nin: ["Cancelled", "Rejected"] }
-            }
-        },
-        {
-            $group: {
-                _id: "$supplierId",
-                totalPurchaseAmount: {
-                    $sum: { $ifNull: ["$grandTotal", 0] }
-                },
-                totalPaidAmount: {
-                    $sum: { $ifNull: ["$paidAmount", 0] }
-                },
-                totalDueAmount: {
-                    $sum: {
-                        $max: [
-                            0,
-                            {
-                                $subtract: [
-                                    { $ifNull: ["$grandTotal", 0] },
-                                    { $ifNull: ["$paidAmount", 0] }
-                                ]
-                            }
-                        ]
-                    }
-                },
-                lastPurchaseDate: { $max: "$orderDate" }
-            }
-        }
-    ]);
+    const pos = await PurchaseOrder.find({
+        supplierId: { $in: ids },
+        isDeleted: { $ne: true },
+        status: { $nin: ["Cancelled", "Rejected"] }
+    }).select(PO_FIN_SELECT);
 
-    const byId = new Map(
-        rows.map((r) => [
-            String(r._id),
-            {
-                totalPurchaseAmount: Number(r.totalPurchaseAmount) || 0,
-                totalPaidAmount: Number(r.totalPaidAmount) || 0,
-                totalDueAmount: Math.max(Number(r.totalDueAmount) || 0, 0),
-                lastPurchaseDate: r.lastPurchaseDate || null
-            }
-        ])
-    );
+    const byId = rollupSupplierFinancialsFromPos(pos);
 
     // Persist corrected rollups so stats / due-report stay accurate.
     const writes = [];
@@ -258,7 +319,7 @@ const attachLiveFinancials = async (suppliers = []) => {
             )
         );
     }
-    // Also zero-out suppliers on this page with no active POs but stale dues.
+    // Zero-out suppliers on this page with no recognizable dues but stale stored totals.
     for (const s of docs) {
         const key = String(s._id);
         if (byId.has(key)) continue;
@@ -301,7 +362,13 @@ const attachLiveFinancials = async (suppliers = []) => {
             ? doc.toObject({ virtuals: true })
             : { ...doc };
         const fin = byId.get(String(doc._id));
-        if (!fin) return plain;
+        if (!fin) {
+            plain.totalPurchaseAmount = 0;
+            plain.totalPaidAmount = 0;
+            plain.totalDueAmount = 0;
+            plain.currentBalance = 0;
+            return plain;
+        }
         plain.totalPurchaseAmount = fin.totalPurchaseAmount;
         plain.totalPaidAmount = fin.totalPaidAmount;
         plain.totalDueAmount = fin.totalDueAmount;
@@ -312,7 +379,7 @@ const attachLiveFinancials = async (suppliers = []) => {
 };
 
 /**
- * Recompute one supplier's purchase / paid / due from non-cancelled POs.
+ * Recompute one supplier's purchase / paid / due from GRN + payment agreement.
  */
 const recomputeSupplierFinancials = async (supplierId, { session = null } = {}) => {
     if (!supplierId) return null;
@@ -321,60 +388,29 @@ const recomputeSupplierFinancials = async (supplierId, { session = null } = {}) 
         : null;
     if (!sid) return null;
 
-    const pipeline = [
-        {
-            $match: {
-                supplierId: sid,
-                isDeleted: { $ne: true },
-                status: { $nin: ["Cancelled", "Rejected"] }
-            }
-        },
-        {
-            $group: {
-                _id: null,
-                totalPurchaseAmount: {
-                    $sum: { $ifNull: ["$grandTotal", 0] }
-                },
-                totalPaidAmount: {
-                    $sum: { $ifNull: ["$paidAmount", 0] }
-                },
-                totalDueAmount: {
-                    $sum: {
-                        $max: [
-                            0,
-                            {
-                                $subtract: [
-                                    { $ifNull: ["$grandTotal", 0] },
-                                    { $ifNull: ["$paidAmount", 0] }
-                                ]
-                            }
-                        ]
-                    }
-                },
-                lastPurchaseDate: { $max: "$orderDate" },
-                lastPaymentDate: { $max: "$updatedAt" }
-            }
-        }
-    ];
+    let poQ = PurchaseOrder.find({
+        supplierId: sid,
+        isDeleted: { $ne: true },
+        status: { $nin: ["Cancelled", "Rejected"] }
+    }).select(PO_FIN_SELECT);
+    if (session) poQ = poQ.session(session);
+    const pos = await poQ;
 
-    let aggQ = PurchaseOrder.aggregate(pipeline);
-    if (session) aggQ = aggQ.session(session);
-    const [row] = await aggQ;
-
-    const totalPurchaseAmount = Number(row?.totalPurchaseAmount) || 0;
-    const totalPaidAmount = Number(row?.totalPaidAmount) || 0;
-    const totalDueAmount = Math.max(
-        Number(row?.totalDueAmount) || totalPurchaseAmount - totalPaidAmount,
-        0
-    );
+    const rolled = rollupSupplierFinancialsFromPos(pos);
+    const fin = rolled.get(String(sid)) || {
+        totalPurchaseAmount: 0,
+        totalPaidAmount: 0,
+        totalDueAmount: 0,
+        lastPurchaseDate: null
+    };
 
     const update = {
-        totalPurchaseAmount,
-        totalPaidAmount,
-        totalDueAmount,
-        currentBalance: totalDueAmount
+        totalPurchaseAmount: fin.totalPurchaseAmount,
+        totalPaidAmount: fin.totalPaidAmount,
+        totalDueAmount: fin.totalDueAmount,
+        currentBalance: fin.totalDueAmount
     };
-    if (row?.lastPurchaseDate) update.lastPurchaseDate = row.lastPurchaseDate;
+    if (fin.lastPurchaseDate) update.lastPurchaseDate = fin.lastPurchaseDate;
 
     const opts = session ? { session } : undefined;
     await Supplier.updateOne({ _id: sid }, { $set: update }, opts);
@@ -749,57 +785,34 @@ const getPurchaseReport = async () => {
 };
 
 const getDueReport = async () => {
-    // Prefer live PO dues so the report matches the supplier list.
-    const rows = await PurchaseOrder.aggregate([
-        {
-            $match: {
-                isDeleted: { $ne: true },
-                status: { $nin: ["Cancelled", "Rejected"] }
-            }
-        },
-        {
-            $group: {
-                _id: "$supplierId",
-                totalDueAmount: {
-                    $sum: {
-                        $max: [
-                            0,
-                            {
-                                $subtract: [
-                                    { $ifNull: ["$grandTotal", 0] },
-                                    { $ifNull: ["$paidAmount", 0] }
-                                ]
-                            }
-                        ]
-                    }
-                },
-                totalPurchaseAmount: {
-                    $sum: { $ifNull: ["$grandTotal", 0] }
-                },
-                totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } }
-            }
-        },
-        { $match: { totalDueAmount: { $gt: 0 } } },
-        { $sort: { totalDueAmount: -1 } }
-    ]);
+    const pos = await PurchaseOrder.find({
+        isDeleted: { $ne: true },
+        status: { $nin: ["Cancelled", "Rejected"] },
+        supplierId: { $ne: null }
+    }).select(PO_FIN_SELECT);
 
-    if (!rows.length) return [];
+    const byId = rollupSupplierFinancialsFromPos(pos);
+    const dueRows = [...byId.entries()]
+        .filter(([, fin]) => (fin.totalDueAmount || 0) > 0)
+        .sort((a, b) => b[1].totalDueAmount - a[1].totalDueAmount);
+
+    if (!dueRows.length) return [];
 
     const suppliers = await Supplier.find({
-        _id: { $in: rows.map((r) => r._id).filter(Boolean) },
+        _id: { $in: dueRows.map(([id]) => id) },
         isDeleted: false
     });
-    const byId = new Map(suppliers.map((s) => [String(s._id), s]));
+    const suppliersById = new Map(suppliers.map((s) => [String(s._id), s]));
 
-    return rows
-        .map((r) => {
-            const s = byId.get(String(r._id));
+    return dueRows
+        .map(([id, fin]) => {
+            const s = suppliersById.get(id);
             if (!s) return null;
             const plain = s.toObject({ virtuals: true });
-            plain.totalDueAmount = Number(r.totalDueAmount) || 0;
-            plain.totalPurchaseAmount = Number(r.totalPurchaseAmount) || 0;
-            plain.totalPaidAmount = Number(r.totalPaidAmount) || 0;
-            plain.currentBalance = plain.totalDueAmount;
+            plain.totalDueAmount = fin.totalDueAmount;
+            plain.totalPurchaseAmount = fin.totalPurchaseAmount;
+            plain.totalPaidAmount = fin.totalPaidAmount;
+            plain.currentBalance = fin.totalDueAmount;
             return plain;
         })
         .filter(Boolean);
@@ -1890,9 +1903,16 @@ const getSupplierDetails = async (id, query = {}) => {
         };
     });
 
-    const lifetimeSpend = Number(agg.lifetimeSpend) || 0;
-    const lifetimePaid = Number(agg.lifetimePaid) || 0;
-    const lifetimeDue = Number(agg.lifetimeDue) || 0;
+    const liveFin = rollupSupplierFinancialsFromPos(purchaseOrders).get(
+        String(supplierId)
+    ) || {
+        totalPurchaseAmount: 0,
+        totalPaidAmount: 0,
+        totalDueAmount: 0
+    };
+    const lifetimeSpend = liveFin.totalPurchaseAmount;
+    const lifetimePaid = liveFin.totalPaidAmount;
+    const lifetimeDue = liveFin.totalDueAmount;
     const poCount = Number(agg.poCount) || 0;
     const activePoCount = Math.max(poCount - (Number(agg.cancelledPoCount) || 0), 0);
     const qtyOrdered = Number(agg.totalQtyOrdered) || 0;
