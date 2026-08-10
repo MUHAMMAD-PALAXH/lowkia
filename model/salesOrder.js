@@ -123,6 +123,12 @@ const salesOrderItemSchema = new mongoose.Schema(
         default:"Non-IMEI"
     },
 
+    /** Warehouse actually used for stock OUT (may differ from order header). */
+    stockWarehouseId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Warehouse",
+        default: null,
+    },
 
     imeis:{
 

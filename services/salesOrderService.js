@@ -39,21 +39,201 @@ const resolveTrackingType = (value) =>
 const populateSo = (query) =>
     query
         .populate("branchId", "name code city branchCode")
-        .populate("warehouseId", "warehouseCode warehouseName city status")
+        .populate("warehouseId", "warehouseCode warehouseName city status isDefault")
+        .populate("supplierId", "supplierCode name phone email")
         .populate(
             "customerId",
             "customerCode name companyName phone email status paymentTerms creditLimit"
         )
         .populate(
             "items.productId",
-            "name productCode trackingType productType totalStock availableStock sellingPrice"
+            "name productCode trackingType productType productSourceType totalStock availableStock sellingPrice warehouseIds branchIds primarySupplierId warehouseStock suppliers"
         )
         .populate(
             "items.productVariantId",
             "sku combinationString sellingPrice attributes quantity"
         )
+        .populate(
+            "items.stockWarehouseId",
+            "warehouseCode warehouseName city status"
+        )
         .populate("approvedBy", "name email")
         .populate("createdBy", "name email");
+
+/**
+ * Ensure a durable operational warehouse exists for products with no location.
+ * Prefer isDefault, then oldest active, else create UNASSIGNED.
+ */
+const ensureOperationalWarehouseId = async () => {
+    const activeFilter = {
+        ...NOT_DELETED,
+        $or: [
+            { status: "Active" },
+            { status: { $exists: false } },
+            { status: "" },
+        ],
+    };
+
+    let wh = await Warehouse.findOne({
+        ...activeFilter,
+        isDefault: true,
+    })
+        .select("_id")
+        .lean();
+    if (wh?._id) return wh._id;
+
+    wh = await Warehouse.findOne({
+        ...activeFilter,
+        warehouseCode: "UNASSIGNED",
+    })
+        .select("_id")
+        .lean();
+    if (wh?._id) return wh._id;
+
+    wh = await Warehouse.findOne(activeFilter)
+        .sort({ createdAt: 1 })
+        .select("_id")
+        .lean();
+    if (wh?._id) return wh._id;
+
+    // Create accountable system warehouse so stock movements never lack warehouseId
+    const created = await Warehouse.create({
+        warehouseCode: "UNASSIGNED",
+        warehouseName: "Unassigned / Flexible Stock",
+        warehouseType: "Main Warehouse",
+        isDefault: true,
+        status: "Active",
+        city: "System",
+        country: "Bangladesh",
+        fullAddress: "System warehouse for products without a linked location",
+        description:
+            "Auto-created for flexible sales stock-out when no warehouse is linked.",
+    });
+    return created._id;
+};
+
+/** Find any inventory row with available qty for this product/variant. */
+const findInventoryWithStock = async ({
+    productId,
+    productVariantId,
+    preferWarehouseId = null,
+    session = null,
+}) => {
+    const base = {
+        productId: toObjectId(productId) || productId,
+        isDeleted: { $ne: true },
+        availableStock: { $gt: 0 },
+    };
+    const vid = toObjectId(productVariantId);
+    if (vid) base.productVariantId = vid;
+    else {
+        base.$or = [
+            { productVariantId: null },
+            { productVariantId: { $exists: false } },
+        ];
+    }
+
+    if (preferWarehouseId) {
+        const preferred = await Inventory.findOne({
+            ...base,
+            warehouseId: toObjectId(preferWarehouseId) || preferWarehouseId,
+        }).session(session || null);
+        if (preferred) return preferred;
+    }
+
+    return Inventory.findOne(base)
+        .sort({ availableStock: -1 })
+        .session(session || null);
+};
+
+/**
+ * Resolve warehouse for a sale line / order:
+ * 1) order header warehouse
+ * 2) warehouse that already holds stock for the line
+ * 3) product.warehouseIds / branch-linked warehouse
+ * 4) default / UNASSIGNED operational warehouse
+ */
+const resolveWarehouseForSaleLine = async ({
+    order,
+    line,
+    session = null,
+} = {}) => {
+    const candidates = [];
+    const push = (id) => {
+        const oid = toObjectId(id) || id;
+        if (oid && !candidates.some((c) => String(c) === String(oid))) {
+            candidates.push(oid);
+        }
+    };
+
+    push(order?.warehouseId);
+    push(line?.stockWarehouseId);
+    push(line?.warehouseId);
+
+    const productId = toObjectId(line?.productId) || line?.productId;
+    let product = null;
+    if (productId) {
+        product = await Product.findOne({ _id: productId, ...NOT_DELETED })
+            .session(session || null)
+            .select("warehouseIds branchIds productSourceType trackingType")
+            .lean();
+        (product?.warehouseIds || []).forEach(push);
+    }
+
+    // Prefer a warehouse that already has stock
+    const withStock = await findInventoryWithStock({
+        productId,
+        productVariantId: line?.productVariantId,
+        preferWarehouseId: candidates[0] || null,
+        session,
+    });
+    if (withStock?.warehouseId) {
+        return toObjectId(withStock.warehouseId) || withStock.warehouseId;
+    }
+
+    if (product?.branchIds?.length) {
+        const branchWh = await Warehouse.findOne({
+            ...NOT_DELETED,
+            branchIds: { $in: product.branchIds.map((id) => toObjectId(id)).filter(Boolean) },
+            $or: [
+                { status: "Active" },
+                { status: { $exists: false } },
+                { status: "" },
+            ],
+        })
+            .session(session || null)
+            .select("_id")
+            .lean();
+        if (branchWh?._id) return branchWh._id;
+    }
+
+    if (order?.branchId) {
+        const orderBranchWh = await Warehouse.findOne({
+            ...NOT_DELETED,
+            $or: [
+                { branchId: order.branchId },
+                { branchIds: order.branchId },
+            ],
+            $and: [
+                {
+                    $or: [
+                        { status: "Active" },
+                        { status: { $exists: false } },
+                        { status: "" },
+                    ],
+                },
+            ],
+        })
+            .session(session || null)
+            .select("_id")
+            .lean();
+        if (orderBranchWh?._id) return orderBranchWh._id;
+    }
+
+    if (candidates.length) return candidates[0];
+
+    return ensureOperationalWarehouseId();
+};
 
 const chargeType = (value) =>
     String(value || "Fixed").toLowerCase() === "percentage"
@@ -582,40 +762,42 @@ const reverseStockForTrash = async (order, actorId = null) => {
     const productIds = new Set();
 
     try {
-        if (order.warehouseId) {
-            for (const line of order.items || []) {
-                const qty = Number(line.quantity) || 0;
-                if (qty <= 0) continue;
-                const trackingType = resolveTrackingType(line.trackingType);
+        for (const line of order.items || []) {
+            const qty = Number(line.quantity) || 0;
+            if (qty <= 0) continue;
+            const trackingType = resolveTrackingType(line.trackingType);
+            const restoreWh =
+                line.stockWarehouseId || order.warehouseId || null;
+            if (!restoreWh) continue;
 
-                if (trackingType === "IMEI") {
-                    await unmarkImeisSold({
-                        productId: line.productId,
-                        variantId: line.productVariantId,
-                        imeis: line.imeis || [],
-                        salesOrderId: order._id,
-                        session
-                    });
-                }
-
-                await restoreInventoryQty({
-                    warehouseId: order.warehouseId,
-                    branchId: order.branchId,
+            if (trackingType === "IMEI") {
+                await unmarkImeisSold({
                     productId: line.productId,
-                    productVariantId: line.productVariantId,
-                    sku: line.sku,
-                    productName: line.productName,
-                    qty,
-                    unitCost: line.unitPrice,
+                    variantId: line.productVariantId,
+                    imeis: line.imeis || [],
                     salesOrderId: order._id,
-                    actorId,
                     session
                 });
-
-                line.deliveredQuantity = 0;
-                line.pendingQuantity = qty;
-                if (line.productId) productIds.add(String(line.productId));
             }
+
+            await restoreInventoryQty({
+                warehouseId: restoreWh,
+                branchId: order.branchId,
+                productId: line.productId,
+                productVariantId: line.productVariantId,
+                sku: line.sku,
+                productName: line.productName,
+                qty,
+                unitCost: line.unitPrice,
+                salesOrderId: order._id,
+                actorId,
+                session
+            });
+
+            line.deliveredQuantity = 0;
+            line.pendingQuantity = qty;
+            line.stockWarehouseId = null;
+            if (line.productId) productIds.add(String(line.productId));
         }
 
         order.stockUpdated = false;
@@ -1188,8 +1370,10 @@ const deductInventory = async ({
     orderCreatedBy,
     session
 }) => {
+    let resolvedWarehouseId = toObjectId(warehouseId) || warehouseId;
+
     let inv = await findInventoryRow({
-        warehouseId,
+        warehouseId: resolvedWarehouseId,
         productId,
         productVariantId,
         session
@@ -1198,7 +1382,7 @@ const deductInventory = async ({
     if (!inv) {
         // Manual / ThirdParty opening qty may exist without an Inventory row yet.
         inv = await productService.materializeOpeningInventoryForWarehouse({
-            warehouseId,
+            warehouseId: resolvedWarehouseId,
             branchId,
             productId,
             productVariantId,
@@ -1206,23 +1390,64 @@ const deductInventory = async ({
         });
     }
 
+    // Flexible: if preferred warehouse has no stock, use a warehouse that does.
+    if (!inv || (Number(inv.availableStock) || 0) < qty) {
+        const alt = await findInventoryWithStock({
+            productId,
+            productVariantId,
+            preferWarehouseId: null,
+            session,
+        });
+        if (
+            alt &&
+            String(alt.warehouseId) !== String(resolvedWarehouseId) &&
+            (Number(alt.availableStock) || 0) >= qty
+        ) {
+            resolvedWarehouseId = alt.warehouseId;
+            inv = alt;
+        }
+    }
+
+    if (!inv) {
+        // Last resort: operational warehouse + materialize Manual opening stock
+        const fallbackWh = await ensureOperationalWarehouseId();
+        if (String(fallbackWh) !== String(resolvedWarehouseId)) {
+            resolvedWarehouseId = fallbackWh;
+            inv = await productService.materializeOpeningInventoryForWarehouse({
+                warehouseId: resolvedWarehouseId,
+                branchId,
+                productId,
+                productVariantId,
+                session
+            });
+            if (!inv) {
+                inv = await findInventoryRow({
+                    warehouseId: resolvedWarehouseId,
+                    productId,
+                    productVariantId,
+                    session
+                });
+            }
+        }
+    }
+
     if (!inv) {
         const elsewhere = await describeOtherWarehouses({
             productId,
             productVariantId,
-            excludeWarehouseId: warehouseId,
+            excludeWarehouseId: resolvedWarehouseId,
             session
         });
         if (elsewhere.length) {
             throw new AppError(
-                `No inventory for "${productName}" in this warehouse. Stock is in: ${elsewhere.join(
+                `No inventory for "${productName}" in the selected warehouse. Stock is in: ${elsewhere.join(
                     ", "
                 )}. Change the order warehouse or transfer stock.`,
                 400
             );
         }
         throw new AppError(
-            `No inventory for "${productName}" in this warehouse. Receive stock via GRN, or for Manual/Third Party products set opening qty and link a warehouse, then save the product again.`,
+            `No inventory for "${productName}". Receive stock via GRN, or for Manual/Third Party products set opening qty (and optionally a warehouse) then save the product again.`,
             400
         );
     }
@@ -1252,7 +1477,7 @@ const deductInventory = async ({
             {
                 movementNumber,
                 movementDate: new Date(),
-                warehouseId,
+                warehouseId: resolvedWarehouseId,
                 branchId: branchId || null,
                 productId,
                 productVariantId: productVariantId || null,
@@ -1268,14 +1493,14 @@ const deductInventory = async ({
                     (Number(inv.averageCost) || unitCost || 0) * qty,
                 referenceType: "Sales Order",
                 salesOrderId,
-                remarks: "Stock out from Sales Order confirm",
+                remarks: "Stock out from Sales Order (flexible warehouse resolve)",
                 createdBy: actorId || orderCreatedBy || new mongoose.Types.ObjectId()
             }
         ],
         { session }
     );
 
-    return { inv, movement };
+    return { inv, movement, warehouseId: resolvedWarehouseId };
 };
 
 const markImeisSold = async ({
@@ -1357,9 +1582,7 @@ const confirmSalesOrder = async (id, actorId = null) => {
     if (!order.items?.length) {
         throw new AppError("Sales order has no lines.", 400);
     }
-    if (!order.warehouseId) {
-        throw new AppError("Warehouse is required to confirm sale.", 400);
-    }
+    // Warehouse is resolved flexibly inside applyStockOut (product / stock / default).
 
     await applyStockOut(order, actorId, {
         setStatus: "Confirmed",
@@ -1390,14 +1613,24 @@ const applyStockOut = async (
     if (!order.items?.length) {
         throw new AppError("Sales order has no lines.", 400);
     }
+
+    // Resolve / persist a header warehouse when missing (products may have none).
     if (!order.warehouseId) {
-        throw new AppError("Warehouse is required for stock out.", 400);
+        const firstLine = order.items.find((l) => (Number(l.quantity) || 0) > 0);
+        order.warehouseId = await resolveWarehouseForSaleLine({
+            order,
+            line: firstLine || order.items[0],
+        });
+    }
+    if (!order.warehouseId) {
+        order.warehouseId = await ensureOperationalWarehouseId();
     }
 
     const session = await mongoose.startSession();
     session.startTransaction();
     const movementIds = [];
     const productIds = new Set();
+    const warehousesUsed = new Set();
 
     try {
         for (const line of order.items) {
@@ -1437,8 +1670,14 @@ const applyStockOut = async (
                 });
             }
 
+            const lineWarehouseId = await resolveWarehouseForSaleLine({
+                order,
+                line,
+                session,
+            });
+
             const result = await deductInventory({
-                warehouseId: order.warehouseId,
+                warehouseId: lineWarehouseId || order.warehouseId,
                 branchId: order.branchId,
                 productId: line.productId,
                 productVariantId: line.productVariantId,
@@ -1452,11 +1691,20 @@ const applyStockOut = async (
                 session
             });
 
+            if (result.warehouseId) {
+                line.stockWarehouseId = result.warehouseId;
+                warehousesUsed.add(String(result.warehouseId));
+            }
             if (result.movement?._id) movementIds.push(result.movement._id);
             if (line.productId) productIds.add(String(line.productId));
 
             line.deliveredQuantity = qty;
             line.pendingQuantity = 0;
+        }
+
+        // Keep header warehouse accountable: prefer first used warehouse
+        if (!order.warehouseId && warehousesUsed.size) {
+            order.warehouseId = [...warehousesUsed][0];
         }
 
         if (setStatus) order.status = setStatus;
