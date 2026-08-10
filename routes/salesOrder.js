@@ -3,6 +3,8 @@ const router = express.Router();
 
 const salesOrderController = require("../controllers/salesOrderController");
 const validate = require("../middleware/validate");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
 const {
     createSalesOrderValidator,
     updateSalesOrderValidator,
@@ -10,7 +12,15 @@ const {
     listValidator
 } = require("../validators/salesOrderValidator");
 
-// Base: /api/sales-orders
+// Base: /api/sales-orders — authenticated admin ERP routes
+router.use(protect, resolveTenant);
+router.use(
+    require("../middleware/rateLimit").rateLimit({
+        windowMs: 60_000,
+        max: 120,
+        keyPrefix: "so",
+    })
+);
 
 router.get("/", listValidator, validate, salesOrderController.getSalesOrders);
 router.get("/stats", salesOrderController.getSalesOrderStats);

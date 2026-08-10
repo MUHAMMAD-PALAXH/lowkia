@@ -14,7 +14,8 @@ const getActor = (req) => ({
 exports.createPurchaseOrder = asyncHandler(async (req, res) => {
     const body = {
         ...req.body,
-        actorType: getActor(req).type
+        actorType: getActor(req).type,
+        companyId: req.companyId || req.body?.companyId || null,
     };
     const po = await purchaseOrderService.createPurchaseOrder(
         body,
@@ -254,12 +255,9 @@ exports.cancelPurchaseOrder = asyncHandler(async (req, res) => {
 });
 
 exports.recordSupplierPayment = asyncHandler(async (req, res) => {
-    const po = await purchaseOrderService.recordSupplierPayment(
-        req.params.id,
-        req.body || {},
-        getActorId(req)
-    );
-    return success(res, "Supplier payment recorded.", po);
+    // Phase 3 finance path (Payment + Payable + optional schedule sync)
+    const supplierPaymentController = require("./supplierPaymentController");
+    return supplierPaymentController.recordOnPurchaseOrder(req, res);
 });
 
 exports.getPurchaseOrderDeleteCheck = asyncHandler(async (req, res) => {

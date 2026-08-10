@@ -99,11 +99,38 @@ const PERMISSIONS = {
     INVOICE_UPDATE: "invoice.update",
 
     // ======================================================
-    // Payment
+    // Payment / Finance
     // ======================================================
 
     PAYMENT_VIEW: "payment.view",
     PAYMENT_CREATE: "payment.create",
+    PAYMENT_APPROVE: "payment.approve",
+    PAYMENT_COMPLETE: "payment.complete",
+    PAYMENT_REVERSE: "payment.reverse",
+
+    SUPPLIER_PAYABLE_VIEW: "supplierPayable.view",
+    SUPPLIER_PAYMENT_CREATE: "supplierPayment.create",
+    SUPPLIER_PAYMENT_APPROVE: "supplierPayment.approve",
+
+    // ======================================================
+    // Payroll
+    // ======================================================
+
+    PAYROLL_VIEW: "payroll.view",
+    PAYROLL_CREATE: "payroll.create",
+    PAYROLL_CALCULATE: "payroll.calculate",
+    PAYROLL_APPROVE: "payroll.approve",
+    PAYROLL_ADJUST: "payroll.adjust",
+
+    EMPLOYEE_PAYMENT_VIEW: "employeePayment.view",
+    EMPLOYEE_PAYMENT_CREATE: "employeePayment.create",
+    EMPLOYEE_PAYMENT_APPROVE: "employeePayment.approve",
+    EMPLOYEE_ADVANCE_REQUEST: "employeeAdvance.request",
+    EMPLOYEE_ADVANCE_APPROVE: "employeeAdvance.approve",
+    EMPLOYEE_ADVANCE_VIEW: "employeeAdvance.view",
+    EMPLOYEE_ADVANCE_DISBURSE: "employeeAdvance.disburse",
+    EMPLOYEE_ADVANCE_REVERSE: "employeeAdvance.reverse",
+    EMPLOYEE_ADVANCE_RECOVER: "employeeAdvance.recover",
 
     // ======================================================
     // Expense

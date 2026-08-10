@@ -1,8 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const repairTicketController = require("../controllers/repairTicketController");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
 
-// Base: /api/repair-tickets
+// Base: /api/repair-tickets — authenticated only
+router.use(protect, resolveTenant);
+
 router.get("/", repairTicketController.getRepairTickets);
 router.get("/stats", repairTicketController.getRepairTicketStats);
 router.get(

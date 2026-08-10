@@ -3,6 +3,8 @@ const router = express.Router();
 
 const supplierController = require("../controllers/supplierController");
 const validate = require("../middleware/validate");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
 const {
     createSupplierValidator,
     updateSupplierValidator,
@@ -12,10 +14,10 @@ const {
 } = require("../validators/supplierValidator");
 
 // ==========================================================
-// Supplier Routes
+// Supplier Routes — authenticated only
 // Base: /api/suppliers
-// Auth will be attached after authentication phase
 // ==========================================================
+router.use(protect, resolveTenant);
 
 router.get(
     "/",

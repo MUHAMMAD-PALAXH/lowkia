@@ -1,746 +1,309 @@
 const mongoose = require("mongoose");
+const { DEFAULT_CURRENCY } = require("../config/finance");
 
-
-// ==========================================================
-// Salary Component Schema
-// ==========================================================
-
+/**
+ * Flexible salary component (earning or deduction).
+ * amountMinor is the source of truth for fixed amounts (USD cents).
+ */
 const componentSchema = new mongoose.Schema(
-{
-
-
-    componentName:{
-
-        type:String,
-        required:true,
-        trim:true
-    },
-
-
-    componentType:{
-
-        type:String,
-        enum:[
-            "Earning",
-            "Deduction"
-        ],
-        required:true
-    },
-
-
-    calculationType:{
-
-        type:String,
-        enum:[
-            "Fixed Amount",
-            "Percentage"
-        ],
-        default:"Fixed Amount"
-    },
-
-
-    amount:{
-
-        type:Number,
-        default:0
-    },
-
-
-    percentage:{
-
-        type:Number,
-        default:0
-    },
-
-
-    basedOn:{
-
-        type:String,
-        enum:[
-            "Basic Salary",
-            "Gross Salary",
-            "Net Salary"
-        ],
-        default:"Basic Salary"
-    },
-
-
-    isTaxable:{
-
-        type:Boolean,
-        default:false
-    },
-
-
-    description:{
-
-        type:String,
-        default:""
-    }
-
-
-},
-{
-
-    _id:false
-});
-
-
-// ==========================================================
-// Salary Structure Schema
-// ==========================================================
-
-
-const salaryStructureSchema = new mongoose.Schema(
-{
-
-
-branchId:{
-
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Branch"
-},
-
-
-// ==========================================================
-// Structure Information
-// ==========================================================
-
-
-structureName:{
-
-    type:String,
-    required:true,
-    trim:true
-},
-
-
-structureCode:{
-
-    type:String,
-    required:true,
-    uppercase:true,
-    trim:true
-},
-
-
-description:{
-
-    type:String,
-    default:""
-},
-
-
-// ==========================================================
-// Applicable For
-// ==========================================================
-
-
-departmentId:{
-
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Department"
-},
-
-
-designationId:{
-
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Designation"
-},
-
-
-// ==========================================================
-// Salary Amount
-// ==========================================================
-
-
-basicSalary:{
-
-    type:Number,
-    required:true,
-    default:0
-},
-
-
-grossSalary:{
-
-    type:Number,
-    default:0
-},
-
-
-// ==========================================================
-// Components
-// ==========================================================
-
-
-components:[
-    componentSchema
-],
-
-
-// ==========================================================
-// Employee Assignment
-// ==========================================================
-
-
-assignedEmployees:[
-
     {
-
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"Employee"
-    }
-
-],
-
-
-// ==========================================================
-// Overtime Configuration
-// ==========================================================
-
-
-overtimeEnabled:{
-
-    type:Boolean,
-    default:true
-},
-
-
-overtimeCalculationType:{
-
-    type:String,
-    enum:[
-        "Hourly Rate",
-        "Fixed Amount",
-        "Percentage"
-    ],
-    default:"Hourly Rate"
-},
-
-
-overtimeRate:{
-
-    type:Number,
-    default:0
-},
-
-
-// ==========================================================
-// Bonus Configuration
-// ==========================================================
-
-
-bonusEnabled:{
-
-    type:Boolean,
-    default:false
-},
-
-
-bonusType:{
-
-    type:String,
-    enum:[
-        "Fixed Amount",
-        "Percentage",
-        "Performance Based"
-    ]
-},
-
-
-bonusAmount:{
-
-    type:Number,
-    default:0
-},
-
-
-bonusPercentage:{
-
-    type:Number,
-    default:0
-},
-
-
-// ==========================================================
-// Tax Configuration
-// ==========================================================
-
-
-taxApplicable:{
-
-    type:Boolean,
-    default:false
-},
-
-
-taxType:{
-
-    type:String,
-    enum:[
-        "Fixed Amount",
-        "Percentage",
-        "Government Rule"
-    ]
-},
-
-
-taxAmount:{
-
-    type:Number,
-    default:0
-},
-
-
-taxPercentage:{
-
-    type:Number,
-    default:0
-},
-
-
-// ==========================================================
-// Working Rule
-// ==========================================================
-
-
-workingDaysPerMonth:{
-
-    type:Number,
-    default:26
-},
-
-
-workingHoursPerDay:{
-
-    type:Number,
-    default:8
-},
-
-
-weeklyHoliday:{
-
-    type:Number,
-    default:1
-},
-
-
-// ==========================================================
-// Effective Date
-// ==========================================================
-
-
-effectiveFrom:{
-
-    type:Date,
-    required:true
-},
-
-
-effectiveTo:{
-
-    type:Date
-},
-
-
-isCurrent:{
-
-    type:Boolean,
-    default:true
-},
-
-
-// ==========================================================
-// Revision History
-// ==========================================================
-
-
-previousStructureId:{
-
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"SalaryStructure"
-},
-
-
-revisionReason:{
-
-    type:String,
-    default:""
-},
-
-
-revisionDate:{
-
-    type:Date
-},
-
-
-// ==========================================================
-// Approval
-// ==========================================================
-
-
-approvalStatus:{
-
-    type:String,
-    enum:[
-        "Draft",
-        "Pending",
-        "Approved",
-        "Rejected"
-    ],
-    default:"Draft"
-},
-
-
-approvedBy:{
-
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"AdminUser"
-},
-
-
-approvedAt:{
-
-    type:Date
-},
-
-
-approvalNote:{
-
-    type:String,
-    default:""
-},
-
-
-// ==========================================================
-// Audit Information
-// ==========================================================
-
-
-createdBy:{
-
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"AdminUser"
-},
-
-
-updatedBy:{
-
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"AdminUser"
-},
-
-
-deletedBy:{
-
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"AdminUser"
-},
-
-
-isDeleted:{
-
-    type:Boolean,
-    default:false
-},
-
-
-deletedAt:{
-
-    type:Date
-},
-
-
-notes:{
-
-    type:String,
-    default:""
-}
-
-
-},
-{
-
-    timestamps:true,
-    versionKey:false
-});
-
-
-// ==========================================================
-// INDEXES
-// ==========================================================
-
-
-// Unique structure per company
-
-salaryStructureSchema.index({ structureCode:1 }, {
-
-    unique:true
-});
-
-
-salaryStructureSchema.index({ isCurrent:1 });
-
-
-salaryStructureSchema.index({
-
-
-    departmentId:1,
-
-    designationId:1
-
-});
-
-
-salaryStructureSchema.index({
-
-
-    effectiveFrom:1,
-
-    effectiveTo:1
-
-});
-
-
-salaryStructureSchema.index({ approvalStatus:1 });
-
-
-// ==========================================================
-// INSTANCE METHODS
-// ==========================================================
-
-
-// Calculate Gross Salary
-
-
-salaryStructureSchema.methods.calculateGrossSalary =
-function(){
-
-
-    let total = this.basicSalary;
-
-
-    this.components.forEach(
-    component=>{
-
-
-        if(
-            component.componentType === "Earning"
-        )
-        {
-
-
-            if(
-                component.calculationType ===
-                "Fixed Amount"
-            )
-            {
-
-
-                total += component.amount;
-
-            }
-
-
-            else if(
-                component.calculationType ===
-                "Percentage"
-            )
-            {
-
-
-                total +=
-
-                (
-                    this.basicSalary *
-                    component.percentage
-                )
-                /
-                100;
-
-            }
-
-
-        }
-
-
-    });
-
-
-    this.grossSalary = total;
-
-
-    return total;
-
-
-};
-
-
-// Calculate Component Amount
-
-
-salaryStructureSchema.methods.getComponentAmount =
-function(componentName){
-
-
-    const component =
-
-    this.components.find(
-
-        item =>
-        item.componentName === componentName
-
-    );
-
-
-    if(!component)
-        return 0;
-
-
-    if(
-        component.calculationType ===
-        "Fixed Amount"
-    )
-    {
-
-
-        return component.amount;
-
-    }
-
-
-    return (
-
-        this.basicSalary *
-        component.percentage
-
-    )
-    /
-    100;
-
-
-};
-
-
-// ==========================================================
-// STATIC METHODS
-// ==========================================================
-
-
-// Get Current Salary Structure
-
-
-salaryStructureSchema.statics.getCurrentStructure =
-function(employeeId
-){
-
-
-    return this.findOne({
-        assignedEmployees:
-        {
-
-            $in:[
-                employeeId
-            ]
+        code: {
+            type: String,
+            default: "",
+            trim: true,
+            uppercase: true,
         },
 
-        isCurrent:true,
+        componentName: {
+            type: String,
+            required: true,
+            trim: true,
+        },
 
-        isDeleted:false
+        componentType: {
+            type: String,
+            enum: ["Earning", "Deduction"],
+            required: true,
+        },
 
-    });
+        calculationType: {
+            type: String,
+            enum: ["Fixed", "Percentage"],
+            default: "Fixed",
+        },
 
+        /** Fixed amount in minor units (cents). */
+        amountMinor: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
-};
+        /** Legacy major-unit mirror. */
+        amount: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
+        percentage: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
-// Department Based Salary Structure
+        basedOn: {
+            type: String,
+            enum: ["Basic", "Gross", "Net"],
+            default: "Basic",
+        },
 
+        isTaxable: {
+            type: Boolean,
+            default: false,
+        },
 
-salaryStructureSchema.statics.getDepartmentStructure =
-function(departmentId
-){
+        isRecurring: {
+            type: Boolean,
+            default: true,
+        },
 
+        description: {
+            type: String,
+            default: "",
+            trim: true,
+        },
+    },
+    { _id: false }
+);
 
-    return this.find({
-        departmentId,
+/**
+ * Salary structure template or employee-assigned package.
+ * Supports Monthly / Daily / Hourly pay bases for payroll (Phase 5).
+ */
+const salaryStructureSchema = new mongoose.Schema(
+    {
+        companyId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Company",
+            required: true,
+            index: true,
+        },
 
-        isCurrent:true,
+        branchId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Branch",
+            default: null,
+            index: true,
+        },
 
-        isDeleted:false
+        structureName: {
+            type: String,
+            required: true,
+            trim: true,
+        },
 
-    });
+        structureCode: {
+            type: String,
+            required: true,
+            uppercase: true,
+            trim: true,
+        },
 
+        description: {
+            type: String,
+            default: "",
+            trim: true,
+        },
 
-};
+        currency: {
+            type: String,
+            default: DEFAULT_CURRENCY,
+            uppercase: true,
+            trim: true,
+        },
 
+        /** Pay basis used by payroll calculator. */
+        salaryType: {
+            type: String,
+            enum: ["Monthly", "Daily", "Hourly"],
+            default: "Monthly",
+            index: true,
+        },
 
-// ==========================================================
-// QUERY HELPERS
-// ==========================================================
+        // ── Rates (minor units) ──────────────────────────────
+        basicSalaryMinor: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
+        dailyRateMinor: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
-salaryStructureSchema.query.active =
-function(){
+        hourlyRateMinor: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
+        overtimeRateMinor: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
-    return this.where({
+        /** Legacy major mirrors (derived in service). */
+        basicSalary: { type: Number, default: 0, min: 0 },
+        dailyRate: { type: Number, default: 0, min: 0 },
+        hourlyRate: { type: Number, default: 0, min: 0 },
+        overtimeRate: { type: Number, default: 0, min: 0 },
+        grossSalary: { type: Number, default: 0, min: 0 },
+        grossSalaryMinor: { type: Number, default: 0, min: 0 },
 
+        components: {
+            type: [componentSchema],
+            default: [],
+        },
 
-        isDeleted:false,
+        departmentId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Department",
+            default: null,
+        },
 
-        isCurrent:true
+        designationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Designation",
+            default: null,
+        },
 
-    });
+        /** Optional primary employee this structure belongs to. */
+        employeeId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Employee",
+            default: null,
+            index: true,
+        },
 
+        assignedEmployees: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "Employee",
+            },
+        ],
 
-};
+        overtimeEnabled: {
+            type: Boolean,
+            default: true,
+        },
 
+        /** Multiplier of hourly rate for OT (e.g. 1.5). */
+        overtimeMultiplier: {
+            type: Number,
+            default: 1.5,
+            min: 0,
+        },
 
-// ==========================================================
-// JSON CONFIG
-// ==========================================================
+        workingDaysPerMonth: {
+            type: Number,
+            default: 22,
+            min: 1,
+            max: 31,
+        },
 
+        workingHoursPerDay: {
+            type: Number,
+            default: 8,
+            min: 1,
+            max: 24,
+        },
 
-salaryStructureSchema.set(
+        effectiveFrom: {
+            type: Date,
+            default: Date.now,
+        },
 
-"toJSON",
+        effectiveTo: {
+            type: Date,
+            default: null,
+        },
 
-{
+        isCurrent: {
+            type: Boolean,
+            default: true,
+            index: true,
+        },
 
+        status: {
+            type: String,
+            enum: ["draft", "active", "archived"],
+            default: "active",
+            index: true,
+        },
 
-    virtuals:true,
+        previousStructureId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "SalaryStructure",
+            default: null,
+        },
 
+        revisionReason: {
+            type: String,
+            default: "",
+        },
 
-    transform:function(
-        doc,
-        ret
-    ){
+        createdBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null,
+        },
 
+        updatedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null,
+        },
 
-        delete ret.__v;
+        isDeleted: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
 
-        return ret;
+        deletedAt: {
+            type: Date,
+            default: null,
+        },
 
+        deletedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null,
+        },
+    },
+    {
+        timestamps: true,
+        versionKey: false,
     }
+);
 
+salaryStructureSchema.index(
+    { companyId: 1, structureCode: 1 },
+    { unique: true }
+);
+salaryStructureSchema.index({ companyId: 1, status: 1, isCurrent: 1 });
+salaryStructureSchema.index({ companyId: 1, employeeId: 1, isCurrent: 1 });
+salaryStructureSchema.index({ companyId: 1, salaryType: 1 });
+
+salaryStructureSchema.virtual("id").get(function () {
+    return this._id.toHexString();
 });
 
+salaryStructureSchema.set("toJSON", { virtuals: true });
+salaryStructureSchema.set("toObject", { virtuals: true });
 
-// ==========================================================
-// EXPORT
-// ==========================================================
-
-
-module.exports =
-
-mongoose.model(
-
-    "SalaryStructure",
-
-    salaryStructureSchema
-
-);
+module.exports = mongoose.model("SalaryStructure", salaryStructureSchema);

@@ -694,7 +694,8 @@ const createSalesOrder = async (payload, actorId = null) => {
         customerNote: payload.customerNote || "",
         internalNote: payload.internalNote || "",
         status: "Draft",
-        createdBy: actorId || null
+        createdBy: actorId || null,
+        companyId: payload.companyId || null,
     });
 
     return populateSo(SalesOrder.findById(order._id));
@@ -1575,15 +1576,35 @@ const markPaid = async (id, payload = {}, actorId = null) => {
     if (order.status === "Cancelled") {
         throw new AppError("Cannot pay a cancelled order.", 400);
     }
+    const grand = Number(order.grandTotal) || 0;
+    const currentPaid = Number(order.paidAmount) || 0;
     const paidAmount =
         payload.paidAmount !== undefined
             ? Math.max(Number(payload.paidAmount) || 0, 0)
-            : Number(order.grandTotal) || 0;
+            : grand;
+
+    // Hard-reject overpay and negative / NaN
+    if (!Number.isFinite(paidAmount) || paidAmount < 0) {
+        throw new AppError("Invalid paid amount.", 400);
+    }
+    if (paidAmount < currentPaid - 0.009) {
+        throw new AppError(
+            "Paid amount cannot be less than already recorded payments. Use a refund/reversal flow instead.",
+            400
+        );
+    }
+    if (paidAmount > grand + 0.009) {
+        throw new AppError(
+            `Payment would overpay the sales order (max ${grand.toFixed(2)}).`,
+            400
+        );
+    }
+
     order.paidAmount = paidAmount;
-    order.dueAmount = Math.max((Number(order.grandTotal) || 0) - paidAmount, 0);
+    order.dueAmount = Math.max(grand - paidAmount, 0);
     if (payload.paymentMethod) order.paymentMethod = payload.paymentMethod;
     if (paidAmount <= 0) order.paymentStatus = "Pending";
-    else if (paidAmount < (Number(order.grandTotal) || 0)) {
+    else if (paidAmount < grand) {
         order.paymentStatus = "Partial";
     } else order.paymentStatus = "Paid";
 

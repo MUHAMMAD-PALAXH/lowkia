@@ -750,6 +750,7 @@ const createPurchaseOrder = async (payload = {}, actorId = null) => {
         supplierNote: (payload.supplierNote || "").toString().trim(),
         internalNote: (payload.internalNote || "").toString().trim(),
         createdBy,
+        companyId: payload.companyId || null,
         status: "Draft",
         requiresApproval: !isOwner
     });

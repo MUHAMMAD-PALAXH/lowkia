@@ -78,6 +78,18 @@ const adminUserSchema = new mongoose.Schema(
     },
 
     // ==================================================
+    // Tenant (SaaS company)
+    // ==================================================
+
+    companyId: {
+
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Company",
+        default: null,
+        index: true
+    },
+
+    // ==================================================
     // System Role
     // ==================================================
 
@@ -181,6 +193,7 @@ adminUserSchema.index({ email: 1 });
 adminUserSchema.index({ phone: 1 }, { unique: true, sparse: true });
 adminUserSchema.index({ username: 1 });
 adminUserSchema.index({ role: 1 });
+adminUserSchema.index({ companyId: 1, role: 1 });
 
 // ======================================================
 // Password Hash
@@ -224,7 +237,8 @@ adminUserSchema.methods.generateToken = function(){
         {
 
             id: this._id,
-            role: this.role
+            role: this.role,
+            ...(this.companyId ? { companyId: this.companyId } : {})
         },
 
         process.env.JWT_SECRET,

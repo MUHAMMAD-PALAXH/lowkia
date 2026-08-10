@@ -3,6 +3,8 @@ const router = express.Router();
 
 const branchController = require("../controllers/branchController");
 const validate = require("../middleware/validate");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
 const {
     createBranchValidator,
     updateBranchValidator,
@@ -12,7 +14,8 @@ const {
     listBranchValidator
 } = require("../validators/branchValidator");
 
-// Base: /api/branches
+// Base: /api/branches — authenticated only
+router.use(protect, resolveTenant);
 // Auth will be attached after authentication phase
 
 router.get(

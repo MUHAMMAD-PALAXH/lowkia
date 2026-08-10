@@ -1,48 +1,47 @@
+const rateBuckets = new Map();
+
 /**
- * Simple in-memory rate limiter for attendance punch endpoints.
- * Keyed by userId + route. Not shared across instances — good enough for V1.
- * For multi-instance production, swap to Redis later.
+ * Simple in-memory rate limit (per IP + route key).
+ * Good enough for single-node ERP; replace with Redis if you scale out.
  */
-const buckets = new Map();
-
-const prune = (key, windowMs) => {
-    const now = Date.now();
-    const arr = buckets.get(key) || [];
-    const fresh = arr.filter((t) => now - t < windowMs);
-    buckets.set(key, fresh);
-    return fresh;
-};
-
 const rateLimit = ({
-    windowMs = 60 * 1000,
-    max = 20,
+    windowMs = 60_000,
+    max = 60,
     keyPrefix = "rl",
-    message = "Too many requests. Please try again shortly."
 } = {}) => {
     return (req, res, next) => {
-        const userKey = req.user?._id ? String(req.user._id) : req.ip || "anon";
-        const key = `${keyPrefix}:${req.path}:${userKey}`;
-        const hits = prune(key, windowMs);
-        if (hits.length >= max) {
+        const ip = req.ip || req.headers["x-forwarded-for"] || "unknown";
+        const key = `${keyPrefix}:${ip}:${req.baseUrl}${req.path}`;
+        const now = Date.now();
+        let bucket = rateBuckets.get(key);
+        if (!bucket || now > bucket.resetAt) {
+            bucket = { count: 0, resetAt: now + windowMs };
+            rateBuckets.set(key, bucket);
+        }
+        bucket.count += 1;
+        res.setHeader("X-RateLimit-Limit", String(max));
+        res.setHeader(
+            "X-RateLimit-Remaining",
+            String(Math.max(0, max - bucket.count))
+        );
+        if (bucket.count > max) {
             return res.status(429).json({
                 success: false,
-                message,
+                message: "Too many requests. Slow down and try again.",
                 data: null,
-                errors: { retryAfterMs: windowMs }
+                errors: null,
             });
         }
-        hits.push(Date.now());
-        buckets.set(key, hits);
         next();
     };
 };
 
-/** Punch actions: check-in/out/break — tighter limit */
-const punchRateLimit = rateLimit({
-    windowMs: 60 * 1000,
-    max: 10,
-    keyPrefix: "punch",
-    message: "Too many attendance punch attempts. Wait a minute and retry."
-});
+// Opportunistic cleanup
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, bucket] of rateBuckets.entries()) {
+        if (now > bucket.resetAt) rateBuckets.delete(key);
+    }
+}, 120_000).unref?.();
 
-module.exports = { rateLimit, punchRateLimit };
+module.exports = { rateLimit };

@@ -893,6 +893,13 @@ const purchaseOrderSchema = new mongoose.Schema(
         // Audit Information
         // ======================================================
 
+        companyId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Company",
+            default: null,
+            index: true,
+        },
+
         createdBy: {
 
             type: mongoose.Schema.Types.ObjectId,

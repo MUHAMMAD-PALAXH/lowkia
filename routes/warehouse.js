@@ -3,6 +3,8 @@ const router = express.Router();
 
 const warehouseController = require("../controllers/warehouseController");
 const validate = require("../middleware/validate");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
 const {
     createWarehouseValidator,
     updateWarehouseValidator,
@@ -12,7 +14,8 @@ const {
     listWarehouseValidator
 } = require("../validators/warehouseValidator");
 
-// Base: /api/warehouses
+// Base: /api/warehouses — authenticated only
+router.use(protect, resolveTenant);
 
 router.get(
     "/",

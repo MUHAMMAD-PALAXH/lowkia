@@ -411,6 +411,15 @@ overtimeRate:{
     default:0
 },
 
+/** Active salary structure (Phase 4 finance/payroll). */
+salaryStructureId:{
+
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"SalaryStructure",
+    default:null,
+    index:true
+},
+
 // ===================================================
 // Attendance Device
 // ===================================================
@@ -543,6 +552,13 @@ isDeleted:{
 
     type:Boolean,
     default:false
+},
+
+companyId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Company",
+    default: null,
+    index: true,
 },
 
 deletedAt:{

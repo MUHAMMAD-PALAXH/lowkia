@@ -3,6 +3,13 @@ const router = express.Router();
 
 const purchaseOrderController = require("../controllers/purchaseOrderController");
 const validate = require("../middleware/validate");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
+const {
+    blockVendorFromFinance,
+    financeStaffOnly,
+} = require("../middleware/financeAccess");
+const { rateLimit } = require("../middleware/rateLimit");
 const {
     createPurchaseOrderValidator,
     updatePurchaseOrderValidator,
@@ -10,6 +17,10 @@ const {
     productIdValidator,
     listValidator
 } = require("../validators/purchaseOrderValidator");
+
+// Base: /api/purchase-orders — authenticated only
+router.use(protect, resolveTenant);
+router.use(rateLimit({ windowMs: 60_000, max: 120, keyPrefix: "po" }));
 
 // Base: /api/purchase-orders
 
@@ -185,6 +196,10 @@ router.post(
 
 router.post(
     "/:id/supplier-payments",
+    protect,
+    resolveTenant,
+    blockVendorFromFinance,
+    financeStaffOnly,
     idValidator,
     validate,
     purchaseOrderController.recordSupplierPayment

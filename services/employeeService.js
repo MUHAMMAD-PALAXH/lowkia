@@ -62,7 +62,11 @@ const populateEmployee = (q) =>
         .populate("designationId", "designationCode designationName")
         .populate("shiftId", "shiftCode shiftName startTime endTime shiftType weeklyOff status")
         .populate("userId", "firstName lastName email username role status")
-        .populate("reportingManager", "employeeCode fullName");
+        .populate("reportingManager", "employeeCode fullName")
+        .populate(
+            "salaryStructureId",
+            "structureCode structureName salaryType basicSalaryMinor hourlyRateMinor dailyRateMinor currency status"
+        );
 
 const assertRefs = async (data) => {
     if (data.branchId) {

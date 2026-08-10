@@ -20,6 +20,24 @@ app.use(cors({
     : ['http://localhost:3000', 'https://ecommerce-render-dyploy.onrender.com'], 
   credentials: true,
 }));
+
+// Security headers
+try {
+  const helmet = require('helmet');
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  }));
+} catch (_) {
+  /* optional */
+}
+
+// Stripe webhook needs the raw body (must be before express.json)
+app.post(
+  '/api/webhooks/stripe',
+  express.raw({ type: 'application/json' }),
+  require('./routes/stripeWebhook')
+);
+
 app.use(express.json());
 
 app.use('/image/products', express.static('public/products'));
@@ -85,6 +103,13 @@ require('./model/holiday');
 require('./model/attendanceCorrection');
 require('./model/overtimeRequest');
 require('./model/settings');
+require('./model/company');
+require('./model/payment');
+require('./model/supplierPayable');
+require('./model/salaryStructure');
+require('./model/payrollRun');
+require('./model/payroll');
+require('./model/employeeAdvance');
 
 // ============================================================
 // ROUTES
@@ -126,6 +151,25 @@ app.use('/api/holidays', require('./routes/holiday'));
 app.use('/api/leaves', require('./routes/leave'));
 app.use('/api/attendance-corrections', require('./routes/attendanceCorrection'));
 app.use('/api/overtime-requests', require('./routes/overtime'));
+
+// Finance foundation (Phase 1 — company / tenant)
+app.use('/api/company', require('./routes/company'));
+// Finance Phase 2 — supplier payable
+app.use('/api/supplier-payables', require('./routes/supplierPayable'));
+// Finance Phase 3 — supplier payments
+app.use('/api/supplier-payments', require('./routes/supplierPayment'));
+// Finance Phase 4 — salary structures
+app.use('/api/salary-structures', require('./routes/salaryStructure'));
+// Finance Phase 5 — payroll runs
+app.use('/api/payroll-runs', require('./routes/payrollRun'));
+// Finance Phase 6 — employee advances
+app.use('/api/employee-advances', require('./routes/employeeAdvance'));
+// Finance Phase 7 — employee payments (salary + advance disbursement)
+app.use('/api/employee-payments', require('./routes/employeePayment'));
+// Finance Phase 8 — reports + printable payloads (PDF on-demand client-side)
+app.use('/api/finance-reports', require('./routes/financeReport'));
+// Finance Phase 9 — customer Stripe checkout
+app.use('/api/customer-payments', require('./routes/customerPayment'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');

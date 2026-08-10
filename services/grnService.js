@@ -2814,6 +2814,17 @@ const completeGrn = async (id, actorId = null, opts = {}) => {
 
         await session.commitTransaction();
 
+        // Hybrid supplier payable: refresh received value / outstanding (best-effort)
+        try {
+            const supplierPayableService = require("./supplierPayableService");
+            await supplierPayableService.syncAfterGrnSafe(po._id, actorId);
+        } catch (payErr) {
+            console.warn(
+                "[GRN] supplier payable sync failed:",
+                payErr?.message || payErr
+            );
+        }
+
         const refreshErrors = [];
         for (const pid of productIds) {
             try {

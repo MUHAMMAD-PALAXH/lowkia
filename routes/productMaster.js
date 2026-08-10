@@ -8,6 +8,8 @@ const productService = require("../services/productService");
 const validate = require("../middleware/validate");
 const { uploadProduct } = require("../uploadFile");
 const { success, error } = require("../utils/apiResponse");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
 const {
     createProductValidator,
     updateProductValidator,
@@ -18,6 +20,9 @@ const {
     listProductValidator,
     poSourceLinesValidator
 } = require("../validators/productValidator");
+
+// Base: /api/products — authenticated only
+router.use(protect, resolveTenant);
 
 // Base: /api/products
 // ERP product master. The legacy storefront routes stay at /products.

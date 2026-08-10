@@ -3,6 +3,9 @@ const router = express.Router();
 
 const grnController = require("../controllers/grnController");
 const validate = require("../middleware/validate");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
+const { rateLimit } = require("../middleware/rateLimit");
 const {
     idValidator,
     createFromPoValidator,
@@ -11,6 +14,10 @@ const {
     bulkImeiValidator,
     listValidator
 } = require("../validators/grnValidator");
+
+// Base: /api/grn — authenticated only
+router.use(protect, resolveTenant);
+router.use(rateLimit({ windowMs: 60_000, max: 120, keyPrefix: "grn" }));
 
 // Base: /api/grn
 

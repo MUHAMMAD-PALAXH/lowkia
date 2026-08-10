@@ -1,8 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const salesReturnController = require("../controllers/salesReturnController");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
 
-// Base: /api/sales-returns
+// Base: /api/sales-returns — authenticated only
+router.use(protect, resolveTenant);
+
 router.get("/stats", salesReturnController.getReturnStats);
 router.get(
     "/returnable/:salesOrderId",

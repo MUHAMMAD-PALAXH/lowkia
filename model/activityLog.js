@@ -19,6 +19,15 @@ branchId:{
 },
 
 
+companyId:{
+
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"Company",
+    default:null,
+    index:true
+},
+
+
 // ==========================================================
 // User Information
 // ==========================================================

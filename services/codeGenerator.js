@@ -52,7 +52,14 @@ const MODULE_CONFIG = {
 
     repair_ticket: { prefix: "T", padding: 5 },
 
-    payment: { prefix: "PAY", padding: 6 },
+    company: { prefix: "CO", padding: 6 },
+    payment: { prefix: "PAY", padding: 6, yearScoped: true },
+    supplier_payable: { prefix: "SPAY", padding: 6 },
+    payroll_run: { prefix: "PRUN", padding: 6 },
+    payroll: { prefix: "PRL", padding: 6 },
+    payroll_payable: { prefix: "PPAY", padding: 6 },
+    employee_advance: { prefix: "EADV", padding: 6 },
+    salary_structure: { prefix: "SSTR", padding: 6 },
     receipt: { prefix: "REC", padding: 6 },
     expense_category: { prefix: "EXCAT", padding: 6 },
     expense: { prefix: "EXP", padding: 6 },
@@ -84,7 +91,12 @@ const MODULE_ALIASES = {
     repairTicket: "repair_ticket",
     expenseCategory: "expense_category",
     leaveType: "leave_type",
-    activityLog: "activity_log"
+    activityLog: "activity_log",
+    supplierPayable: "supplier_payable",
+    payrollRun: "payroll_run",
+    payrollPayable: "payroll_payable",
+    employeeAdvance: "employee_advance",
+    salaryStructure: "salary_structure"
 };
 
 // =====================================================
@@ -99,38 +111,57 @@ const resolveModule = (module) => {
 };
 
 // =====================================================
-// Core generator — global IDs, no companyId
+// Core generator
 // Format: SUP-000001
+// Year-scoped (payment): PAY-2026-000001
+// Optional Mongo session for transactional finance writes.
 // =====================================================
 
-const generateCode = async (module) => {
-    const resolvedModule = resolveModule(module);
-    const config = MODULE_CONFIG[resolvedModule];
+const generateCode = async (module, options = {}) => {
+    const resolvedBase = resolveModule(module);
+    const config = MODULE_CONFIG[resolvedBase];
 
     if (!config) {
         throw new Error(`Unknown module: ${module}`);
     }
 
-    const counter = await Counter.findOneAndUpdate(
-        { module: resolvedModule },
-        {
-            $inc: { lastNumber: 1 },
-            $setOnInsert: {
-                module: resolvedModule,
-                prefix: config.prefix,
-                padding: config.padding
-            }
-        },
-        {
-            new: true,
-            upsert: true
+    const year = options.year || new Date().getUTCFullYear();
+    const counterModule = config.yearScoped
+        ? `${resolvedBase}_${year}`
+        : resolvedBase;
+
+    const update = {
+        $inc: { lastNumber: 1 },
+        $setOnInsert: {
+            module: counterModule,
+            prefix: config.prefix,
+            padding: config.padding
         }
+    };
+
+    const queryOptions = {
+        new: true,
+        upsert: true
+    };
+    if (options.session) {
+        queryOptions.session = options.session;
+    }
+
+    const counter = await Counter.findOneAndUpdate(
+        { module: counterModule },
+        update,
+        queryOptions
     );
 
     const padding = counter.padding ?? config.padding;
     const prefix = counter.prefix ?? config.prefix;
+    const number = pad(counter.lastNumber, padding);
 
-    return `${prefix}-${pad(counter.lastNumber, padding)}`;
+    if (config.yearScoped) {
+        return `${prefix}-${year}-${number}`;
+    }
+
+    return `${prefix}-${number}`;
 };
 
 // =====================================================
@@ -209,7 +240,18 @@ const generateRepairTicketCode = () => generateCode("repair_ticket");
 // Finance
 // =====================================================
 
-const generatePaymentCode = () => generateCode("payment");
+const generateCompanyCode = () => generateCode("company");
+const generatePaymentCode = (options) => generateCode("payment", options);
+const generateSupplierPayableCode = (options) =>
+    generateCode("supplier_payable", options);
+const generatePayrollRunCode = (options) => generateCode("payroll_run", options);
+const generatePayrollCode = (options) => generateCode("payroll", options);
+const generatePayrollPayableCode = (options) =>
+    generateCode("payroll_payable", options);
+const generateEmployeeAdvanceCode = (options) =>
+    generateCode("employee_advance", options);
+const generateSalaryStructureCode = (options) =>
+    generateCode("salary_structure", options);
 const generateReceiptCode = () => generateCode("receipt");
 const generateExpenseCategoryCode = () => generateCode("expense_category");
 const generateExpenseCode = () => generateCode("expense");
@@ -277,7 +319,14 @@ module.exports = {
     generateSalesReturnCode,
     generateRepairTicketCode,
 
+    generateCompanyCode,
     generatePaymentCode,
+    generateSupplierPayableCode,
+    generatePayrollRunCode,
+    generatePayrollCode,
+    generatePayrollPayableCode,
+    generateEmployeeAdvanceCode,
+    generateSalaryStructureCode,
     generateReceiptCode,
     generateExpenseCategoryCode,
     generateExpenseCode,

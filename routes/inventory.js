@@ -3,13 +3,16 @@ const router = express.Router();
 
 const inventoryController = require("../controllers/inventoryController");
 const validate = require("../middleware/validate");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
 const {
     listValidator,
     idValidator,
     clearProductStockValidator
 } = require("../validators/inventoryValidator");
 
-// Base: /api/inventory
+// Base: /api/inventory — authenticated only
+router.use(protect, resolveTenant);
 
 router.get("/stats", inventoryController.getInventoryStats);
 

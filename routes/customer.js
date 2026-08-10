@@ -3,6 +3,8 @@ const router = express.Router();
 
 const customerController = require("../controllers/customerController");
 const validate = require("../middleware/validate");
+const { protect } = require("../middleware/auth");
+const { resolveTenant } = require("../middleware/tenant");
 const {
     createCustomerValidator,
     updateCustomerValidator,
@@ -10,7 +12,8 @@ const {
     listCustomerValidator
 } = require("../validators/customerValidator");
 
-// Base: /api/customers
+// Base: /api/customers — authenticated only
+router.use(protect, resolveTenant);
 
 router.get(
     "/",

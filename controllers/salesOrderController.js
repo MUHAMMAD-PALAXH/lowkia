@@ -11,7 +11,7 @@ const getActorId = (req) =>
 
 exports.createSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.createSalesOrder(
-        req.body,
+        { ...(req.body || {}), companyId: req.companyId || req.body?.companyId },
         getActorId(req)
     );
     return success(res, "Sales order created successfully.", order, 201);

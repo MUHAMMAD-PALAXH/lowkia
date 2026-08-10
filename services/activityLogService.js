@@ -7,6 +7,7 @@ const { generateActivityLogCode } = require("./codeGenerator");
  */
 const writeActivityLog = async ({
     user,
+    companyId = null,
     branchId = null,
     activityType = "Update",
     module = "Attendance",
@@ -33,6 +34,7 @@ const writeActivityLog = async ({
 
         const [doc] = await ActivityLog.create([
             {
+                companyId: companyId || user.companyId || null,
                 branchId: branchId || null,
                 userId: user._id,
                 userRole: user.role || "",
