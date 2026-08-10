@@ -169,8 +169,10 @@ const getSuppliers = async (query = {}) => {
         Supplier.countDocuments(filter)
     ]);
 
+    const enriched = await attachLiveFinancials(items);
+
     return {
-        items,
+        items: enriched,
         pagination: {
             page,
             limit,
@@ -179,6 +181,204 @@ const getSuppliers = async (query = {}) => {
         },
         trash: trashMode
     };
+};
+
+/**
+ * Live PO rollups for purchase / paid / due (stored supplier totals are often stale).
+ */
+const attachLiveFinancials = async (suppliers = []) => {
+    const docs = Array.isArray(suppliers) ? suppliers : [];
+    if (!docs.length) return [];
+
+    const ids = docs.map((s) => s._id).filter(Boolean);
+    const rows = await PurchaseOrder.aggregate([
+        {
+            $match: {
+                supplierId: { $in: ids },
+                isDeleted: { $ne: true },
+                status: { $nin: ["Cancelled", "Rejected"] }
+            }
+        },
+        {
+            $group: {
+                _id: "$supplierId",
+                totalPurchaseAmount: {
+                    $sum: { $ifNull: ["$grandTotal", 0] }
+                },
+                totalPaidAmount: {
+                    $sum: { $ifNull: ["$paidAmount", 0] }
+                },
+                totalDueAmount: {
+                    $sum: {
+                        $max: [
+                            0,
+                            {
+                                $subtract: [
+                                    { $ifNull: ["$grandTotal", 0] },
+                                    { $ifNull: ["$paidAmount", 0] }
+                                ]
+                            }
+                        ]
+                    }
+                },
+                lastPurchaseDate: { $max: "$orderDate" }
+            }
+        }
+    ]);
+
+    const byId = new Map(
+        rows.map((r) => [
+            String(r._id),
+            {
+                totalPurchaseAmount: Number(r.totalPurchaseAmount) || 0,
+                totalPaidAmount: Number(r.totalPaidAmount) || 0,
+                totalDueAmount: Math.max(Number(r.totalDueAmount) || 0, 0),
+                lastPurchaseDate: r.lastPurchaseDate || null
+            }
+        ])
+    );
+
+    // Persist corrected rollups so stats / due-report stay accurate.
+    const writes = [];
+    for (const [id, fin] of byId.entries()) {
+        writes.push(
+            Supplier.updateOne(
+                { _id: id },
+                {
+                    $set: {
+                        totalPurchaseAmount: fin.totalPurchaseAmount,
+                        totalPaidAmount: fin.totalPaidAmount,
+                        totalDueAmount: fin.totalDueAmount,
+                        currentBalance: fin.totalDueAmount,
+                        ...(fin.lastPurchaseDate
+                            ? { lastPurchaseDate: fin.lastPurchaseDate }
+                            : {})
+                    }
+                }
+            )
+        );
+    }
+    // Also zero-out suppliers on this page with no active POs but stale dues.
+    for (const s of docs) {
+        const key = String(s._id);
+        if (byId.has(key)) continue;
+        const due = Number(s.totalDueAmount) || 0;
+        const purchase = Number(s.totalPurchaseAmount) || 0;
+        const paid = Number(s.totalPaidAmount) || 0;
+        if (due !== 0 || purchase !== 0 || paid !== 0) {
+            byId.set(key, {
+                totalPurchaseAmount: 0,
+                totalPaidAmount: 0,
+                totalDueAmount: 0,
+                lastPurchaseDate: null
+            });
+            writes.push(
+                Supplier.updateOne(
+                    { _id: s._id },
+                    {
+                        $set: {
+                            totalPurchaseAmount: 0,
+                            totalPaidAmount: 0,
+                            totalDueAmount: 0,
+                            currentBalance: 0
+                        }
+                    }
+                )
+            );
+        }
+    }
+    if (writes.length) {
+        Promise.all(writes).catch((err) =>
+            console.warn(
+                "[Supplier] financial rollup persist failed:",
+                err?.message || err
+            )
+        );
+    }
+
+    return docs.map((doc) => {
+        const plain = doc.toObject
+            ? doc.toObject({ virtuals: true })
+            : { ...doc };
+        const fin = byId.get(String(doc._id));
+        if (!fin) return plain;
+        plain.totalPurchaseAmount = fin.totalPurchaseAmount;
+        plain.totalPaidAmount = fin.totalPaidAmount;
+        plain.totalDueAmount = fin.totalDueAmount;
+        plain.currentBalance = fin.totalDueAmount;
+        if (fin.lastPurchaseDate) plain.lastPurchaseDate = fin.lastPurchaseDate;
+        return plain;
+    });
+};
+
+/**
+ * Recompute one supplier's purchase / paid / due from non-cancelled POs.
+ */
+const recomputeSupplierFinancials = async (supplierId, { session = null } = {}) => {
+    if (!supplierId) return null;
+    const sid = mongoose.Types.ObjectId.isValid(String(supplierId))
+        ? new mongoose.Types.ObjectId(String(supplierId))
+        : null;
+    if (!sid) return null;
+
+    const pipeline = [
+        {
+            $match: {
+                supplierId: sid,
+                isDeleted: { $ne: true },
+                status: { $nin: ["Cancelled", "Rejected"] }
+            }
+        },
+        {
+            $group: {
+                _id: null,
+                totalPurchaseAmount: {
+                    $sum: { $ifNull: ["$grandTotal", 0] }
+                },
+                totalPaidAmount: {
+                    $sum: { $ifNull: ["$paidAmount", 0] }
+                },
+                totalDueAmount: {
+                    $sum: {
+                        $max: [
+                            0,
+                            {
+                                $subtract: [
+                                    { $ifNull: ["$grandTotal", 0] },
+                                    { $ifNull: ["$paidAmount", 0] }
+                                ]
+                            }
+                        ]
+                    }
+                },
+                lastPurchaseDate: { $max: "$orderDate" },
+                lastPaymentDate: { $max: "$updatedAt" }
+            }
+        }
+    ];
+
+    let aggQ = PurchaseOrder.aggregate(pipeline);
+    if (session) aggQ = aggQ.session(session);
+    const [row] = await aggQ;
+
+    const totalPurchaseAmount = Number(row?.totalPurchaseAmount) || 0;
+    const totalPaidAmount = Number(row?.totalPaidAmount) || 0;
+    const totalDueAmount = Math.max(
+        Number(row?.totalDueAmount) || totalPurchaseAmount - totalPaidAmount,
+        0
+    );
+
+    const update = {
+        totalPurchaseAmount,
+        totalPaidAmount,
+        totalDueAmount,
+        currentBalance: totalDueAmount
+    };
+    if (row?.lastPurchaseDate) update.lastPurchaseDate = row.lastPurchaseDate;
+
+    const opts = session ? { session } : undefined;
+    await Supplier.updateOne({ _id: sid }, { $set: update }, opts);
+    return update;
 };
 
 // ==========================================================
@@ -194,7 +394,8 @@ const getSupplierById = async (id) => {
         { path: "approvedBy", select: "firstName lastName email" }
     ]);
 
-    return supplier;
+    const [enriched] = await attachLiveFinancials([supplier]);
+    return enriched || supplier;
 };
 
 // ==========================================================
@@ -548,7 +749,60 @@ const getPurchaseReport = async () => {
 };
 
 const getDueReport = async () => {
-    return Supplier.getDueReport();
+    // Prefer live PO dues so the report matches the supplier list.
+    const rows = await PurchaseOrder.aggregate([
+        {
+            $match: {
+                isDeleted: { $ne: true },
+                status: { $nin: ["Cancelled", "Rejected"] }
+            }
+        },
+        {
+            $group: {
+                _id: "$supplierId",
+                totalDueAmount: {
+                    $sum: {
+                        $max: [
+                            0,
+                            {
+                                $subtract: [
+                                    { $ifNull: ["$grandTotal", 0] },
+                                    { $ifNull: ["$paidAmount", 0] }
+                                ]
+                            }
+                        ]
+                    }
+                },
+                totalPurchaseAmount: {
+                    $sum: { $ifNull: ["$grandTotal", 0] }
+                },
+                totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } }
+            }
+        },
+        { $match: { totalDueAmount: { $gt: 0 } } },
+        { $sort: { totalDueAmount: -1 } }
+    ]);
+
+    if (!rows.length) return [];
+
+    const suppliers = await Supplier.find({
+        _id: { $in: rows.map((r) => r._id).filter(Boolean) },
+        isDeleted: false
+    });
+    const byId = new Map(suppliers.map((s) => [String(s._id), s]));
+
+    return rows
+        .map((r) => {
+            const s = byId.get(String(r._id));
+            if (!s) return null;
+            const plain = s.toObject({ virtuals: true });
+            plain.totalDueAmount = Number(r.totalDueAmount) || 0;
+            plain.totalPurchaseAmount = Number(r.totalPurchaseAmount) || 0;
+            plain.totalPaidAmount = Number(r.totalPaidAmount) || 0;
+            plain.currentBalance = plain.totalDueAmount;
+            return plain;
+        })
+        .filter(Boolean);
 };
 
 // ==========================================================
@@ -1758,6 +2012,8 @@ module.exports = {
     bulkDeleteSuppliers,
     bulkRestoreSuppliers,
     bulkPermanentDeleteSuppliers,
+    recomputeSupplierFinancials,
+    attachLiveFinancials,
     getSupplierStats,
     approveSupplier,
     blockSupplier,

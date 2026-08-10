@@ -579,10 +579,26 @@ const getSupplierOutstanding = async (supplierId, companyId) => {
 const syncAfterGrnSafe = async (purchaseOrderId, actorId) => {
     try {
         if (!purchaseOrderId) return null;
-        return await syncFromPurchaseOrder(purchaseOrderId, {
+        const payable = await syncFromPurchaseOrder(purchaseOrderId, {
             actorId,
             audit: true,
         });
+        const sid =
+            payable?.supplierId?._id ||
+            payable?.supplierId ||
+            null;
+        if (sid) {
+            try {
+                const { recomputeSupplierFinancials } = require("./supplierService");
+                await recomputeSupplierFinancials(sid);
+            } catch (err) {
+                console.warn(
+                    "[SupplierPayable] supplier due refresh failed:",
+                    err?.message || err
+                );
+            }
+        }
+        return payable;
     } catch (err) {
         console.warn(
             "[SupplierPayable] sync after GRN failed:",

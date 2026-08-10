@@ -450,6 +450,8 @@ const completeSupplierPayment = async (id, user, meta = {}) => {
 
         await session.commitTransaction();
 
+        await refreshSupplierDueSafe(payment.partyId || payment.supplierId);
+
         await auditPayment({
             user,
             companyId,
@@ -551,6 +553,19 @@ const bumpPoPaidFromPayable = async (payment, actorId, session) => {
     else if (po.paidAmount > 0) po.paymentStatus = "Partial";
     po.updatedBy = toObjectId(actorId);
     await po.save({ session });
+};
+
+const refreshSupplierDueSafe = async (supplierId, session = null) => {
+    if (!supplierId) return;
+    try {
+        const { recomputeSupplierFinancials } = require("./supplierService");
+        await recomputeSupplierFinancials(supplierId, { session });
+    } catch (err) {
+        console.warn(
+            "[SupplierPayment] supplier due refresh failed:",
+            err?.message || err
+        );
+    }
 };
 
 const cancelSupplierPayment = async (id, user, meta = {}) => {
