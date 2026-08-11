@@ -60,7 +60,8 @@ const updateEmployeeValidator = [
         .isIn(["Permanent", "Contract", "Part Time", "Intern", "Temporary"]),
     body("employmentStatus")
         .optional()
-        .isIn(["Active", "On Leave", "Suspended", "Resigned", "Terminated"])
+        .isIn(["Active", "On Leave", "Suspended", "Resigned", "Terminated"]),
+    body("isActive").optional().isBoolean().toBoolean()
 ];
 
 const assignShiftValidator = [
