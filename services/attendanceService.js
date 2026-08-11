@@ -287,6 +287,7 @@ const getMyToday = async (user) => {
         timezone,
         workDate,
         weekday,
+        serverTime: now.toISOString(),
         employee: {
             id: employee._id,
             employeeCode: employee.employeeCode,
