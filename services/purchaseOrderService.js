@@ -302,6 +302,29 @@ const toObjectId = (value) => {
 const escapeRegex = (value = "") =>
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Parse YYYY-MM-DD (or ISO) into start/end-of-day UTC for orderDate filters. */
+const parseOrderDateBound = (value, endOfDay = false) => {
+    if (value == null || value === "") return null;
+    const raw = String(value).trim();
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+        const y = Number(m[1]);
+        const mo = Number(m[2]) - 1;
+        const d = Number(m[3]);
+        return endOfDay
+            ? new Date(Date.UTC(y, mo, d, 23, 59, 59, 999))
+            : new Date(Date.UTC(y, mo, d, 0, 0, 0, 0));
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return null;
+    if (endOfDay) {
+        parsed.setUTCHours(23, 59, 59, 999);
+    } else {
+        parsed.setUTCHours(0, 0, 0, 0);
+    }
+    return parsed;
+};
+
 const populatePo = (query) =>
     query
         .populate("branchId", "name code city branchCode")
@@ -801,6 +824,20 @@ const getPurchaseOrders = async (query = {}) => {
             { "items.productName": { $regex: search, $options: "i" } },
             { "items.sku": { $regex: search, $options: "i" } }
         ];
+    }
+
+    const dateFrom = parseOrderDateBound(
+        query.dateFrom || query.fromDate || query.startDate,
+        false
+    );
+    const dateTo = parseOrderDateBound(
+        query.dateTo || query.toDate || query.endDate,
+        true
+    );
+    if (dateFrom || dateTo) {
+        filter.orderDate = {};
+        if (dateFrom) filter.orderDate.$gte = dateFrom;
+        if (dateTo) filter.orderDate.$lte = dateTo;
     }
 
     const sort = trash.resolveEntitySort(query);

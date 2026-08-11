@@ -25,6 +25,10 @@ const listValidator = [
     query("branchId").optional().isMongoId(),
     query("deleted").optional().isIn(["true", "false"]),
     query("trash").optional().isIn(["true", "false"]),
+    query("dateFrom").optional().isString().trim(),
+    query("dateTo").optional().isString().trim(),
+    query("fromDate").optional().isString().trim(),
+    query("toDate").optional().isString().trim(),
     query("sort")
         .optional()
         .isIn([
