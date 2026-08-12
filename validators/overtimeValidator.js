@@ -11,7 +11,11 @@ const listValidator = [
     query("employeeId").optional().isMongoId(),
     query("branchId").optional().isMongoId(),
     query("attendanceId").optional().isMongoId(),
-    query("search").optional().isString()
+    query("search").optional().isString(),
+    query("deleted").optional(),
+    query("trash").optional(),
+    query("sort").optional().isString(),
+    query("sortBy").optional().isString()
 ];
 
 const createOvertimeValidator = [

@@ -2,6 +2,8 @@ const asyncHandler = require("express-async-handler");
 const overtimeService = require("../services/overtimeService");
 const { success } = require("../utils/apiResponse");
 
+const getActorId = (req) => req.user?._id || null;
+
 const clientMeta = (req) => ({
     ipAddress:
         req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ||
@@ -79,4 +81,59 @@ exports.cancelOvertimeAdmin = asyncHandler(async (req, res) => {
         clientMeta(req)
     );
     return success(res, "Overtime request cancelled.", doc);
+});
+
+exports.deleteOvertimeRequest = asyncHandler(async (req, res) => {
+    const doc = await overtimeService.deleteOvertimeRequest(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Overtime request moved to trash.", doc);
+});
+
+exports.restoreOvertimeRequest = asyncHandler(async (req, res) => {
+    const doc = await overtimeService.restoreOvertimeRequest(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Overtime request restored.", doc);
+});
+
+exports.permanentDeleteOvertimeRequest = asyncHandler(async (req, res) => {
+    const result = await overtimeService.permanentDeleteOvertimeRequest(
+        req.params.id
+    );
+    return success(res, "Overtime request permanently deleted.", result);
+});
+
+exports.bulkDeleteOvertimeRequests = asyncHandler(async (req, res) => {
+    const result = await overtimeService.bulkSoftDeleteOvertimeRequests(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Overtime requests moved to trash.", result);
+});
+
+exports.bulkRestoreOvertimeRequests = asyncHandler(async (req, res) => {
+    const result = await overtimeService.bulkRestoreOvertimeRequests(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Overtime requests restored from trash.", result);
+});
+
+exports.bulkPermanentDeleteOvertimeRequests = asyncHandler(async (req, res) => {
+    const result = await overtimeService.bulkPermanentDeleteOvertimeRequests(
+        req.body || {}
+    );
+    return success(
+        res,
+        "Trash overtime requests permanently deleted.",
+        result
+    );
+});
+
+exports.getTrashCount = asyncHandler(async (req, res) => {
+    const count = await overtimeService.trashCount();
+    return success(res, "Overtime trash count retrieved.", { count });
 });

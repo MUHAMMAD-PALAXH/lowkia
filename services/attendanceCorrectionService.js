@@ -4,12 +4,23 @@ const Attendance = require("../model/attendance");
 const Shift = require("../model/shift");
 const { generateAttendanceCorrectionCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const {
+    createTrashOps,
+    isTrashQuery,
+    resolveEntitySort
+} = require("../utils/softDeleteTrash");
 const { resolveEmployeeFromUser } = require("../middleware/hrAccess");
 const attendancePolicyService = require("./attendancePolicyService");
 const { recomputeDurations } = require("./attendanceService");
 const { writeActivityLog } = require("./activityLogService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
+
+const trash = createTrashOps(AttendanceCorrection, {
+    label: "Attendance correction",
+    nameField: "correctionCode",
+    restoreStatus: false
+});
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -461,7 +472,8 @@ const getCorrections = async (
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
-    const filter = { ...NOT_DELETED };
+    const trashMode = isTrashQuery(query);
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
 
     if (selfOnly && user) {
         const employee = await resolveEmployeeFromUser(user, {
@@ -498,10 +510,15 @@ const getCorrections = async (
         ];
     }
 
+    const sort = resolveEntitySort(query, {
+        nameField: "correctionCode",
+        dateField: "createdAt"
+    });
+
     const [items, total] = await Promise.all([
         populateCorrection(
             AttendanceCorrection.find(filter)
-                .sort({ createdAt: -1 })
+                .sort(sort)
                 .skip(skip)
                 .limit(limit)
         ),
@@ -590,6 +607,17 @@ const adminAdjustAttendance = async (attendanceId, payload = {}, user, meta = {}
     return attendance;
 };
 
+const deleteCorrection = (id, actorId = null) => trash.softDelete(id, actorId);
+const restoreCorrection = (id, actorId = null) => trash.restore(id, actorId);
+const permanentDeleteCorrection = (id) => trash.permanentDelete(id);
+const bulkSoftDeleteCorrections = (payload, actorId = null) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreCorrections = (payload, actorId = null) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteCorrections = (payload) =>
+    trash.bulkPermanentDelete(payload);
+const trashCount = () => trash.trashCount();
+
 module.exports = {
     createCorrection,
     approveCorrection,
@@ -597,5 +625,16 @@ module.exports = {
     cancelCorrection,
     getCorrections,
     getCorrectionById,
-    adminAdjustAttendance
+    adminAdjustAttendance,
+    softDelete: deleteCorrection,
+    deleteCorrection,
+    restoreCorrection,
+    permanentDeleteCorrection,
+    bulkSoftDelete: bulkSoftDeleteCorrections,
+    bulkSoftDeleteCorrections,
+    bulkRestore: bulkRestoreCorrections,
+    bulkRestoreCorrections,
+    bulkPermanentDelete: bulkPermanentDeleteCorrections,
+    bulkPermanentDeleteCorrections,
+    trashCount
 };

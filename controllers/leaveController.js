@@ -2,6 +2,8 @@ const asyncHandler = require("express-async-handler");
 const leaveService = require("../services/leaveService");
 const { success } = require("../utils/apiResponse");
 
+const getActorId = (req) => req.user?._id || null;
+
 exports.createMyLeave = asyncHandler(async (req, res) => {
     const doc = await leaveService.createLeaveRequest(req.user, req.body);
     return success(res, "Leave request submitted.", doc, 201);
@@ -69,4 +71,53 @@ exports.cancelLeaveAdmin = asyncHandler(async (req, res) => {
         { asAdmin: true }
     );
     return success(res, "Leave cancelled.", doc);
+});
+
+exports.deleteLeave = asyncHandler(async (req, res) => {
+    const doc = await leaveService.deleteLeave(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Leave request moved to trash.", doc);
+});
+
+exports.restoreLeave = asyncHandler(async (req, res) => {
+    const doc = await leaveService.restoreLeave(
+        req.params.id,
+        getActorId(req)
+    );
+    return success(res, "Leave request restored.", doc);
+});
+
+exports.permanentDeleteLeave = asyncHandler(async (req, res) => {
+    const result = await leaveService.permanentDeleteLeave(req.params.id);
+    return success(res, "Leave request permanently deleted.", result);
+});
+
+exports.bulkDeleteLeaves = asyncHandler(async (req, res) => {
+    const result = await leaveService.bulkSoftDeleteLeaves(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Leave requests moved to trash.", result);
+});
+
+exports.bulkRestoreLeaves = asyncHandler(async (req, res) => {
+    const result = await leaveService.bulkRestoreLeaves(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Leave requests restored from trash.", result);
+});
+
+exports.bulkPermanentDeleteLeaves = asyncHandler(async (req, res) => {
+    const result = await leaveService.bulkPermanentDeleteLeaves(
+        req.body || {}
+    );
+    return success(res, "Trash leave requests permanently deleted.", result);
+});
+
+exports.getTrashCount = asyncHandler(async (req, res) => {
+    const count = await leaveService.trashCount();
+    return success(res, "Leave trash count retrieved.", { count });
 });

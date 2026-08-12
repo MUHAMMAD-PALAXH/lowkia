@@ -4,13 +4,23 @@ const Employee = require("../model/employee");
 const Attendance = require("../model/attendance");
 const { generateLeaveCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
-const { isTrashQuery } = require("../utils/softDeleteTrash");
+const {
+    createTrashOps,
+    isTrashQuery,
+    resolveEntitySort
+} = require("../utils/softDeleteTrash");
 const settingsService = require("./settingsService");
 const { resolveEmployeeFromUser } = require("../middleware/hrAccess");
 const { eachWorkDate } = require("../utils/workDates");
 const { startOfWorkDay, formatWeekday } = require("../utils/timezone");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
+
+const trash = createTrashOps(Leave, {
+    label: "Leave",
+    nameField: "employeeName",
+    restoreStatus: false
+});
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -265,9 +275,14 @@ const getLeaves = async (
         ];
     }
 
+    const sort = resolveEntitySort(query, {
+        nameField: "employeeName",
+        dateField: "createdAt"
+    });
+
     const [items, total] = await Promise.all([
         populateLeave(
-            Leave.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)
+            Leave.find(filter).sort(sort).skip(skip).limit(limit)
         ),
         Leave.countDocuments(filter)
     ]);
@@ -394,6 +409,17 @@ const cancelLeave = async (id, user, reason = "", { asAdmin = false } = {}) => {
     return getLeaveById(id);
 };
 
+const deleteLeave = (id, actorId = null) => trash.softDelete(id, actorId);
+const restoreLeave = (id, actorId = null) => trash.restore(id, actorId);
+const permanentDeleteLeave = (id) => trash.permanentDelete(id);
+const bulkSoftDeleteLeaves = (payload, actorId = null) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreLeaves = (payload, actorId = null) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteLeaves = (payload) =>
+    trash.bulkPermanentDelete(payload);
+const trashCount = () => trash.trashCount();
+
 module.exports = {
     createLeaveRequest,
     getLeaves,
@@ -402,5 +428,16 @@ module.exports = {
     rejectLeave,
     cancelLeave,
     syncLeaveToAttendance,
-    unsyncLeaveAttendance
+    unsyncLeaveAttendance,
+    softDelete: deleteLeave,
+    deleteLeave,
+    restoreLeave,
+    permanentDeleteLeave,
+    bulkSoftDelete: bulkSoftDeleteLeaves,
+    bulkSoftDeleteLeaves,
+    bulkRestore: bulkRestoreLeaves,
+    bulkRestoreLeaves,
+    bulkPermanentDelete: bulkPermanentDeleteLeaves,
+    bulkPermanentDeleteLeaves,
+    trashCount
 };

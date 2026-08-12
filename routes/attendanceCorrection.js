@@ -49,6 +49,34 @@ router.get(
     validate,
     controller.getCorrections
 );
+
+// Trash (before /:id)
+router.get(
+    "/trash-count",
+    attendanceAdminOnly,
+    attachBranchScope,
+    controller.getTrashCount
+);
+router.post(
+    "/bulk-delete",
+    attendanceAdminOnly,
+    attachBranchScope,
+    controller.bulkDeleteCorrections
+);
+router.post(
+    "/bulk-restore",
+    attendanceAdminOnly,
+    attachBranchScope,
+    controller.bulkRestoreCorrections
+);
+router.post(
+    "/bulk-permanent-delete",
+    attendanceAdminOnly,
+    attachBranchScope,
+    ownerOnly,
+    controller.bulkPermanentDeleteCorrections
+);
+
 router.get(
     "/:id",
     attendanceAdminOnly,
@@ -80,6 +108,31 @@ router.patch(
     cancelValidator,
     validate,
     controller.cancelCorrectionAdmin
+);
+router.delete(
+    "/:id",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    controller.deleteCorrection
+);
+router.patch(
+    "/:id/restore",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    controller.restoreCorrection
+);
+router.delete(
+    "/:id/permanent",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    ownerOnly,
+    controller.permanentDeleteCorrection
 );
 
 // Authorized manual adjust (owner/admin)

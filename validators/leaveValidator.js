@@ -24,7 +24,9 @@ const listValidator = [
         .isIn(["Pending", "Approved", "Rejected", "Cancelled"]),
     query("leaveType").optional().isIn(LEAVE_TYPES),
     query("deleted").optional(),
-    query("trash").optional()
+    query("trash").optional(),
+    query("sort").optional().isString(),
+    query("sortBy").optional().isString()
 ];
 
 const createLeaveValidator = [

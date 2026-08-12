@@ -3,11 +3,22 @@ const OvertimeRequest = require("../model/overtimeRequest");
 const Attendance = require("../model/attendance");
 const { generateOvertimeRequestCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const {
+    createTrashOps,
+    isTrashQuery,
+    resolveEntitySort
+} = require("../utils/softDeleteTrash");
 const { resolveEmployeeFromUser } = require("../middleware/hrAccess");
 const attendancePolicyService = require("./attendancePolicyService");
 const { writeActivityLog } = require("./activityLogService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
+
+const trash = createTrashOps(OvertimeRequest, {
+    label: "Overtime request",
+    nameField: "overtimeCode",
+    restoreStatus: false
+});
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -351,7 +362,8 @@ const getOvertimeRequests = async (
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
-    const filter = { ...NOT_DELETED };
+    const trashMode = isTrashQuery(query);
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
 
     if (selfOnly && user) {
         const employee = await resolveEmployeeFromUser(user, {
@@ -387,10 +399,15 @@ const getOvertimeRequests = async (
         ];
     }
 
+    const sort = resolveEntitySort(query, {
+        nameField: "overtimeCode",
+        dateField: "createdAt"
+    });
+
     const [items, total] = await Promise.all([
         populateOt(
             OvertimeRequest.find(filter)
-                .sort({ createdAt: -1 })
+                .sort(sort)
                 .skip(skip)
                 .limit(limit)
         ),
@@ -416,6 +433,19 @@ const getOvertimeById = async (id) => {
     return doc;
 };
 
+const deleteOvertimeRequest = (id, actorId = null) =>
+    trash.softDelete(id, actorId);
+const restoreOvertimeRequest = (id, actorId = null) =>
+    trash.restore(id, actorId);
+const permanentDeleteOvertimeRequest = (id) => trash.permanentDelete(id);
+const bulkSoftDeleteOvertimeRequests = (payload, actorId = null) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreOvertimeRequests = (payload, actorId = null) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteOvertimeRequests = (payload) =>
+    trash.bulkPermanentDelete(payload);
+const trashCount = () => trash.trashCount();
+
 module.exports = {
     createOvertimeRequest,
     approveOvertime,
@@ -423,5 +453,16 @@ module.exports = {
     cancelOvertime,
     getOvertimeRequests,
     getOvertimeById,
-    applyAutoApprovedOvertime
+    applyAutoApprovedOvertime,
+    softDelete: deleteOvertimeRequest,
+    deleteOvertimeRequest,
+    restoreOvertimeRequest,
+    permanentDeleteOvertimeRequest,
+    bulkSoftDelete: bulkSoftDeleteOvertimeRequests,
+    bulkSoftDeleteOvertimeRequests,
+    bulkRestore: bulkRestoreOvertimeRequests,
+    bulkRestoreOvertimeRequests,
+    bulkPermanentDelete: bulkPermanentDeleteOvertimeRequests,
+    bulkPermanentDeleteOvertimeRequests,
+    trashCount
 };

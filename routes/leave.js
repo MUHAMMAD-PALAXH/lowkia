@@ -5,7 +5,8 @@ const { protect } = require("../middleware/auth");
 const {
     attendanceAdminOnly,
     blockVendor,
-    attachBranchScope
+    attachBranchScope,
+    ownerOnly
 } = require("../middleware/hrAccess");
 const validate = require("../middleware/validate");
 const controller = require("../controllers/leaveController");
@@ -53,6 +54,34 @@ router.post(
     validate,
     controller.createLeaveAdmin
 );
+
+// Trash (before /:id)
+router.get(
+    "/trash-count",
+    attendanceAdminOnly,
+    attachBranchScope,
+    controller.getTrashCount
+);
+router.post(
+    "/bulk-delete",
+    attendanceAdminOnly,
+    attachBranchScope,
+    controller.bulkDeleteLeaves
+);
+router.post(
+    "/bulk-restore",
+    attendanceAdminOnly,
+    attachBranchScope,
+    controller.bulkRestoreLeaves
+);
+router.post(
+    "/bulk-permanent-delete",
+    attendanceAdminOnly,
+    attachBranchScope,
+    ownerOnly,
+    controller.bulkPermanentDeleteLeaves
+);
+
 router.get(
     "/:id",
     attendanceAdminOnly,
@@ -84,6 +113,31 @@ router.patch(
     cancelValidator,
     validate,
     controller.cancelLeaveAdmin
+);
+router.delete(
+    "/:id",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    controller.deleteLeave
+);
+router.patch(
+    "/:id/restore",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    controller.restoreLeave
+);
+router.delete(
+    "/:id/permanent",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    ownerOnly,
+    controller.permanentDeleteLeave
 );
 
 module.exports = router;

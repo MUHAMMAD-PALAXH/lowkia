@@ -6,7 +6,8 @@ const {
     attendanceAdminOnly,
     blockVendor,
     attachBranchScope,
-    stripSpoofFields
+    stripSpoofFields,
+    ownerOnly
 } = require("../middleware/hrAccess");
 const validate = require("../middleware/validate");
 const controller = require("../controllers/overtimeController");
@@ -45,6 +46,34 @@ router.get(
     validate,
     controller.getOvertimeRequests
 );
+
+// Trash (before /:id)
+router.get(
+    "/trash-count",
+    attendanceAdminOnly,
+    attachBranchScope,
+    controller.getTrashCount
+);
+router.post(
+    "/bulk-delete",
+    attendanceAdminOnly,
+    attachBranchScope,
+    controller.bulkDeleteOvertimeRequests
+);
+router.post(
+    "/bulk-restore",
+    attendanceAdminOnly,
+    attachBranchScope,
+    controller.bulkRestoreOvertimeRequests
+);
+router.post(
+    "/bulk-permanent-delete",
+    attendanceAdminOnly,
+    attachBranchScope,
+    ownerOnly,
+    controller.bulkPermanentDeleteOvertimeRequests
+);
+
 router.get(
     "/:id",
     attendanceAdminOnly,
@@ -76,6 +105,31 @@ router.patch(
     cancelValidator,
     validate,
     controller.cancelOvertimeAdmin
+);
+router.delete(
+    "/:id",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    controller.deleteOvertimeRequest
+);
+router.patch(
+    "/:id/restore",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    controller.restoreOvertimeRequest
+);
+router.delete(
+    "/:id/permanent",
+    attendanceAdminOnly,
+    attachBranchScope,
+    idValidator,
+    validate,
+    ownerOnly,
+    controller.permanentDeleteOvertimeRequest
 );
 
 module.exports = router;
