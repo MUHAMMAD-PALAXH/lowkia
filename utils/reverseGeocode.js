@@ -199,54 +199,14 @@ const reverseGeocode = async (lat, lng) => {
     }
 };
 
-const ipCoordinates = async (ipAddress) => {
-    const ip = String(ipAddress || "")
-        .split(",")[0]
-        .trim()
-        .replace(/^::ffff:/, "");
-    const urls = ip
-        ? [
-              `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,lat,lon`,
-              `https://ipwho.is/${encodeURIComponent(ip)}`
-          ]
-        : [
-              "http://ip-api.com/json/?fields=status,lat,lon",
-              "https://ipwho.is/"
-          ];
-    for (const url of urls) {
-        try {
-            const res = await fetch(url, {
-                headers: { Accept: "application/json" },
-                signal: AbortSignal.timeout(3000)
-            });
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (data?.status === "fail" || data?.success === false) continue;
-            const lat = Number(data.lat ?? data.latitude);
-            const lng = Number(data.lon ?? data.longitude);
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-            return { latitude: lat, longitude: lng };
-        } catch (_) {
-            /* try next */
-        }
-    }
-    return null;
-};
-
 const resolvePunchLocation = async ({
     latitude,
     longitude,
-    locationName,
-    ipAddress
+    locationName
 } = {}) => {
     let name = stripCoords(locationName);
-    let lat = Number(latitude);
-    let lng = Number(longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        const fromIp = await ipCoordinates(ipAddress);
-        lat = fromIp?.latitude;
-        lng = fromIp?.longitude;
-    }
+    const lat = Number(latitude);
+    const lng = Number(longitude);
     if (!name && Number.isFinite(lat) && Number.isFinite(lng)) {
         name = await reverseGeocode(lat, lng);
     }

@@ -466,8 +466,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     const checkInLoc = await resolvePunchLocation({
         latitude: payload.latitude,
         longitude: payload.longitude,
-        locationName: payload.locationName,
-        ipAddress: meta.ipAddress || payload.ipAddress
+        locationName: payload.locationName
     });
     if (checkInLoc.latitude != null) doc.latitude = checkInLoc.latitude;
     if (checkInLoc.longitude != null) doc.longitude = checkInLoc.longitude;
@@ -562,8 +561,7 @@ const checkOut = async (user, payload = {}, meta = {}) => {
     const checkOutLoc = await resolvePunchLocation({
         latitude: payload.latitude,
         longitude: payload.longitude,
-        locationName: payload.locationName,
-        ipAddress: meta.ipAddress || payload.ipAddress
+        locationName: payload.locationName
     });
     if (checkOutLoc.latitude != null) doc.checkOutLatitude = checkOutLoc.latitude;
     if (checkOutLoc.longitude != null) {
