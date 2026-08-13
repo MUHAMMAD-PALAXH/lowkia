@@ -84,14 +84,6 @@ const createSupplierValidator = [
         .optional()
         .isIn(PAYMENT_TERMS)
         .withMessage(`paymentTerms must be one of: ${PAYMENT_TERMS.join(", ")}`),
-    body("creditLimit")
-        .optional()
-        .isFloat({ min: 0 })
-        .withMessage("creditLimit must be a non-negative number."),
-    body("creditDays")
-        .optional()
-        .isInt({ min: 0 })
-        .withMessage("creditDays must be a non-negative integer."),
     body("openingBalance")
         .optional()
         .isFloat()
@@ -150,14 +142,6 @@ const updateSupplierValidator = [
         .optional()
         .isIn(PAYMENT_TERMS)
         .withMessage(`paymentTerms must be one of: ${PAYMENT_TERMS.join(", ")}`),
-    body("creditLimit")
-        .optional()
-        .isFloat({ min: 0 })
-        .withMessage("creditLimit must be a non-negative number."),
-    body("creditDays")
-        .optional()
-        .isInt({ min: 0 })
-        .withMessage("creditDays must be a non-negative integer."),
     body("balanceType")
         .optional()
         .isIn(BALANCE_TYPES)

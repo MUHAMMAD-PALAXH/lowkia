@@ -330,7 +330,7 @@ const populatePo = (query) =>
         .populate("branchId", "name code city branchCode")
         .populate(
             "supplierId",
-            "supplierCode name companyName phone email status paymentTerms creditLimit creditDays currentBalance totalPurchaseAmount totalPaidAmount totalDueAmount openingBalance lastPurchaseDate lastPaymentDate"
+            "supplierCode name companyName phone email status paymentTerms currentBalance totalPurchaseAmount totalPaidAmount totalDueAmount openingBalance lastPurchaseDate lastPaymentDate"
         )
         .populate("warehouseId", "warehouseCode warehouseName city status")
         .populate("items.productId", "name productCode trackingType productType totalStock availableStock purchasePrice")
@@ -3747,7 +3747,7 @@ const getProductPurchaseContext = async (productId) => {
     const product = await Product.findOne({ _id: id, ...NOT_DELETED })
         .populate(
             "suppliers.supplierId",
-            "supplierCode name companyName phone email status paymentTerms creditLimit creditDays currentBalance totalPurchaseAmount totalPaidAmount totalDueAmount openingBalance lastPurchaseDate lastPaymentDate address city country bankAccounts contactPersons"
+            "supplierCode name companyName phone email status paymentTerms currentBalance totalPurchaseAmount totalPaidAmount totalDueAmount openingBalance lastPurchaseDate lastPaymentDate address city country bankAccounts contactPersons"
         )
         .populate(
             "primarySupplierId",

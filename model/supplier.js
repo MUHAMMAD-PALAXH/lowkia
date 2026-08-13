@@ -181,18 +181,6 @@ const supplierSchema = new mongoose.Schema(
             default: "Cash"
         },
 
-        creditLimit: {
-            type: Number,
-            default: 0,
-            min: 0
-        },
-
-        creditDays: {
-            type: Number,
-            default: 0,
-            min: 0
-        },
-
         // ==========================================================
         // Financial Information
         // ==========================================================

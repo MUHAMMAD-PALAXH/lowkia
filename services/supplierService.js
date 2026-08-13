@@ -1917,9 +1917,9 @@ const getSupplierDetails = async (id, query = {}) => {
     const activePoCount = Math.max(poCount - (Number(agg.cancelledPoCount) || 0), 0);
     const qtyOrdered = Number(agg.totalQtyOrdered) || 0;
     const qtyReceived = Number(agg.totalQtyReceived) || 0;
-    const creditLimit = Number(supplier.creditLimit) || 0;
     const receiveRate = qtyOrdered > 0 ? qtyReceived / qtyOrdered : 0;
     const paymentRate = lifetimeSpend > 0 ? lifetimePaid / lifetimeSpend : 0;
+    const dueRate = lifetimeSpend > 0 ? lifetimeDue / lifetimeSpend : 0;
 
     const monthNames = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -1983,18 +1983,12 @@ const getSupplierDetails = async (id, query = {}) => {
         totalQtyReceived: qtyReceived,
         receiveRate: Number(receiveRate.toFixed(4)),
         paymentRate: Number(paymentRate.toFixed(4)),
+        dueRate: Number(dueRate.toFixed(4)),
         lastPurchaseDate:
             agg.lastPurchaseDate || supplier.lastPurchaseDate || null,
         lastPaymentDate: supplier.lastPaymentDate || null,
         lastPoNo: purchaseOrderRows[0]?.purchaseOrderNo || "",
         lastGrnNo: lastGrn?.grnNumber || "",
-        creditLimit,
-        creditDays: Number(supplier.creditDays) || 0,
-        creditUtilization:
-            creditLimit > 0
-                ? Number((lifetimeDue / creditLimit).toFixed(4))
-                : 0,
-        creditRemaining: Math.max(creditLimit - lifetimeDue, 0),
         rating: Number(supplier.rating) || 0,
         ratingCount: Number(supplier.ratingCount) || 0,
         storedPurchaseAmount: Number(supplier.totalPurchaseAmount) || 0,
