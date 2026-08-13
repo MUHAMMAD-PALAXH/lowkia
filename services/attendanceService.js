@@ -232,6 +232,73 @@ const recomputeDurations = (attendance, { shift, policy, now = new Date() } = {}
     return attendance;
 };
 
+const scheduledMinutesOf = (row) => {
+    if (row?.scheduledIn && row?.scheduledOut) {
+        const mins = minutesBetween(row.scheduledIn, row.scheduledOut);
+        if (mins > 0) return mins;
+    }
+    const shift = row?.shiftId;
+    if (shift?.startTime && shift?.endTime) {
+        const [sh, sm] = String(shift.startTime).split(":").map(Number);
+        const [eh, em] = String(shift.endTime).split(":").map(Number);
+        if ([sh, sm, eh, em].every((n) => Number.isFinite(n))) {
+            let mins = eh * 60 + em - (sh * 60 + sm);
+            if (mins <= 0) mins += 24 * 60;
+            return mins;
+        }
+    }
+    return Number(row?.minimumWorkingMinutes) || 480;
+};
+
+const lateMinutesOf = (row) => {
+    const stored = Number(row?.lateMinutes) || 0;
+    if (stored > 0) return stored;
+    if (!row?.checkIn || !row?.scheduledIn) return 0;
+    const diff = Math.floor(
+        (new Date(row.checkIn) - new Date(row.scheduledIn)) / 60000
+    );
+    return diff > 0 ? diff : 0;
+};
+
+const classifyDay = (row) => {
+    const status = String(row?.attendanceStatus || "");
+    const off = ["Leave", "Absent", "Holiday", "Weekend"].includes(status);
+    const checkIn = Boolean(row?.checkIn);
+    const checkOut = Boolean(row?.checkOut);
+    const worked = Number(row?.actualWorkedMinutes || row?.workingMinutes) || 0;
+    const lateMinutes = lateMinutesOf(row);
+    const early = Number(row?.earlyLeaveMinutes) || 0;
+    const scheduledMin = scheduledMinutesOf(row);
+    const showedUp = checkIn && !off;
+    const late = showedUp && (row?.isLate === true || lateMinutes > 0);
+    const incomplete =
+        showedUp &&
+        (!checkOut ||
+            early > 0 ||
+            row?.leftEarly === true ||
+            String(row?.checkOutStatus || "") === "Early Leave" ||
+            worked + 15 < scheduledMin);
+    const halfDay =
+        showedUp &&
+        (status === "Half Day" ||
+            (checkOut && worked < Math.floor(scheduledMin / 2)));
+    return {
+        punched: checkIn || status === "Leave",
+        present: showedUp,
+        late,
+        incomplete,
+        halfDay,
+        leave: status === "Leave",
+        absent: status === "Absent",
+        holiday: status === "Holiday",
+        weeklyOff: status === "Weekend",
+        worked,
+        lateMinutes: showedUp ? lateMinutes : 0,
+        earlyLeaveMinutes: early,
+        overtimeMinutes: Number(row?.overtimeMinutes) || 0
+    };
+};
+
 const findTodayAttendance = async (employeeId, workDate, attendanceDate) => {
     let doc = await Attendance.findOne({
         employeeId,
@@ -250,7 +317,10 @@ const findTodayAttendance = async (employeeId, workDate, attendanceDate) => {
 
 const populateAttendance = (q) =>
     q
-        .populate("shiftId", "shiftCode shiftName startTime endTime shiftType")
+        .populate(
+            "shiftId",
+            "shiftCode shiftName startTime endTime shiftType lateGraceMinutes minimumWorkingMinutes earlyLeaveGraceMinutes"
+        )
         .populate("branchId", "branchCode name")
         .populate("policyId", "policyCode policyName gracePeriodMinutes");
 
@@ -784,27 +854,25 @@ const getMyMonthlySummary = async (user, query = {}) => {
         totalEarlyLeaveMinutes: 0,
         totalOvertimeMinutes: 0,
         approvedOvertimeMinutes: 0,
+        punched: 0,
         records: rows.length
     };
 
     for (const r of rows) {
-        const s = r.attendanceStatus;
-        if (s === "Present") summary.present += 1;
-        else if (s === "Late") {
-            summary.late += 1;
-            summary.present += 1;
-        } else if (s === "Absent") summary.absent += 1;
-        else if (s === "Half Day") summary.halfDay += 1;
-        else if (s === "Leave") summary.leave += 1;
-        else if (s === "Holiday") summary.holiday += 1;
-        else if (s === "Weekend") summary.weeklyOff += 1;
-        else if (s === "Incomplete") summary.incomplete += 1;
-
-        summary.totalWorkingMinutes +=
-            Number(r.actualWorkedMinutes || r.workingMinutes) || 0;
-        summary.totalLateMinutes += Number(r.lateMinutes) || 0;
-        summary.totalEarlyLeaveMinutes += Number(r.earlyLeaveMinutes) || 0;
-        summary.totalOvertimeMinutes += Number(r.overtimeMinutes) || 0;
+        const day = classifyDay(r);
+        if (day.punched) summary.punched += 1;
+        if (day.present) summary.present += 1;
+        if (day.late) summary.late += 1;
+        if (day.absent) summary.absent += 1;
+        if (day.halfDay) summary.halfDay += 1;
+        if (day.leave) summary.leave += 1;
+        if (day.holiday) summary.holiday += 1;
+        if (day.weeklyOff) summary.weeklyOff += 1;
+        if (day.incomplete) summary.incomplete += 1;
+        summary.totalWorkingMinutes += day.worked;
+        summary.totalLateMinutes += day.lateMinutes;
+        summary.totalEarlyLeaveMinutes += day.earlyLeaveMinutes;
+        summary.totalOvertimeMinutes += day.overtimeMinutes;
         summary.approvedOvertimeMinutes +=
             Number(r.approvedOvertimeMinutes) || 0;
     }
