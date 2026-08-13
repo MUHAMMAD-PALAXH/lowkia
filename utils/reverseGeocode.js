@@ -71,18 +71,31 @@ const fromNominatimAddress = (address) => {
     ]).join(", ");
 };
 
-const mergePlaceNames = (contained, nominatim) => {
-    const inParts = String(contained || "")
-        .split(",")
-        .filter((e) => e.trim()).length;
-    if (inParts >= 2) return contained;
-    return nominatim || contained || "";
+const mergePlaceNames = (contained, nominatim) =>
+    uniqueParts([
+        ...String(nominatim || "").split(","),
+        ...String(contained || "").split(",")
+    ]).join(", ");
+
+const metersBetween = (lat1, lon1, lat2, lon2) => {
+    const r = 6371000;
+    const p1 = (lat1 * Math.PI) / 180;
+    const p2 = (lat2 * Math.PI) / 180;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(p1) * Math.cos(p2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
 const reverseOverpass = async (latitude, longitude) => {
     const query =
-        `[out:json][timeout:12];is_in(${latitude},${longitude})->.a;` +
-        `rel(pivot.a)["boundary"="administrative"];out tags;`;
+        `[out:json][timeout:15];is_in(${latitude},${longitude})->.a;` +
+        `(` +
+        `rel(pivot.a)["boundary"="administrative"];` +
+        `node["place"~"village|hamlet|locality|neighbourhood|suburb"](around:2000,${latitude},${longitude});` +
+        `);out tags center;`;
     const endpoints = [
         "https://overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter"
@@ -97,24 +110,38 @@ const reverseOverpass = async (latitude, longitude) => {
                     "User-Agent": UA
                 },
                 body: query,
-                signal: AbortSignal.timeout(14000)
+                signal: AbortSignal.timeout(16000)
             });
             if (!res.ok) continue;
             const data = await res.json();
             const elements = Array.isArray(data?.elements) ? data.elements : [];
             const byLevel = new Map();
+            let nearest = "";
+            let nearestMeters = 2000;
             for (const el of elements) {
                 const tags = el?.tags || {};
-                const level = Number(tags.admin_level) || 0;
                 const name = String(tags["name:en"] || tags.name || "").trim();
-                if (!name || level <= 0 || byLevel.has(level)) continue;
-                byLevel.set(level, name);
+                if (!name) continue;
+                if (el.type === "node" || tags.place) {
+                    const plat = Number(el.lat ?? el.center?.lat);
+                    const plng = Number(el.lon ?? el.center?.lon);
+                    if (Number.isFinite(plat) && Number.isFinite(plng)) {
+                        const m = metersBetween(latitude, longitude, plat, plng);
+                        if (m <= nearestMeters) {
+                            nearestMeters = m;
+                            nearest = name;
+                        }
+                    }
+                }
+                const level = Number(tags.admin_level) || 0;
+                if (level > 0 && !byLevel.has(level)) byLevel.set(level, name);
             }
-            if (!byLevel.size) continue;
             const levels = [...byLevel.keys()].sort((a, b) => b - a);
-            return uniqueParts(
-                levels.slice(0, 5).map((level) => byLevel.get(level))
-            ).join(", ");
+            const label = uniqueParts([
+                nearest,
+                ...levels.slice(0, 5).map((level) => byLevel.get(level))
+            ]).join(", ");
+            if (label) return label;
         } catch (_) {
             /* try next endpoint */
         }
