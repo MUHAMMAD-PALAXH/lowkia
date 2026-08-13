@@ -753,11 +753,19 @@ const getMyMonthlySummary = async (user, query = {}) => {
     const year = Number(query.year) || Number(workDate.slice(0, 4));
     const month = Number(query.month) || Number(workDate.slice(5, 7));
 
+    const mm = String(month).padStart(2, "0");
+    const start = `${year}-${mm}-01`;
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    const end = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+
     const rows = await Attendance.find({
         employeeId: employee._id,
-        year,
-        month,
-        ...NOT_DELETED
+        ...NOT_DELETED,
+        $or: [
+            { year, month },
+            { workDate: { $gte: start, $lt: end } }
+        ]
     }).lean();
 
     const summary = {

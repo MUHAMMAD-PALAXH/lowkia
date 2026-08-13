@@ -612,6 +612,14 @@ function(next){
         this.year =
         date.getFullYear();
 
+        if (
+            this.workDate &&
+            /^\d{4}-\d{2}-\d{2}$/.test(String(this.workDate))
+        ) {
+            this.year = Number(String(this.workDate).slice(0, 4));
+            this.month = Number(String(this.workDate).slice(5, 7));
+        }
+
     }
 
 
