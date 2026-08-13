@@ -559,6 +559,28 @@ const moneyPack = (minor, currency = DEFAULT_CURRENCY) => ({
     formatted: formatMoney(minor, currency),
 });
 
+const asCalendarDay = (value) => {
+    if (!value) return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+};
+
+const formatCalendarDay = (value) => {
+    const d = value instanceof Date ? value : asCalendarDay(value);
+    if (!d) return "";
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+};
+
+const daysInclusive = (from, to) =>
+    Math.round((to.getTime() - from.getTime()) / 86400000) + 1;
+
+const resolveJoinDate = (emp) =>
+    asCalendarDay(emp.joiningDate) || asCalendarDay(emp.createdAt);
+
 const scalePreview = (preview, factor) => {
     const currency = preview.currency || DEFAULT_CURRENCY;
     const scale = (n) => Math.round((Number(n) || 0) * factor);
@@ -595,9 +617,12 @@ const buildPeriodCalculation = async ({
     const daysInMonth = new Date(year, month, 0).getDate();
     const payableDays = day ? 1 : daysInMonth;
 
+    const periodStart = new Date(year, month - 1, day || 1);
+    const periodEnd = new Date(year, month - 1, day || daysInMonth);
+
     let employees = await Employee.find(empMatch)
         .select(
-            "fullName employeeCode salaryType basicSalary salaryStructureId"
+            "fullName employeeCode salaryType basicSalary salaryStructureId joiningDate createdAt"
         )
         .lean();
     if (!employees.length) {
@@ -606,7 +631,7 @@ const buildPeriodCalculation = async ({
             isActive: { $ne: false },
         })
             .select(
-                "fullName employeeCode salaryType basicSalary salaryStructureId"
+                "fullName employeeCode salaryType basicSalary salaryStructureId joiningDate createdAt"
             )
             .lean();
     }
@@ -623,6 +648,7 @@ const buildPeriodCalculation = async ({
     const typeBuckets = { Monthly: [], Daily: [], Hourly: [] };
     const employeeRows = [];
     let unassigned = 0;
+    let notYetJoined = 0;
     let basicMinor = 0;
     let earningMinor = 0;
     let deductionMinor = 0;
@@ -630,6 +656,24 @@ const buildPeriodCalculation = async ({
     let netMinor = 0;
 
     for (const emp of employees) {
+        const joinDate = resolveJoinDate(emp);
+        const joinLabel = joinDate ? formatCalendarDay(joinDate) : "";
+        const baseRow = {
+            name: emp.fullName || "Employee",
+            code: emp.employeeCode || "",
+            joiningDate: joinLabel || null,
+        };
+
+        if (joinDate && joinDate > periodEnd) {
+            notYetJoined += 1;
+            employeeRows.push({
+                ...baseRow,
+                skipped: true,
+                skipReason: `Joins ${joinLabel} — after this period`,
+            });
+            continue;
+        }
+
         const structure = emp.salaryStructureId
             ? byId.get(String(emp.salaryStructureId))
             : null;
@@ -638,8 +682,7 @@ const buildPeriodCalculation = async ({
         if (!structure || archived) {
             unassigned += 1;
             employeeRows.push({
-                name: emp.fullName || "Employee",
-                code: emp.employeeCode || "",
+                ...baseRow,
                 skipped: true,
                 skipReason: archived
                     ? "Assigned structure is archived"
@@ -648,26 +691,42 @@ const buildPeriodCalculation = async ({
             continue;
         }
 
+        const payStart =
+            joinDate && joinDate > periodStart ? joinDate : periodStart;
+        const payableCalendarDays = Math.max(
+            1,
+            daysInclusive(payStart, periodEnd)
+        );
+        const fromJoin = Boolean(joinDate && joinDate > periodStart);
         const type = normalizeSalaryType(structure.salaryType);
         const hoursPerDay = Number(structure.workingHoursPerDay) || 8;
         const workingDays = Number(structure.workingDaysPerMonth) || 22;
-        const daysForCalc = day ? 1 : workingDays;
+        const daysForCalc = day
+            ? 1
+            : fromJoin
+              ? Math.max(
+                    1,
+                    Math.round((workingDays * payableCalendarDays) / daysInMonth)
+                )
+              : workingDays;
         let attendance = {};
         let factor = 1;
         let formula = "";
+        const fromNote = fromJoin ? ` from ${joinLabel}` : "";
 
         if (type === "Hourly") {
             const hours = daysForCalc * hoursPerDay;
             attendance = { workedHours: hours };
-            formula = `${formatMoney(structure.hourlyRateMinor || 0)} × ${hours} hrs`;
+            formula = `${formatMoney(structure.hourlyRateMinor || 0)} × ${hours} hrs${fromNote}`;
         } else if (type === "Daily") {
             attendance = { presentDays: daysForCalc };
-            formula = `${formatMoney(structure.dailyRateMinor || 0)} × ${daysForCalc} days`;
-        } else if (day) {
-            factor = 1 / daysInMonth;
-            formula = `${formatMoney(structure.basicSalaryMinor || 0)} ÷ ${daysInMonth} days`;
+            formula = `${formatMoney(structure.dailyRateMinor || 0)} × ${daysForCalc} days${fromNote}`;
         } else {
-            formula = `monthly basic ${formatMoney(structure.basicSalaryMinor || 0)}`;
+            factor = payableCalendarDays / daysInMonth;
+            formula =
+                factor >= 0.999
+                    ? `monthly basic ${formatMoney(structure.basicSalaryMinor || 0)}`
+                    : `${formatMoney(structure.basicSalaryMinor || 0)} × ${payableCalendarDays}/${daysInMonth} days${fromNote}`;
         }
 
         let preview;
@@ -677,8 +736,7 @@ const buildPeriodCalculation = async ({
         } catch (_) {
             unassigned += 1;
             employeeRows.push({
-                name: emp.fullName || "Employee",
-                code: emp.employeeCode || "",
+                ...baseRow,
                 skipped: true,
                 skipReason: "Could not calculate this structure",
             });
@@ -693,11 +751,11 @@ const buildPeriodCalculation = async ({
         netMinor += preview.netMinor || 0;
 
         employeeRows.push({
-            name: emp.fullName || "Employee",
-            code: emp.employeeCode || "",
+            ...baseRow,
             salaryType: type,
             structureName: structure.structureName || "Structure",
             formula,
+            payableDays: payableCalendarDays,
             basic: moneyPack(preview.basicMinor || 0),
             earnings: moneyPack(preview.earningMinor || 0),
             deductions: moneyPack(preview.deductionMinor || 0),
@@ -705,7 +763,7 @@ const buildPeriodCalculation = async ({
         });
     }
 
-    const assigned = employees.length - unassigned;
+    const assigned = employees.length - unassigned - notYetJoined;
     const paid = Number(periodPaidMinor) || 0;
     const due = Math.max(0, netMinor - paid);
     const steps = [];
@@ -718,19 +776,26 @@ const buildPeriodCalculation = async ({
         detail: day
             ? `${periodLabel} · 1 of ${daysInMonth} calendar days`
             : `${periodLabel} · ${daysInMonth} calendar days`,
-        formula: day
-            ? "Daily slice of the selected month"
-            : "Full-month calculation using each template's working days",
+        formula:
+            "Pay starts on each employee's joining date (or added date) — earlier days are not counted",
     });
 
     steps.push({
         n: n++,
         key: "employees",
         title: "Employees in scope",
-        detail: `${employees.length} active · ${assigned} assigned · ${unassigned} unassigned`,
+        detail: [
+            `${employees.length} active`,
+            `${assigned} assigned`,
+            `${unassigned} unassigned`,
+            notYetJoined ? `${notYetJoined} not yet joined` : null,
+        ]
+            .filter(Boolean)
+            .join(" · "),
         count: employees.length,
         assigned,
         unassigned,
+        notYetJoined,
     });
 
     for (const type of ["Monthly", "Daily", "Hourly"]) {
@@ -824,6 +889,7 @@ const buildPeriodCalculation = async ({
         employeeCount: employees.length,
         assignedCount: assigned,
         unassignedCount: unassigned,
+        notYetJoinedCount: notYetJoined,
         steps,
         employees: employeeRows,
         totals: {
