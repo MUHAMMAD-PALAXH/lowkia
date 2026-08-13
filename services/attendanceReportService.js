@@ -239,16 +239,8 @@ const getDailyReport = async (query = {}, managedBranchIds = null) => {
             attendanceId: att?._id || null,
             checkIn: att?.checkIn || null,
             checkOut: att?.checkOut || null,
-            checkInLocation: formatPunchLocation(
-                att?.locationName,
-                att?.latitude,
-                att?.longitude
-            ),
-            checkOutLocation: formatPunchLocation(
-                att?.checkOutLocationName,
-                att?.checkOutLatitude,
-                att?.checkOutLongitude
-            ),
+            checkInLocation: formatPunchLocation(att?.locationName),
+            checkOutLocation: formatPunchLocation(att?.checkOutLocationName),
             workingMinutes: worked,
             workingHoursLabel: formatMinutes(worked),
             lateMinutes: Number(att?.lateMinutes) || 0,

@@ -37,7 +37,7 @@ const checkInValidator = [
     body("longitude")
         .optional({ nullable: true })
         .isFloat({ min: -180, max: 180 }),
-    body("locationName").optional().isString().trim().isLength({ max: 180 }),
+    body("locationName").optional().isString().trim().isLength({ max: 240 }),
     body("deviceId").optional().isString().trim(),
     body("deviceName").optional().isString().trim(),
     body("platform").optional().isString().trim(),
@@ -72,7 +72,7 @@ const checkOutValidator = [
     body("longitude")
         .optional({ nullable: true })
         .isFloat({ min: -180, max: 180 }),
-    body("locationName").optional().isString().trim().isLength({ max: 180 }),
+    body("locationName").optional().isString().trim().isLength({ max: 240 }),
     body("deviceId").optional().isString().trim(),
     body("platform").optional().isString().trim(),
     body("appVersion").optional().isString().trim(),
