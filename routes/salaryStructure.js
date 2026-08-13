@@ -25,6 +25,7 @@ router.use(protect, resolveTenant, blockVendorFromFinance, financeStaffOnly);
 
 router.get("/", listValidator, validate, controller.list);
 router.post("/", financeOwnerOnly, createValidator, validate, controller.create);
+router.get("/summary", controller.summary);
 
 router.get(
     "/employee/:employeeId",

@@ -1,12 +1,14 @@
 const mongoose = require("mongoose");
 const SalaryStructure = require("../model/salaryStructure");
 const Employee = require("../model/employee");
+const Payroll = require("../model/payroll");
 const AppError = require("../utils/appError");
 const {
     DEFAULT_CURRENCY,
     assertCurrency,
     toMinor,
     toMajor,
+    formatMoney,
     assertNonNegativeMinor,
 } = require("../utils/money");
 const { generateSalaryStructureCode } = require("./codeGenerator");
@@ -551,6 +553,156 @@ const getEmployeeStructure = async (employeeId, companyId) => {
     };
 };
 
+const moneyPack = (minor, currency = DEFAULT_CURRENCY) => ({
+    amountMinor: minor,
+    amount: toMajor(minor, currency),
+    formatted: formatMoney(minor, currency),
+});
+
+const sumPayrollNets = async (match) => {
+    const rows = await Payroll.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: null,
+                total: { $sum: "$netSalaryMinor" },
+                paid: {
+                    $sum: {
+                        $cond: [
+                            {
+                                $or: [
+                                    { $eq: ["$status", "paid"] },
+                                    { $eq: ["$payrollStatus", "Paid"] },
+                                    { $eq: ["$paymentStatus", "Completed"] },
+                                ],
+                            },
+                            "$netSalaryMinor",
+                            0,
+                        ],
+                    },
+                },
+            },
+        },
+    ]);
+    const total = Number(rows[0]?.total) || 0;
+    const paid = Number(rows[0]?.paid) || 0;
+    return { total, paid, due: Math.max(0, total - paid) };
+};
+
+const getSalarySummary = async (companyId, query = {}) => {
+    const now = new Date();
+    const year = Math.max(
+        2000,
+        parseInt(query.year, 10) || now.getFullYear()
+    );
+    const month = Math.min(
+        12,
+        Math.max(1, parseInt(query.month, 10) || now.getMonth() + 1)
+    );
+    const dayRaw = parseInt(query.day, 10);
+    const day =
+        Number.isFinite(dayRaw) && dayRaw >= 1 && dayRaw <= 31 ? dayRaw : null;
+
+    const empMatch = { ...NOT_DELETED, isActive: { $ne: false } };
+    if (companyId) empMatch.companyId = companyId;
+
+    const lineMatch = {
+        ...NOT_DELETED,
+        status: { $nin: ["cancelled", "skipped"] },
+    };
+    if (companyId) lineMatch.companyId = companyId;
+
+    let [employeeCount, contracted, allTime] = await Promise.all([
+        Employee.countDocuments(empMatch),
+        Employee.aggregate([
+            { $match: empMatch },
+            {
+                $group: {
+                    _id: null,
+                    basic: { $sum: { $ifNull: ["$basicSalary", 0] } },
+                },
+            },
+        ]),
+        sumPayrollNets(lineMatch),
+    ]);
+
+    if (employeeCount === 0) {
+        const openEmp = { ...NOT_DELETED, isActive: { $ne: false } };
+        [employeeCount, contracted] = await Promise.all([
+            Employee.countDocuments(openEmp),
+            Employee.aggregate([
+                { $match: openEmp },
+                {
+                    $group: {
+                        _id: null,
+                        basic: { $sum: { $ifNull: ["$basicSalary", 0] } },
+                    },
+                },
+            ]),
+        ]);
+    }
+
+    const contractedMajor = Number(contracted[0]?.basic) || 0;
+    const contractedMinor = Math.round(contractedMajor * 100);
+    const totalsTotal = allTime.total > 0 ? allTime.total : contractedMinor;
+    const totalsPaid = allTime.paid;
+    const totalsDue = Math.max(0, totalsTotal - totalsPaid);
+
+    const periodMatch = {
+        ...lineMatch,
+        payrollYear: year,
+        payrollMonth: month,
+    };
+    if (day) {
+        const start = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+        const end = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+        periodMatch.$or = [
+            { paidAt: { $gte: start, $lte: end } },
+            { createdAt: { $gte: start, $lte: end } },
+        ];
+    }
+    const periodPayroll = await sumPayrollNets(periodMatch);
+    const isCurrentPeriod =
+        !day &&
+        year === now.getFullYear() &&
+        month === now.getMonth() + 1;
+    const periodTotal =
+        periodPayroll.total > 0
+            ? periodPayroll.total
+            : isCurrentPeriod
+              ? contractedMinor
+              : 0;
+    const periodPaid = periodPayroll.paid;
+    const periodDue = Math.max(0, periodTotal - periodPaid);
+
+    const months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    const periodLabel = day
+        ? `${String(day).padStart(2, "0")} ${months[month - 1]} ${year}`
+        : `${months[month - 1]} ${year}`;
+
+    return {
+        employeeCount,
+        currency: DEFAULT_CURRENCY,
+        year,
+        month,
+        day,
+        periodLabel,
+        totals: {
+            salary: moneyPack(totalsTotal),
+            paid: moneyPack(totalsPaid),
+            due: moneyPack(totalsDue),
+        },
+        period: {
+            salary: moneyPack(periodTotal),
+            paid: moneyPack(periodPaid),
+            due: moneyPack(periodDue),
+        },
+    };
+};
+
 module.exports = {
     createStructure,
     updateStructure,
@@ -561,6 +713,7 @@ module.exports = {
     archiveStructure,
     restoreStructure,
     getEmployeeStructure,
+    getSalarySummary,
     serialize,
     syncMajorMirrors,
 };

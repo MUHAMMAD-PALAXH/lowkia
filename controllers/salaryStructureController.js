@@ -85,3 +85,11 @@ exports.getForEmployee = asyncHandler(async (req, res) => {
     );
     return success(res, "Employee salary structure retrieved.", doc);
 });
+
+exports.summary = asyncHandler(async (req, res) => {
+    const doc = await salaryStructureService.getSalarySummary(
+        req.companyId,
+        req.query || {}
+    );
+    return success(res, "Salary summary retrieved.", doc);
+});
