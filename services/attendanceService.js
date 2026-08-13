@@ -253,11 +253,25 @@ const scheduledMinutesOf = (row) => {
 const lateMinutesOf = (row) => {
     const stored = Number(row?.lateMinutes) || 0;
     if (stored > 0) return stored;
-    if (!row?.checkIn || !row?.scheduledIn) return 0;
-    const diff = Math.floor(
-        (new Date(row.checkIn) - new Date(row.scheduledIn)) / 60000
-    );
-    return diff > 0 ? diff : 0;
+    if (!row?.checkIn) return 0;
+    if (row?.scheduledIn) {
+        const diff = Math.floor(
+            (new Date(row.checkIn) - new Date(row.scheduledIn)) / 60000
+        );
+        if (diff > 0) return diff;
+    }
+    const shift = row?.shiftId && typeof row.shiftId === "object" ? row.shiftId : null;
+    const workDate = String(row?.workDate || "").slice(0, 10);
+    if (shift?.startTime && /^\d{4}-\d{2}-\d{2}$/.test(workDate)) {
+        const [sh, sm] = String(shift.startTime).split(":").map(Number);
+        if (Number.isFinite(sh) && Number.isFinite(sm)) {
+            const [y, mo, d] = workDate.split("-").map(Number);
+            const planned = new Date(y, mo - 1, d, sh, sm || 0, 0, 0);
+            const diff = Math.floor((new Date(row.checkIn) - planned) / 60000);
+            if (diff > 0) return diff;
+        }
+    }
+    return 0;
 };
 
 const classifyDay = (row) => {
@@ -860,7 +874,12 @@ const getMyMonthlySummary = async (user, query = {}) => {
             { year, month },
             { workDate: { $gte: start, $lt: end } }
         ]
-    }).lean();
+    })
+        .populate(
+            "shiftId",
+            "shiftCode shiftName startTime endTime lateGraceMinutes minimumWorkingMinutes"
+        )
+        .lean();
 
     const summary = {
         year,
