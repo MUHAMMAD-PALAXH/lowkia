@@ -32,6 +32,8 @@ const createHolidayValidator = [
     body("isPaid").optional().isBoolean(),
     body("applicableBranchIds").optional().isArray(),
     body("applicableBranchIds.*").optional().isMongoId(),
+    body("applicableEmployeeIds").optional().isArray(),
+    body("applicableEmployeeIds.*").optional().isMongoId(),
     body("description").optional().isString(),
     body("status").optional().isIn(["Active", "Inactive"])
 ];
@@ -47,6 +49,8 @@ const updateHolidayValidator = [
     body("isPaid").optional().isBoolean(),
     body("applicableBranchIds").optional().isArray(),
     body("applicableBranchIds.*").optional().isMongoId(),
+    body("applicableEmployeeIds").optional().isArray(),
+    body("applicableEmployeeIds.*").optional().isMongoId(),
     body("description").optional().isString(),
     body("status").optional().isIn(["Active", "Inactive"])
 ];

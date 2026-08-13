@@ -62,6 +62,14 @@ const holidaySchema = new mongoose.Schema(
             }
         ],
 
+        /** Empty = all employees */
+        applicableEmployeeIds: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "Employee"
+            }
+        ],
+
         status: {
             type: String,
             enum: ["Active", "Inactive"],

@@ -280,7 +280,8 @@ const getMyToday = async (user) => {
     const weeklyOff = isWeeklyOff(shift, policy, weekday);
     const holiday = await holidayService.findHolidayForWorkDate(
         workDate,
-        employee.branchId?._id || employee.branchId
+        employee.branchId?._id || employee.branchId,
+        employee._id
     );
 
     return {
@@ -398,7 +399,8 @@ const checkIn = async (user, payload = {}, meta = {}) => {
 
     const holiday = await holidayService.findHolidayForWorkDate(
         workDate,
-        employee.branchId?._id || employee.branchId
+        employee.branchId?._id || employee.branchId,
+        employee._id
     );
     if (holiday && !policy.allowCheckInOnHoliday) {
         throw new AppError(

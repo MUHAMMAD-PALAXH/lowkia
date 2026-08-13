@@ -72,6 +72,9 @@ const createHoliday = async (payload = {}, actorId = null) => {
     const applicableBranchIds = Array.isArray(data.applicableBranchIds)
         ? data.applicableBranchIds.map(toObjectId).filter(Boolean)
         : [];
+    const applicableEmployeeIds = Array.isArray(data.applicableEmployeeIds)
+        ? data.applicableEmployeeIds.map(toObjectId).filter(Boolean)
+        : [];
 
     const doc = await Holiday.create({
         ...data,
@@ -81,6 +84,7 @@ const createHoliday = async (payload = {}, actorId = null) => {
         endDate,
         workDates,
         applicableBranchIds,
+        applicableEmployeeIds,
         createdBy: actorId || null
     });
 
@@ -134,7 +138,11 @@ const getHolidays = async (query = {}) => {
     }
 
     const [items, total] = await Promise.all([
-        Holiday.find(filter).sort({ startDate: 1 }).skip(skip).limit(limit),
+        Holiday.find(filter)
+            .populate("applicableEmployeeIds", "employeeCode fullName")
+            .sort({ startDate: 1 })
+            .skip(skip)
+            .limit(limit),
         Holiday.countDocuments(filter)
     ]);
 
@@ -156,9 +164,14 @@ const getHolidayById = async (id) => {
 };
 
 /**
- * Find active holiday covering workDate for an optional branch.
+ * Find active holiday covering workDate for an optional branch / employee.
+ * Empty applicable* arrays mean "all".
  */
-const findHolidayForWorkDate = async (workDate, branchId = null) => {
+const findHolidayForWorkDate = async (
+    workDate,
+    branchId = null,
+    employeeId = null
+) => {
     if (!workDate) return null;
     const filter = {
         ...NOT_DELETED,
@@ -169,10 +182,14 @@ const findHolidayForWorkDate = async (workDate, branchId = null) => {
     if (!holidays.length) return null;
 
     const bid = branchId ? String(branchId) : null;
+    const eid = employeeId ? String(employeeId) : null;
     for (const h of holidays) {
         const branches = (h.applicableBranchIds || []).map(String);
-        if (!branches.length) return h;
-        if (bid && branches.includes(bid)) return h;
+        const employees = (h.applicableEmployeeIds || []).map(String);
+        const branchOk = !branches.length || (bid && branches.includes(bid));
+        const employeeOk =
+            !employees.length || (eid && employees.includes(eid));
+        if (branchOk && employeeOk) return h;
     }
     return null;
 };
@@ -196,6 +213,11 @@ const updateHoliday = async (id, payload = {}, actorId = null) => {
 
     if (data.applicableBranchIds) {
         data.applicableBranchIds = data.applicableBranchIds
+            .map(toObjectId)
+            .filter(Boolean);
+    }
+    if (data.applicableEmployeeIds) {
+        data.applicableEmployeeIds = data.applicableEmployeeIds
             .map(toObjectId)
             .filter(Boolean);
     }

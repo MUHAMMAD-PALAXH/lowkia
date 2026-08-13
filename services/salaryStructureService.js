@@ -344,8 +344,37 @@ const listStructures = async (companyId, query = {}) => {
         SalaryStructure.countDocuments(filter),
     ]);
 
+    const structureIds = items.map((d) => d._id);
+    const empCountRows = structureIds.length
+        ? await Employee.aggregate([
+              {
+                  $match: {
+                      salaryStructureId: { $in: structureIds },
+                      isDeleted: { $ne: true },
+                  },
+              },
+              { $group: { _id: "$salaryStructureId", n: { $sum: 1 } } },
+          ])
+        : [];
+    const empCountMap = Object.fromEntries(
+        empCountRows.map((r) => [String(r._id), r.n])
+    );
+
     return {
-        items: items.map(serialize),
+        items: items.map((doc) => {
+            const s = serialize(doc);
+            const assigned = new Set(
+                (s.assignedEmployees || []).map((e) =>
+                    String(e?._id || e?.id || e)
+                )
+            );
+            if (s.employeeId) {
+                assigned.add(String(s.employeeId._id || s.employeeId.id || s.employeeId));
+            }
+            const linked = empCountMap[String(doc._id)] || 0;
+            s.employeeCount = Math.max(assigned.size, linked);
+            return s;
+        }),
         pagination: {
             page,
             limit,
@@ -462,6 +491,34 @@ const archiveStructure = async (id, user, meta = {}) => {
     );
 };
 
+const restoreStructure = async (id, user, meta = {}) => {
+    if (!user?._id) throw new AppError("Authentication required.", 401);
+    const companyId = await ensureUserCompany(user);
+    const doc = await SalaryStructure.findOne({ _id: id, ...NOT_DELETED });
+    assertDocumentCompany(doc, companyId, "Salary structure");
+
+    doc.status = "active";
+    doc.isCurrent = true;
+    doc.updatedBy = user._id;
+    await doc.save();
+
+    await writeActivityLog({
+        user,
+        companyId,
+        branchId: doc.branchId,
+        activityType: "Update",
+        module: "Payroll",
+        subModule: "SalaryStructure",
+        description: `Salary structure ${doc.structureCode} restored from archive`,
+        referenceType: "Payroll",
+        referenceId: doc._id,
+        ipAddress: meta.ipAddress || "",
+        securityLevel: "High",
+    });
+
+    return serialize(await populateStructure(SalaryStructure.findById(doc._id)));
+};
+
 const getEmployeeStructure = async (employeeId, companyId) => {
     const employee = await Employee.findOne({
         _id: employeeId,
@@ -502,6 +559,7 @@ module.exports = {
     assignToEmployee,
     preview,
     archiveStructure,
+    restoreStructure,
     getEmployeeStructure,
     serialize,
     syncMajorMirrors,

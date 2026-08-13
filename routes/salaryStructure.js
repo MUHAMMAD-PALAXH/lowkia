@@ -69,5 +69,12 @@ router.post(
     validate,
     controller.archive
 );
+router.post(
+    "/:id/restore",
+    financeOwnerOnly,
+    idValidator,
+    validate,
+    controller.restore
+);
 
 module.exports = router;

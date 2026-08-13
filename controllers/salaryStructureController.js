@@ -69,6 +69,15 @@ exports.archive = asyncHandler(async (req, res) => {
     return success(res, "Salary structure archived.", doc);
 });
 
+exports.restore = asyncHandler(async (req, res) => {
+    const doc = await salaryStructureService.restoreStructure(
+        req.params.id,
+        req.user,
+        meta(req)
+    );
+    return success(res, "Salary structure restored.", doc);
+});
+
 exports.getForEmployee = asyncHandler(async (req, res) => {
     const doc = await salaryStructureService.getEmployeeStructure(
         req.params.employeeId,
