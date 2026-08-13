@@ -957,7 +957,37 @@ const getSupplierDetails = async (id, query = {}) => {
                                     ]
                                 },
                                 0,
-                                { $ifNull: ["$grandTotal", 0] }
+                                {
+                                    $max: [
+                                        { $ifNull: ["$grandTotal", 0] },
+                                        { $ifNull: ["$subtotal", 0] },
+                                        {
+                                            $ifNull: [
+                                                "$totalReceivedAmount",
+                                                0
+                                            ]
+                                        },
+                                        {
+                                            $reduce: {
+                                                input: {
+                                                    $ifNull: ["$items", []]
+                                                },
+                                                initialValue: 0,
+                                                in: {
+                                                    $add: [
+                                                        "$$value",
+                                                        {
+                                                            $ifNull: [
+                                                                "$$this.total",
+                                                                0
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
                             ]
                         }
                     },
@@ -985,7 +1015,32 @@ const getSupplierDetails = async (id, query = {}) => {
                                     ]
                                 },
                                 0,
-                                { $ifNull: ["$dueAmount", 0] }
+                                {
+                                    $max: [
+                                        { $ifNull: ["$dueAmount", 0] },
+                                        {
+                                            $max: [
+                                                0,
+                                                {
+                                                    $subtract: [
+                                                        {
+                                                            $ifNull: [
+                                                                "$grandTotal",
+                                                                0
+                                                            ]
+                                                        },
+                                                        {
+                                                            $ifNull: [
+                                                                "$paidAmount",
+                                                                0
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
                             ]
                         }
                     },
@@ -1213,9 +1268,20 @@ const getSupplierDetails = async (id, query = {}) => {
                 $match: {
                     supplierId,
                     isDeleted: { $ne: true },
-                    status: {
-                        $in: ['Completed', 'Received', 'Verified']
-                    }
+                    $or: [
+                        {
+                            status: {
+                                $in: [
+                                    'Completed',
+                                    'Received',
+                                    'Verified',
+                                    'Posted',
+                                    'Closed'
+                                ]
+                            }
+                        },
+                        { inventoryUpdated: true }
+                    ]
                 }
             },
             {
@@ -1267,7 +1333,9 @@ const getSupplierDetails = async (id, query = {}) => {
         PurchaseOrder.countDocuments({
             supplierId,
             isDeleted: { $ne: true },
-            status: 'Partially Received'
+            status: {
+                $in: ['Partially Received', 'Partially Delivered']
+            }
         })
     ]);
 
@@ -1910,14 +1978,133 @@ const getSupplierDetails = async (id, query = {}) => {
         totalPaidAmount: 0,
         totalDueAmount: 0
     };
-    const lifetimeSpend = liveFin.totalPurchaseAmount;
-    const lifetimePaid = liveFin.totalPaidAmount;
-    const lifetimeDue = liveFin.totalDueAmount;
+
+    const CANCELLED_PO = new Set(["Cancelled", "Rejected"]);
+    const DONE_PO = new Set([
+        "Received",
+        "Completed",
+        "Closed",
+        "Completely Delivered"
+    ]);
+    const PARTIAL_PO = new Set([
+        "Partially Received",
+        "Partially Delivered"
+    ]);
+    const poCommercial = (po) => {
+        const grand = Math.max(Number(po.grandTotal) || 0, 0);
+        const sub = Math.max(Number(po.subtotal) || 0, 0);
+        const lines = (po.items || []).reduce(
+            (s, i) => s + (Number(i.total) || 0),
+            0
+        );
+        const recvAmt = Math.max(Number(po.totalReceivedAmount) || 0, 0);
+        return roundMoney2(Math.max(grand, sub, lines, recvAmt));
+    };
+
+    let poSpend = 0;
+    let poPaid = 0;
+    let poQtyOrd = 0;
+    let poQtyRecv = 0;
+    let partialFromPos = 0;
+    let completedFromPos = 0;
+    let earliestPo = null;
+    let activeSent = 0;
+    for (const po of purchaseOrders) {
+        if (po.isDeleted === true || CANCELLED_PO.has(String(po.status || ""))) {
+            continue;
+        }
+        activeSent += 1;
+        const cost = poCommercial(po);
+        poSpend += cost;
+        poPaid += Math.max(Number(po.paidAmount) || 0, 0);
+        const ordered = (po.items || []).reduce(
+            (s, i) => s + (Number(i.quantity) || 0),
+            0
+        );
+        const received = (po.items || []).reduce(
+            (s, i) => s + (Number(i.receivedQuantity) || 0),
+            0
+        );
+        poQtyOrd += ordered;
+        poQtyRecv += received;
+        if (
+            PARTIAL_PO.has(po.status) ||
+            (received > 0 && ordered > 0 && received + 1e-6 < ordered)
+        ) {
+            partialFromPos += 1;
+        }
+        if (
+            po.isFullyReceived ||
+            DONE_PO.has(String(po.status || "")) ||
+            (ordered > 0 && received + 1e-6 >= ordered)
+        ) {
+            completedFromPos += 1;
+        }
+        const od = po.orderDate ? new Date(po.orderDate) : null;
+        if (od && !Number.isNaN(od.getTime()) && (!earliestPo || od < earliestPo)) {
+            earliestPo = od;
+        }
+    }
+
+    const productSpendTotal = (productSpend || []).reduce(
+        (s, r) => s + (Number(r.spend) || 0),
+        0
+    );
+    const aggSpend = Number(agg.lifetimeSpend) || 0;
+    const aggPaid = Number(agg.lifetimePaid) || 0;
+    const aggDue = Number(agg.lifetimeDue) || 0;
+    const receivedValue = Number(gAgg.receivedValue) || 0;
+    const acceptedQty = Number(gAgg.acceptedQty) || 0;
+
+    const lifetimeSpend = roundMoney2(
+        Math.max(
+            poSpend,
+            aggSpend,
+            productSpendTotal,
+            receivedValue,
+            Number(liveFin.totalPurchaseAmount) || 0
+        )
+    );
+    const lifetimePaid = roundMoney2(
+        Math.min(
+            lifetimeSpend,
+            Math.max(
+                poPaid,
+                aggPaid,
+                Number(liveFin.totalPaidAmount) || 0
+            )
+        )
+    );
+    const lifetimeDue = roundMoney2(
+        Math.min(
+            lifetimeSpend,
+            Math.max(
+                0,
+                aggDue,
+                Number(liveFin.totalDueAmount) || 0,
+                lifetimeSpend - lifetimePaid
+            )
+        )
+    );
+
     const poCount = Number(agg.poCount) || 0;
-    const activePoCount = Math.max(poCount - (Number(agg.cancelledPoCount) || 0), 0);
-    const qtyOrdered = Number(agg.totalQtyOrdered) || 0;
-    const qtyReceived = Number(agg.totalQtyReceived) || 0;
-    const receiveRate = qtyOrdered > 0 ? qtyReceived / qtyOrdered : 0;
+    const activePoCount = Math.max(
+        poCount - (Number(agg.cancelledPoCount) || 0),
+        activeSent,
+        0
+    );
+    const qtyOrdered = Math.max(Number(agg.totalQtyOrdered) || 0, poQtyOrd);
+    const qtyReceived = Math.max(
+        Number(agg.totalQtyReceived) || 0,
+        poQtyRecv,
+        acceptedQty
+    );
+    const receiveRate =
+        qtyOrdered > 0
+            ? Math.min(1, qtyReceived / qtyOrdered)
+            : lifetimeSpend > 0
+              ? Math.min(1, receivedValue / lifetimeSpend)
+              : 0;
     const paymentRate = lifetimeSpend > 0 ? lifetimePaid / lifetimeSpend : 0;
     const dueRate = lifetimeSpend > 0 ? lifetimeDue / lifetimeSpend : 0;
 
@@ -1953,23 +2140,33 @@ const getSupplierDetails = async (id, query = {}) => {
     });
     const monthly = spendTrend;
     const createdAt = supplier.createdAt ? new Date(supplier.createdAt) : null;
-    const lifetimeDays = createdAt
-        ? Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 86400000))
+    const firstActivity = earliestPo || createdAt;
+    const lifetimeDays = firstActivity
+        ? Math.max(0, Math.floor((Date.now() - firstActivity.getTime()) / 86400000))
         : 0;
+    const completedDeliveries = Math.max(
+        completedFromPos,
+        Number(gAgg.completedGrnCount) || 0,
+        Number(agg.completedPoCount) || 0
+    );
+    const partialDeliveries = Math.max(
+        partialFromPos,
+        Number(partialDeliveryCount) || 0
+    );
 
     const summary = {
         productCount: products.length,
         primaryProductCount: products.filter((p) => p.isPrimary).length,
-        poCount,
+        poCount: Math.max(activePoCount, activeSent),
         poOpenCount: openPoCount,
-        poCompletedCount: Number(agg.completedPoCount) || 0,
+        poCompletedCount: completedDeliveries,
         poCancelledCount: Number(agg.cancelledPoCount) || 0,
-        partialDeliveryCount: Number(partialDeliveryCount) || 0,
+        partialDeliveryCount: partialDeliveries,
         lifetimeDays,
         grnCount,
-        grnCompletedCount: Number(gAgg.completedGrnCount) || 0,
-        receivedValue: Number(gAgg.receivedValue) || 0,
-        acceptedQty: Number(gAgg.acceptedQty) || 0,
+        grnCompletedCount: completedDeliveries,
+        receivedValue,
+        acceptedQty,
         lifetimeSpend,
         lifetimePaid,
         lifetimeDue,
