@@ -17,7 +17,7 @@ const {
     isNightShiftTimes
 } = require("../utils/timezone");
 const { writeActivityLog } = require("./activityLogService");
-const { reverseGeocode } = require("../utils/reverseGeocode");
+const { resolvePunchLocation } = require("../utils/reverseGeocode");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -463,13 +463,15 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     doc.deviceId = payload.deviceId || meta.deviceId || "";
     doc.deviceName = payload.deviceName || "";
     doc.ipAddress = meta.ipAddress || payload.ipAddress || "";
-    doc.latitude = payload.latitude != null ? Number(payload.latitude) : undefined;
-    doc.longitude =
-        payload.longitude != null ? Number(payload.longitude) : undefined;
-    doc.locationName = String(payload.locationName || "").trim();
-    if (!doc.locationName && doc.latitude != null && doc.longitude != null) {
-        doc.locationName = await reverseGeocode(doc.latitude, doc.longitude);
-    }
+    const checkInLoc = await resolvePunchLocation({
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        locationName: payload.locationName,
+        ipAddress: meta.ipAddress || payload.ipAddress
+    });
+    if (checkInLoc.latitude != null) doc.latitude = checkInLoc.latitude;
+    if (checkInLoc.longitude != null) doc.longitude = checkInLoc.longitude;
+    doc.locationName = checkInLoc.locationName || "";
     doc.checkInSelfie = payload.selfie || payload.checkInSelfie || "";
     doc.checkInPlatform = payload.platform || meta.platform || "";
     doc.checkInAppVersion = payload.appVersion || "";
@@ -557,21 +559,17 @@ const checkOut = async (user, payload = {}, meta = {}) => {
     }
 
     doc.checkOut = now;
-    doc.checkOutLatitude =
-        payload.latitude != null ? Number(payload.latitude) : undefined;
-    doc.checkOutLongitude =
-        payload.longitude != null ? Number(payload.longitude) : undefined;
-    doc.checkOutLocationName = String(payload.locationName || "").trim();
-    if (
-        !doc.checkOutLocationName &&
-        doc.checkOutLatitude != null &&
-        doc.checkOutLongitude != null
-    ) {
-        doc.checkOutLocationName = await reverseGeocode(
-            doc.checkOutLatitude,
-            doc.checkOutLongitude
-        );
+    const checkOutLoc = await resolvePunchLocation({
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        locationName: payload.locationName,
+        ipAddress: meta.ipAddress || payload.ipAddress
+    });
+    if (checkOutLoc.latitude != null) doc.checkOutLatitude = checkOutLoc.latitude;
+    if (checkOutLoc.longitude != null) {
+        doc.checkOutLongitude = checkOutLoc.longitude;
     }
+    doc.checkOutLocationName = checkOutLoc.locationName || "";
     doc.checkOutIpAddress = meta.ipAddress || payload.ipAddress || "";
     doc.checkOutDeviceId = payload.deviceId || meta.deviceId || "";
     doc.checkOutSelfie = payload.selfie || payload.checkOutSelfie || "";

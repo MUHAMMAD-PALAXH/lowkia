@@ -12,7 +12,10 @@ const {
     formatWeekday,
     startOfWorkDay
 } = require("../utils/timezone");
-const { formatPunchLocation } = require("../utils/reverseGeocode");
+const {
+    formatPunchLocation,
+    resolvePunchLocation
+} = require("../utils/reverseGeocode");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -22,6 +25,24 @@ const toObjectId = (value) => {
     return mongoose.Types.ObjectId.isValid(id)
         ? new mongoose.Types.ObjectId(id)
         : null;
+};
+
+const locationCache = new Map();
+
+const locationLabel = async (name, lat, lng, ip) => {
+    const existing = formatPunchLocation(name);
+    if (existing) return existing;
+    const key = `${lat ?? ""},${lng ?? ""},${ip || ""}`;
+    if (locationCache.has(key)) return locationCache.get(key);
+    const resolved = await resolvePunchLocation({
+        latitude: lat,
+        longitude: lng,
+        locationName: name,
+        ipAddress: ip
+    });
+    const label = formatPunchLocation(resolved.locationName);
+    if (label) locationCache.set(key, label);
+    return label;
 };
 
 const emptyCards = () => ({
@@ -222,6 +243,25 @@ const getDailyReport = async (query = {}, managedBranchIds = null) => {
         const worked =
             Number(att?.actualWorkedMinutes || att?.workingMinutes) || 0;
 
+        const [checkInLocation, checkOutLocation] = await Promise.all([
+            att?.checkIn
+                ? locationLabel(
+                      att?.locationName,
+                      att?.latitude,
+                      att?.longitude,
+                      att?.ipAddress
+                  )
+                : Promise.resolve(""),
+            att?.checkOut
+                ? locationLabel(
+                      att?.checkOutLocationName,
+                      att?.checkOutLatitude,
+                      att?.checkOutLongitude,
+                      att?.checkOutIpAddress
+                  )
+                : Promise.resolve("")
+        ]);
+
         rows.push({
             employeeId: emp._id,
             employeeCode: emp.employeeCode,
@@ -239,8 +279,8 @@ const getDailyReport = async (query = {}, managedBranchIds = null) => {
             attendanceId: att?._id || null,
             checkIn: att?.checkIn || null,
             checkOut: att?.checkOut || null,
-            checkInLocation: formatPunchLocation(att?.locationName),
-            checkOutLocation: formatPunchLocation(att?.checkOutLocationName),
+            checkInLocation,
+            checkOutLocation,
             workingMinutes: worked,
             workingHoursLabel: formatMinutes(worked),
             lateMinutes: Number(att?.lateMinutes) || 0,
