@@ -743,7 +743,16 @@ const buildPeriodCalculation = async ({
             continue;
         }
 
-        typeBuckets[type].push({ emp, structure, preview, formula });
+        typeBuckets[type].push({
+            emp,
+            structure,
+            preview,
+            formula,
+            fromJoin,
+            joinLabel,
+            payableCalendarDays,
+            daysForCalc,
+        });
         basicMinor += preview.basicMinor || 0;
         earningMinor += preview.earningMinor || 0;
         deductionMinor += preview.deductionMinor || 0;
@@ -768,6 +777,23 @@ const buildPeriodCalculation = async ({
     const due = Math.max(0, netMinor - paid);
     const steps = [];
     let n = 1;
+    const skippedRows = employeeRows.filter((r) => r.skipped);
+    const componentTotals = new Map();
+    for (const type of Object.keys(typeBuckets)) {
+        for (const row of typeBuckets[type]) {
+            for (const line of row.preview.lines || []) {
+                const amt = Number(line.computedMinor) || 0;
+                if (!amt) continue;
+                const name = line.componentName || line.code || "Component";
+                const prev = componentTotals.get(name) || {
+                    amountMinor: 0,
+                    type: line.componentType || "Earning",
+                };
+                prev.amountMinor += amt;
+                componentTotals.set(name, prev);
+            }
+        }
+    }
 
     steps.push({
         n: n++,
@@ -777,7 +803,22 @@ const buildPeriodCalculation = async ({
             ? `${periodLabel} · 1 of ${daysInMonth} calendar days`
             : `${periodLabel} · ${daysInMonth} calendar days`,
         formula:
-            "Pay starts on each employee's joining date (or added date) — earlier days are not counted",
+            "Pay starts on each employee's joining date. Days before that date are not counted.",
+        lines: [
+            {
+                title: "Calendar window",
+                detail: `${formatCalendarDay(periodStart)} → ${formatCalendarDay(periodEnd)}`,
+                formula: day
+                    ? "Single-day slice of the selected month"
+                    : `${daysInMonth} calendar days in this month`,
+            },
+            {
+                title: "Proration rule",
+                detail: `Monthly = basic × days on payroll ÷ ${daysInMonth}`,
+                formula:
+                    "Daily / hourly use remaining working days after the join date",
+            },
+        ],
     });
 
     steps.push({
@@ -796,65 +837,108 @@ const buildPeriodCalculation = async ({
         assigned,
         unassigned,
         notYetJoined,
+        lines: skippedRows.map((r) => ({
+            title: r.name,
+            detail: r.joiningDate ? `joined ${r.joiningDate}` : "",
+            formula: r.skipReason || "Skipped",
+        })),
     });
 
     for (const type of ["Monthly", "Daily", "Hourly"]) {
         const rows = typeBuckets[type];
         if (!rows.length) continue;
         const sum = rows.reduce((s, r) => s + (r.preview.basicMinor || 0), 0);
-        const sample = rows
-            .slice(0, 3)
-            .map((r) => r.formula)
-            .join("  +  ");
+        const full = rows.filter((r) => !r.fromJoin).length;
+        const prorated = rows.filter((r) => r.fromJoin).length;
         steps.push({
             n: n++,
             key: `base_${type.toLowerCase()}`,
             title: `${type} base pay`,
-            detail: `${rows.length} employee${rows.length === 1 ? "" : "s"} on ${type.toLowerCase()} templates`,
-            formula: sample + (rows.length > 3 ? "  +  …" : ""),
+            detail: [
+                `${rows.length} employee${rows.length === 1 ? "" : "s"} on ${type.toLowerCase()} templates`,
+                full ? `${full} full period` : null,
+                prorated ? `${prorated} prorated from joining date` : null,
+            ]
+                .filter(Boolean)
+                .join(" · "),
+            formula:
+                type === "Monthly"
+                    ? `basic × days on payroll ÷ ${daysInMonth}`
+                    : type === "Daily"
+                      ? "daily rate × payable working days"
+                      : "hourly rate × payable hours",
             amount: moneyPack(sum),
             kind: "add",
+            lines: rows.map((r) => ({
+                title: r.emp.fullName || "Employee",
+                detail: [
+                    r.structure.structureName,
+                    r.joinLabel ? `joined ${r.joinLabel}` : null,
+                    `${r.payableCalendarDays}/${daysInMonth} days`,
+                ]
+                    .filter(Boolean)
+                    .join(" · "),
+                formula: r.formula,
+                amount: moneyPack(r.preview.basicMinor || 0),
+            })),
         });
     }
 
-    if (earningMinor > 0) {
-        steps.push({
-            n: n++,
-            key: "earnings",
-            title: "Allowances / earnings",
-            detail: "Fixed and percentage components added to base",
-            amount: moneyPack(earningMinor),
-            kind: "add",
-        });
-    }
+    const earningLines = [...componentTotals.entries()]
+        .filter(([, v]) => v.type !== "Deduction")
+        .map(([name, v]) => ({
+            title: name,
+            amount: moneyPack(v.amountMinor),
+        }));
+    const deductionLines = [...componentTotals.entries()]
+        .filter(([, v]) => v.type === "Deduction")
+        .map(([name, v]) => ({
+            title: name,
+            amount: moneyPack(v.amountMinor),
+        }));
+
+    steps.push({
+        n: n++,
+        key: "earnings",
+        title: "Allowances / earnings",
+        detail: earningMinor
+            ? "Components added on top of base pay"
+            : "No allowances in this period",
+        formula: `${formatMoney(basicMinor)} base + ${formatMoney(earningMinor)} allowances`,
+        amount: moneyPack(earningMinor),
+        kind: "add",
+        lines: earningLines,
+    });
 
     steps.push({
         n: n++,
         key: "gross",
         title: "Gross salary",
         detail: "Base pay + allowances",
-        formula: "basic + earnings",
+        formula: `${formatMoney(basicMinor)} + ${formatMoney(earningMinor)} = ${formatMoney(grossMinor)}`,
         amount: moneyPack(grossMinor),
         kind: "subtotal",
     });
 
-    if (deductionMinor > 0) {
-        steps.push({
-            n: n++,
-            key: "deductions",
-            title: "Deductions",
-            detail: "Tax and other deduction components",
-            amount: moneyPack(deductionMinor),
-            kind: "subtract",
-        });
-    }
+    steps.push({
+        n: n++,
+        key: "deductions",
+        title: "Deductions",
+        detail: deductionMinor
+            ? "Tax and other deduction components"
+            : "No deductions in this period",
+        formula: `${formatMoney(grossMinor)} − ${formatMoney(deductionMinor)}`,
+        amount: moneyPack(deductionMinor),
+        kind: "subtract",
+        lines: deductionLines,
+    });
 
     steps.push({
         n: n++,
         key: "net",
         title: "Period total salary",
         detail: "Expected payroll for this filter",
-        formula: "gross − deductions",
+        formula: `${formatMoney(grossMinor)} − ${formatMoney(deductionMinor)} = ${formatMoney(netMinor)}`,
         amount: moneyPack(netMinor),
         kind: "total",
     });
@@ -864,6 +948,7 @@ const buildPeriodCalculation = async ({
         key: "paid",
         title: "Already paid",
         detail: "Payroll lines marked paid in this period",
+        formula: `${formatMoney(netMinor)} − ${formatMoney(paid)} remaining after paid`,
         amount: moneyPack(paid),
         kind: "subtract",
     });
@@ -873,7 +958,7 @@ const buildPeriodCalculation = async ({
         key: "due",
         title: "Amount due",
         detail: "Remaining salary for the selected period",
-        formula: "period total − paid",
+        formula: `${formatMoney(netMinor)} − ${formatMoney(paid)} = ${formatMoney(due)}`,
         amount: moneyPack(due),
         kind: "due",
     });
