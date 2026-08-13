@@ -180,6 +180,7 @@ checkOutAppVersion:{ type:String, default:"" },
 
 checkOutLatitude:{ type:Number },
 checkOutLongitude:{ type:Number },
+checkOutLocationName:{ type:String, default:"" },
 checkOutIpAddress:{ type:String, default:"" },
 checkOutDeviceId:{ type:String, default:"" },
 

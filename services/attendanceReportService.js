@@ -238,6 +238,16 @@ const getDailyReport = async (query = {}, managedBranchIds = null) => {
             attendanceId: att?._id || null,
             checkIn: att?.checkIn || null,
             checkOut: att?.checkOut || null,
+            checkInLocation:
+                att?.locationName ||
+                (att?.latitude != null && att?.longitude != null
+                    ? `${Number(att.latitude).toFixed(4)}, ${Number(att.longitude).toFixed(4)}`
+                    : ""),
+            checkOutLocation:
+                att?.checkOutLocationName ||
+                (att?.checkOutLatitude != null && att?.checkOutLongitude != null
+                    ? `${Number(att.checkOutLatitude).toFixed(4)}, ${Number(att.checkOutLongitude).toFixed(4)}`
+                    : ""),
             workingMinutes: worked,
             workingHoursLabel: formatMinutes(worked),
             lateMinutes: Number(att?.lateMinutes) || 0,

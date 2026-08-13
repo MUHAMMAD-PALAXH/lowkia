@@ -16,7 +16,6 @@ const {
     combineWorkDateAndTime,
     isNightShiftTimes
 } = require("../utils/timezone");
-const { assertWithinGeofence } = require("../utils/geo");
 const { writeActivityLog } = require("./activityLogService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
@@ -409,14 +408,6 @@ const checkIn = async (user, payload = {}, meta = {}) => {
         );
     }
 
-    const geo = assertWithinGeofence({
-        latitude: payload.latitude,
-        longitude: payload.longitude,
-        branch,
-        required: policy.locationRequired === true
-    });
-    if (!geo.ok) throw new AppError(geo.message, 400);
-
     if (policy.selfieRequired && !payload.selfie && !payload.checkInSelfie) {
         throw new AppError("Check-in selfie is required by policy.", 400);
     }
@@ -474,6 +465,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     doc.latitude = payload.latitude != null ? Number(payload.latitude) : undefined;
     doc.longitude =
         payload.longitude != null ? Number(payload.longitude) : undefined;
+    doc.locationName = String(payload.locationName || "").trim();
     doc.checkInSelfie = payload.selfie || payload.checkInSelfie || "";
     doc.checkInPlatform = payload.platform || meta.platform || "";
     doc.checkInAppVersion = payload.appVersion || "";
@@ -552,14 +544,6 @@ const checkOut = async (user, payload = {}, meta = {}) => {
         );
     }
 
-    const geo = assertWithinGeofence({
-        latitude: payload.latitude,
-        longitude: payload.longitude,
-        branch,
-        required: policy.locationRequired === true
-    });
-    if (!geo.ok) throw new AppError(geo.message, 400);
-
     if (policy.selfieRequired && !payload.selfie && !payload.checkOutSelfie) {
         throw new AppError("Check-out selfie is required by policy.", 400);
     }
@@ -573,6 +557,7 @@ const checkOut = async (user, payload = {}, meta = {}) => {
         payload.latitude != null ? Number(payload.latitude) : undefined;
     doc.checkOutLongitude =
         payload.longitude != null ? Number(payload.longitude) : undefined;
+    doc.checkOutLocationName = String(payload.locationName || "").trim();
     doc.checkOutIpAddress = meta.ipAddress || payload.ipAddress || "";
     doc.checkOutDeviceId = payload.deviceId || meta.deviceId || "";
     doc.checkOutSelfie = payload.selfie || payload.checkOutSelfie || "";
