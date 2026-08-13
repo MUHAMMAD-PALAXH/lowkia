@@ -559,6 +559,285 @@ const moneyPack = (minor, currency = DEFAULT_CURRENCY) => ({
     formatted: formatMoney(minor, currency),
 });
 
+const scalePreview = (preview, factor) => {
+    const currency = preview.currency || DEFAULT_CURRENCY;
+    const scale = (n) => Math.round((Number(n) || 0) * factor);
+    const basicMinor = scale(preview.basicMinor);
+    const earningMinor = scale(preview.earningMinor);
+    const deductionMinor = scale(preview.deductionMinor);
+    const grossMinor = scale(preview.grossMinor);
+    const netMinor = scale(preview.netMinor);
+    return {
+        ...preview,
+        basicMinor,
+        earningMinor,
+        deductionMinor,
+        grossMinor,
+        netMinor,
+        amounts: {
+            basic: toMajor(basicMinor, currency),
+            earnings: toMajor(earningMinor, currency),
+            deductions: toMajor(deductionMinor, currency),
+            gross: toMajor(grossMinor, currency),
+            net: toMajor(netMinor, currency),
+        },
+    };
+};
+
+const buildPeriodCalculation = async ({
+    empMatch,
+    year,
+    month,
+    day,
+    periodLabel,
+    periodPaidMinor,
+}) => {
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const payableDays = day ? 1 : daysInMonth;
+
+    let employees = await Employee.find(empMatch)
+        .select(
+            "fullName employeeCode salaryType basicSalary salaryStructureId"
+        )
+        .lean();
+    if (!employees.length) {
+        employees = await Employee.find({
+            ...NOT_DELETED,
+            isActive: { $ne: false },
+        })
+            .select(
+                "fullName employeeCode salaryType basicSalary salaryStructureId"
+            )
+            .lean();
+    }
+
+    const structureIds = employees
+        .map((e) => e.salaryStructureId)
+        .filter(Boolean);
+    const structures = await SalaryStructure.find({
+        _id: { $in: structureIds },
+        ...NOT_DELETED,
+    }).lean();
+    const byId = new Map(structures.map((s) => [String(s._id), s]));
+
+    const typeBuckets = { Monthly: [], Daily: [], Hourly: [] };
+    const employeeRows = [];
+    let unassigned = 0;
+    let basicMinor = 0;
+    let earningMinor = 0;
+    let deductionMinor = 0;
+    let grossMinor = 0;
+    let netMinor = 0;
+
+    for (const emp of employees) {
+        const structure = emp.salaryStructureId
+            ? byId.get(String(emp.salaryStructureId))
+            : null;
+        const archived =
+            structure && String(structure.status || "").toLowerCase() === "archived";
+        if (!structure || archived) {
+            unassigned += 1;
+            employeeRows.push({
+                name: emp.fullName || "Employee",
+                code: emp.employeeCode || "",
+                skipped: true,
+                skipReason: archived
+                    ? "Assigned structure is archived"
+                    : "No salary structure assigned",
+            });
+            continue;
+        }
+
+        const type = normalizeSalaryType(structure.salaryType);
+        const hoursPerDay = Number(structure.workingHoursPerDay) || 8;
+        const workingDays = Number(structure.workingDaysPerMonth) || 22;
+        const daysForCalc = day ? 1 : workingDays;
+        let attendance = {};
+        let factor = 1;
+        let formula = "";
+
+        if (type === "Hourly") {
+            const hours = daysForCalc * hoursPerDay;
+            attendance = { workedHours: hours };
+            formula = `${formatMoney(structure.hourlyRateMinor || 0)} × ${hours} hrs`;
+        } else if (type === "Daily") {
+            attendance = { presentDays: daysForCalc };
+            formula = `${formatMoney(structure.dailyRateMinor || 0)} × ${daysForCalc} days`;
+        } else if (day) {
+            factor = 1 / daysInMonth;
+            formula = `${formatMoney(structure.basicSalaryMinor || 0)} ÷ ${daysInMonth} days`;
+        } else {
+            formula = `monthly basic ${formatMoney(structure.basicSalaryMinor || 0)}`;
+        }
+
+        let preview;
+        try {
+            preview = previewStructurePay(structure, attendance);
+            if (factor !== 1) preview = scalePreview(preview, factor);
+        } catch (_) {
+            unassigned += 1;
+            employeeRows.push({
+                name: emp.fullName || "Employee",
+                code: emp.employeeCode || "",
+                skipped: true,
+                skipReason: "Could not calculate this structure",
+            });
+            continue;
+        }
+
+        typeBuckets[type].push({ emp, structure, preview, formula });
+        basicMinor += preview.basicMinor || 0;
+        earningMinor += preview.earningMinor || 0;
+        deductionMinor += preview.deductionMinor || 0;
+        grossMinor += preview.grossMinor || 0;
+        netMinor += preview.netMinor || 0;
+
+        employeeRows.push({
+            name: emp.fullName || "Employee",
+            code: emp.employeeCode || "",
+            salaryType: type,
+            structureName: structure.structureName || "Structure",
+            formula,
+            basic: moneyPack(preview.basicMinor || 0),
+            earnings: moneyPack(preview.earningMinor || 0),
+            deductions: moneyPack(preview.deductionMinor || 0),
+            net: moneyPack(preview.netMinor || 0),
+        });
+    }
+
+    const assigned = employees.length - unassigned;
+    const paid = Number(periodPaidMinor) || 0;
+    const due = Math.max(0, netMinor - paid);
+    const steps = [];
+    let n = 1;
+
+    steps.push({
+        n: n++,
+        key: "period",
+        title: "Select period",
+        detail: day
+            ? `${periodLabel} · 1 of ${daysInMonth} calendar days`
+            : `${periodLabel} · ${daysInMonth} calendar days`,
+        formula: day
+            ? "Daily slice of the selected month"
+            : "Full-month calculation using each template's working days",
+    });
+
+    steps.push({
+        n: n++,
+        key: "employees",
+        title: "Employees in scope",
+        detail: `${employees.length} active · ${assigned} assigned · ${unassigned} unassigned`,
+        count: employees.length,
+        assigned,
+        unassigned,
+    });
+
+    for (const type of ["Monthly", "Daily", "Hourly"]) {
+        const rows = typeBuckets[type];
+        if (!rows.length) continue;
+        const sum = rows.reduce((s, r) => s + (r.preview.basicMinor || 0), 0);
+        const sample = rows
+            .slice(0, 3)
+            .map((r) => r.formula)
+            .join("  +  ");
+        steps.push({
+            n: n++,
+            key: `base_${type.toLowerCase()}`,
+            title: `${type} base pay`,
+            detail: `${rows.length} employee${rows.length === 1 ? "" : "s"} on ${type.toLowerCase()} templates`,
+            formula: sample + (rows.length > 3 ? "  +  …" : ""),
+            amount: moneyPack(sum),
+            kind: "add",
+        });
+    }
+
+    if (earningMinor > 0) {
+        steps.push({
+            n: n++,
+            key: "earnings",
+            title: "Allowances / earnings",
+            detail: "Fixed and percentage components added to base",
+            amount: moneyPack(earningMinor),
+            kind: "add",
+        });
+    }
+
+    steps.push({
+        n: n++,
+        key: "gross",
+        title: "Gross salary",
+        detail: "Base pay + allowances",
+        formula: "basic + earnings",
+        amount: moneyPack(grossMinor),
+        kind: "subtotal",
+    });
+
+    if (deductionMinor > 0) {
+        steps.push({
+            n: n++,
+            key: "deductions",
+            title: "Deductions",
+            detail: "Tax and other deduction components",
+            amount: moneyPack(deductionMinor),
+            kind: "subtract",
+        });
+    }
+
+    steps.push({
+        n: n++,
+        key: "net",
+        title: "Period total salary",
+        detail: "Expected payroll for this filter",
+        formula: "gross − deductions",
+        amount: moneyPack(netMinor),
+        kind: "total",
+    });
+
+    steps.push({
+        n: n++,
+        key: "paid",
+        title: "Already paid",
+        detail: "Payroll lines marked paid in this period",
+        amount: moneyPack(paid),
+        kind: "subtract",
+    });
+
+    steps.push({
+        n: n++,
+        key: "due",
+        title: "Amount due",
+        detail: "Remaining salary for the selected period",
+        formula: "period total − paid",
+        amount: moneyPack(due),
+        kind: "due",
+    });
+
+    return {
+        scope: day ? "day" : "month",
+        periodLabel,
+        year,
+        month,
+        day,
+        calendarDays: daysInMonth,
+        payableDays,
+        employeeCount: employees.length,
+        assignedCount: assigned,
+        unassignedCount: unassigned,
+        steps,
+        employees: employeeRows,
+        totals: {
+            basic: moneyPack(basicMinor),
+            earnings: moneyPack(earningMinor),
+            deductions: moneyPack(deductionMinor),
+            gross: moneyPack(grossMinor),
+            net: moneyPack(netMinor),
+            paid: moneyPack(paid),
+            due: moneyPack(due),
+        },
+    };
+};
+
 const sumPayrollNets = async (match) => {
     const rows = await Payroll.aggregate([
         { $match: match },
@@ -662,18 +941,7 @@ const getSalarySummary = async (companyId, query = {}) => {
         ];
     }
     const periodPayroll = await sumPayrollNets(periodMatch);
-    const isCurrentPeriod =
-        !day &&
-        year === now.getFullYear() &&
-        month === now.getMonth() + 1;
-    const periodTotal =
-        periodPayroll.total > 0
-            ? periodPayroll.total
-            : isCurrentPeriod
-              ? contractedMinor
-              : 0;
     const periodPaid = periodPayroll.paid;
-    const periodDue = Math.max(0, periodTotal - periodPaid);
 
     const months = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -682,6 +950,18 @@ const getSalarySummary = async (companyId, query = {}) => {
     const periodLabel = day
         ? `${String(day).padStart(2, "0")} ${months[month - 1]} ${year}`
         : `${months[month - 1]} ${year}`;
+
+    const calculation = await buildPeriodCalculation({
+        empMatch,
+        year,
+        month,
+        day,
+        periodLabel,
+        periodPaidMinor: periodPaid,
+    });
+
+    const periodTotal = calculation.totals.net.amountMinor;
+    const periodDue = calculation.totals.due.amountMinor;
 
     return {
         employeeCount,
@@ -700,6 +980,7 @@ const getSalarySummary = async (companyId, query = {}) => {
             paid: moneyPack(periodPaid),
             due: moneyPack(periodDue),
         },
+        calculation,
     };
 };
 
