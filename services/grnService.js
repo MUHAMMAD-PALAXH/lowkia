@@ -1884,7 +1884,7 @@ const getGrns = async (query = {}) => {
                   ...NOT_DELETED
               })
                   .select(
-                      "items supplierId supplierPartialSchedule supplierShipments"
+                      "items supplierId supplierPartialSchedule supplierShipments paymentStatus"
                   )
                   .lean()
             : [];
@@ -1917,6 +1917,17 @@ const getGrns = async (query = {}) => {
         }
         obj.awaitingReceiveQty = awaiting;
         obj.hasAwaitingReceive = awaiting > 0.0001;
+        const poId = String(
+            grn.purchaseOrderId?._id || grn.purchaseOrderId || ""
+        );
+        const po = poById.get(poId);
+        if (po) {
+            const progress = summarizePoProgress(po);
+            obj.totalQty = progress.orderedQty;
+            obj.receivedQty = progress.receivedQty;
+            obj.remainingQty = progress.remainingQty;
+            obj.paymentStatus = po.paymentStatus || "Pending";
+        }
         return obj;
     });
 

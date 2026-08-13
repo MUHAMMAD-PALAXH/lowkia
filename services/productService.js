@@ -1261,6 +1261,77 @@ const createProduct = async (payload = {}, actorId = null) => {
 // List / Get
 // ==========================================================
 
+
+const attachSoldQty = async (items = []) => {
+    if (!Array.isArray(items) || items.length === 0) return;
+    const SalesOrder = require("../model/salesOrder");
+    const ids = items
+        .map((p) => p._id || p.id)
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(String(id)));
+    if (!ids.length) return;
+
+    const rows = await SalesOrder.aggregate([
+        {
+            $match: {
+                isDeleted: { $ne: true },
+                status: { $in: ["Confirmed", "Processing", "Completed"] }
+            }
+        },
+        { $unwind: "$items" },
+        { $match: { "items.productId": { $in: ids } } },
+        {
+            $group: {
+                _id: "$items.productId",
+                soldQty: {
+                    $sum: {
+                        $max: [
+                            0,
+                            {
+                                $subtract: [
+                                    {
+                                        $cond: [
+                                            {
+                                                $gt: [
+                                                    {
+                                                        $ifNull: [
+                                                            "$items.deliveredQuantity",
+                                                            0
+                                                        ]
+                                                    },
+                                                    0
+                                                ]
+                                            },
+                                            {
+                                                $ifNull: [
+                                                    "$items.deliveredQuantity",
+                                                    0
+                                                ]
+                                            },
+                                            { $ifNull: ["$items.quantity", 0] }
+                                        ]
+                                    },
+                                    { $ifNull: ["$items.returnedQuantity", 0] }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    ]);
+
+    const soldMap = new Map(
+        rows.map((r) => [String(r._id), Math.max(Number(r.soldQty) || 0, 0)])
+    );
+    for (const item of items) {
+        const id = String(item._id || item.id || "");
+        const qty = soldMap.get(id) || 0;
+        if (item._doc) item._doc.soldQty = qty;
+        else item.soldQty = qty;
+    }
+};
+
 const getProducts = async (query = {}) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
@@ -1318,6 +1389,7 @@ const getProducts = async (query = {}) => {
 
     // Manual / ThirdParty: fill zero stock from variant opening qty + unit profit.
     await hydrateListStockFromVariants(items);
+    await attachSoldQty(items);
 
     return {
         items,
@@ -1369,6 +1441,7 @@ const getProductById = async (id, { includeDeleted = false } = {}) => {
         result.totalImeiCount = live.totalImeiCount;
     }
     applyUnitProfit(result);
+    await attachSoldQty([result]);
 
     return result;
 };
