@@ -1,3 +1,5 @@
+const UA = "LOWKIA-Admin/1.0 (attendance)";
+
 const uniqueParts = (parts) => {
     const out = [];
     for (const p of parts) {
@@ -13,8 +15,12 @@ const uniqueParts = (parts) => {
 const cleanPart = (value) => {
     let s = String(value || "").trim().replace(/\s+/g, " ");
     if (!s) return "";
-    s = s.replace(/\s+(District|Upazila|Division|Sadar|Zila|Zilla)$/i, "");
+    s = s.replace(
+        /\s+(District|Upazila|Division|Sadar|Zila|Zilla|County|Borough|Municipality|Province|Prefecture|Region|Tehsil|Taluk|Union|Parish)$/i,
+        ""
+    );
     if (s.toLowerCase() === "chattogram") return "Chittagong";
+    if (s.toLowerCase() === "comilla") return "Cumilla";
     return s;
 };
 
@@ -43,47 +49,77 @@ const fromNominatimAddress = (address) => {
         "isolated_dwelling",
         "locality",
         "quarter",
-        "city_district"
+        "city_district",
+        "town"
     ]);
-    // Do not use `city` here — OSM often snaps to the nearest city (e.g. Cumilla).
-    const upazila = pick(address, ["municipality", "county", "town"]);
+    const localAdmin = pick(address, [
+        "municipality",
+        "county",
+        "borough",
+        "city"
+    ]);
     const district = pick(address, ["state_district", "district", "region"]);
-    const division = pick(address, ["state", "province"]);
+    const region = pick(address, ["state", "province"]);
     const country = pick(address, ["country"]);
-
-    if (!settlement && !upazila) {
-        return uniqueParts([
-            pick(address, ["city"]),
-            district,
-            division,
-            country
-        ]).join(", ");
-    }
 
     return uniqueParts([
         settlement,
-        upazila,
+        localAdmin,
         district,
-        division,
+        region,
         country
     ]).join(", ");
 };
 
-const fromBigDataAdmin = (data) => {
-    const admin = data?.localityInfo?.administrative;
-    if (!Array.isArray(admin) || !admin.length) return "";
-    const byLevel = new Map();
-    for (const item of admin) {
-        const name = String(item?.name || "").trim();
-        const level = Number(item?.adminLevel) || 0;
-        if (!name || level <= 0 || byLevel.has(level)) continue;
-        byLevel.set(level, name);
+const mergePlaceNames = (contained, nominatim) => {
+    const inParts = String(contained || "")
+        .split(",")
+        .filter((e) => e.trim()).length;
+    if (inParts >= 2) return contained;
+    return nominatim || contained || "";
+};
+
+const reverseOverpass = async (latitude, longitude) => {
+    const query =
+        `[out:json][timeout:12];is_in(${latitude},${longitude})->.a;` +
+        `rel(pivot.a)["boundary"="administrative"];out tags;`;
+    const endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter"
+    ];
+    for (const url of endpoints) {
+        try {
+            const res = await fetch(url, {
+                method: "POST",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "text/plain; charset=utf-8",
+                    "User-Agent": UA
+                },
+                body: query,
+                signal: AbortSignal.timeout(14000)
+            });
+            if (!res.ok) continue;
+            const data = await res.json();
+            const elements = Array.isArray(data?.elements) ? data.elements : [];
+            const byLevel = new Map();
+            for (const el of elements) {
+                const tags = el?.tags || {};
+                const level = Number(tags.admin_level) || 0;
+                const name = String(tags["name:en"] || tags.name || "").trim();
+                if (!name || level <= 0 || byLevel.has(level)) continue;
+                byLevel.set(level, name);
+            }
+            if (!byLevel.size) continue;
+            const levels = [...byLevel.keys()].sort((a, b) => b - a);
+            return uniqueParts(
+                levels.slice(0, 5).map((level) => byLevel.get(level))
+            ).join(", ");
+        } catch (_) {
+            /* try next endpoint */
+        }
     }
-    if (!byLevel.size) return "";
-    const levels = [...byLevel.keys()].sort((a, b) => b - a);
-    return uniqueParts(levels.slice(0, 5).map((level) => byLevel.get(level))).join(
-        ", "
-    );
+    return "";
 };
 
 const reverseNominatim = async (latitude, longitude) => {
@@ -93,7 +129,7 @@ const reverseNominatim = async (latitude, longitude) => {
     const res = await fetch(url, {
         headers: {
             Accept: "application/json",
-            "User-Agent": "LOWKIA-Admin/1.0 (attendance)"
+            "User-Agent": UA
         },
         signal: AbortSignal.timeout(5000)
     });
@@ -112,8 +148,22 @@ const reverseBigDataCloud = async (latitude, longitude) => {
     });
     if (!res.ok) return "";
     const data = await res.json();
-    const fromAdmin = fromBigDataAdmin(data);
-    if (fromAdmin) return fromAdmin;
+    const admin = data?.localityInfo?.administrative;
+    if (Array.isArray(admin) && admin.length) {
+        const byLevel = new Map();
+        for (const item of admin) {
+            const name = String(item?.name || "").trim();
+            const level = Number(item?.adminLevel) || 0;
+            if (!name || level <= 0 || byLevel.has(level)) continue;
+            byLevel.set(level, name);
+        }
+        if (byLevel.size) {
+            const levels = [...byLevel.keys()].sort((a, b) => b - a);
+            return uniqueParts(
+                levels.slice(0, 5).map((level) => byLevel.get(level))
+            ).join(", ");
+        }
+    }
     return uniqueParts([
         data.locality,
         data.city,
@@ -127,12 +177,20 @@ const reverseGeocode = async (lat, lng) => {
     const longitude = Number(lng);
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return "";
 
+    let contained = "";
+    let nominatim = "";
     try {
-        const nominatim = await reverseNominatim(latitude, longitude);
-        if (nominatim) return nominatim;
+        contained = await reverseOverpass(latitude, longitude);
     } catch (_) {
-        /* fall through */
+        contained = "";
     }
+    try {
+        nominatim = await reverseNominatim(latitude, longitude);
+    } catch (_) {
+        nominatim = "";
+    }
+    const merged = mergePlaceNames(contained, nominatim);
+    if (merged) return merged;
 
     try {
         return await reverseBigDataCloud(latitude, longitude);
