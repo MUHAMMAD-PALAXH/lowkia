@@ -29,16 +29,16 @@ const toObjectId = (value) => {
 
 const locationCache = new Map();
 
-const locationLabel = async (name, lat, lng) => {
+const locationLabel = async (name, lat, lng, ip) => {
     const existing = formatPunchLocation(name);
     if (existing) return existing;
-    if (lat == null || lng == null) return "";
-    const key = `${lat},${lng}`;
+    const key = `${lat ?? ""},${lng ?? ""},${ip || ""}`;
     if (locationCache.has(key)) return locationCache.get(key);
     const resolved = await resolvePunchLocation({
         latitude: lat,
         longitude: lng,
-        locationName: name
+        locationName: name,
+        ipAddress: ip
     });
     const label = formatPunchLocation(resolved.locationName);
     if (label) locationCache.set(key, label);
@@ -248,14 +248,16 @@ const getDailyReport = async (query = {}, managedBranchIds = null) => {
                 ? locationLabel(
                       att?.locationName,
                       att?.latitude,
-                      att?.longitude
+                      att?.longitude,
+                      att?.ipAddress
                   )
                 : Promise.resolve(""),
             att?.checkOut
                 ? locationLabel(
                       att?.checkOutLocationName,
                       att?.checkOutLatitude,
-                      att?.checkOutLongitude
+                      att?.checkOutLongitude,
+                      att?.checkOutIpAddress || att?.ipAddress
                   )
                 : Promise.resolve("")
         ]);
