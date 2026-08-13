@@ -17,6 +17,7 @@ const {
     isNightShiftTimes
 } = require("../utils/timezone");
 const { writeActivityLog } = require("./activityLogService");
+const { reverseGeocode } = require("../utils/reverseGeocode");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -466,6 +467,9 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     doc.longitude =
         payload.longitude != null ? Number(payload.longitude) : undefined;
     doc.locationName = String(payload.locationName || "").trim();
+    if (!doc.locationName && doc.latitude != null && doc.longitude != null) {
+        doc.locationName = await reverseGeocode(doc.latitude, doc.longitude);
+    }
     doc.checkInSelfie = payload.selfie || payload.checkInSelfie || "";
     doc.checkInPlatform = payload.platform || meta.platform || "";
     doc.checkInAppVersion = payload.appVersion || "";
@@ -558,6 +562,16 @@ const checkOut = async (user, payload = {}, meta = {}) => {
     doc.checkOutLongitude =
         payload.longitude != null ? Number(payload.longitude) : undefined;
     doc.checkOutLocationName = String(payload.locationName || "").trim();
+    if (
+        !doc.checkOutLocationName &&
+        doc.checkOutLatitude != null &&
+        doc.checkOutLongitude != null
+    ) {
+        doc.checkOutLocationName = await reverseGeocode(
+            doc.checkOutLatitude,
+            doc.checkOutLongitude
+        );
+    }
     doc.checkOutIpAddress = meta.ipAddress || payload.ipAddress || "";
     doc.checkOutDeviceId = payload.deviceId || meta.deviceId || "";
     doc.checkOutSelfie = payload.selfie || payload.checkOutSelfie || "";
