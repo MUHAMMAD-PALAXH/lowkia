@@ -282,11 +282,13 @@ const classifyDay = (row) => {
         showedUp &&
         (status === "Half Day" ||
             (checkOut && worked < Math.floor(scheduledMin / 2)));
+    const overtimeMinutes = Number(row?.overtimeMinutes) || 0;
     return {
         punched: checkIn || status === "Leave",
         present: showedUp,
         late,
         incomplete,
+        complete: showedUp && !incomplete,
         halfDay,
         leave: status === "Leave",
         absent: status === "Absent",
@@ -295,7 +297,8 @@ const classifyDay = (row) => {
         worked,
         lateMinutes: showedUp ? lateMinutes : 0,
         earlyLeaveMinutes: early,
-        overtimeMinutes: Number(row?.overtimeMinutes) || 0
+        overtimeMinutes,
+        overtime: overtimeMinutes > 0
     };
 };
 
@@ -788,8 +791,29 @@ const getMyHistory = async (user, query = {}) => {
     const skip = (page - 1) * limit;
 
     const filter = { employeeId: employee._id, ...NOT_DELETED };
-    if (query.month) filter.month = Number(query.month);
-    if (query.year) filter.year = Number(query.year);
+    if (query.workDate || query.date) {
+        filter.workDate = String(query.workDate || query.date);
+    } else if (query.year && query.month) {
+        const year = Number(query.year);
+        const month = Number(query.month);
+        const mm = String(month).padStart(2, "0");
+        const start = `${year}-${mm}-01`;
+        const nextMonth = month === 12 ? 1 : month + 1;
+        const nextYear = month === 12 ? year + 1 : year;
+        const end = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+        filter.$or = [
+            { year, month },
+            { workDate: { $gte: start, $lt: end } }
+        ];
+    } else if (query.year) {
+        const year = Number(query.year);
+        filter.$or = [
+            { year },
+            { workDate: { $regex: `^${year}-` } }
+        ];
+    } else if (query.month) {
+        filter.month = Number(query.month);
+    }
     if (query.status) filter.attendanceStatus = query.status;
 
     const [items, total] = await Promise.all([
@@ -849,6 +873,8 @@ const getMyMonthlySummary = async (user, query = {}) => {
         holiday: 0,
         weeklyOff: 0,
         incomplete: 0,
+        complete: 0,
+        overtimeDays: 0,
         totalWorkingMinutes: 0,
         totalLateMinutes: 0,
         totalEarlyLeaveMinutes: 0,
@@ -869,6 +895,8 @@ const getMyMonthlySummary = async (user, query = {}) => {
         if (day.holiday) summary.holiday += 1;
         if (day.weeklyOff) summary.weeklyOff += 1;
         if (day.incomplete) summary.incomplete += 1;
+        if (day.complete) summary.complete += 1;
+        if (day.overtime) summary.overtimeDays += 1;
         summary.totalWorkingMinutes += day.worked;
         summary.totalLateMinutes += day.lateMinutes;
         summary.totalEarlyLeaveMinutes += day.earlyLeaveMinutes;

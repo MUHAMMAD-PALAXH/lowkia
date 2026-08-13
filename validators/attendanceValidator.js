@@ -22,7 +22,9 @@ const historyValidator = [
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("month").optional().isInt({ min: 1, max: 12 }),
     query("year").optional().isInt({ min: 2000, max: 2100 }),
-    query("status").optional().isString()
+    query("status").optional().isString(),
+    query("date").optional().matches(/^\d{4}-\d{2}-\d{2}$/),
+    query("workDate").optional().matches(/^\d{4}-\d{2}-\d{2}$/)
 ];
 
 const monthlyValidator = [
