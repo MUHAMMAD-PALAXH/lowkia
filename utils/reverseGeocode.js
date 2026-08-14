@@ -226,20 +226,32 @@ const reverseGeocode = async (lat, lng) => {
     }
 };
 
+// Loopback, LAN and CGNAT ranges belong to the network, not to a place. They
+// must never be looked up: querying a geo provider with no usable IP returns
+// the API server's own datacenter, which would be recorded as the punch spot.
+const isRoutableIp = (ip) => {
+    if (!ip) return false;
+    if (ip === "::1" || ip.startsWith("fc") || ip.startsWith("fd")) return false;
+    if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return ip.includes(":");
+    const [a, b] = ip.split(".").map(Number);
+    if (a === 10 || a === 127 || a === 0) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+    return true;
+};
+
 const ipCoordinates = async (ipAddress) => {
     const ip = String(ipAddress || "")
         .split(",")[0]
         .trim()
         .replace(/^::ffff:/, "");
-    const urls = ip
-        ? [
-              `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,lat,lon`,
-              `https://ipwho.is/${encodeURIComponent(ip)}`
-          ]
-        : [
-              "http://ip-api.com/json/?fields=status,lat,lon",
-              "https://ipwho.is/"
-          ];
+    if (!isRoutableIp(ip)) return null;
+    const urls = [
+        `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,lat,lon`,
+        `https://ipwho.is/${encodeURIComponent(ip)}`
+    ];
     for (const url of urls) {
         try {
             const res = await fetch(url, {
@@ -264,15 +276,24 @@ const resolvePunchLocation = async ({
     latitude,
     longitude,
     locationName,
+    accuracy,
+    locationSource,
     ipAddress
 } = {}) => {
     let name = stripCoords(locationName);
     let lat = Number(latitude);
     let lng = Number(longitude);
+    let source = String(locationSource || "").trim();
+    let radius = Number(accuracy);
+
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        // No device fix at all: an IP lookup is the only option left, and it
+        // resolves to the ISP city, so label it rather than passing it off.
         const fromIp = await ipCoordinates(ipAddress);
         lat = fromIp?.latitude;
         lng = fromIp?.longitude;
+        source = fromIp ? "IP" : "";
+        radius = NaN;
     }
     if (!name && Number.isFinite(lat) && Number.isFinite(lng)) {
         name = await reverseGeocode(lat, lng);
@@ -280,7 +301,9 @@ const resolvePunchLocation = async ({
     return {
         latitude: Number.isFinite(lat) ? lat : null,
         longitude: Number.isFinite(lng) ? lng : null,
-        locationName: name || ""
+        locationName: name || "",
+        locationSource: source || "",
+        locationAccuracy: Number.isFinite(radius) && radius > 0 ? radius : null
     };
 };
 

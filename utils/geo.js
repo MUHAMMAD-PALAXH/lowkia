@@ -43,4 +43,36 @@ const assertWithinGeofence = ({
     return { ok: true, distanceMeters: Math.round(d) };
 };
 
-module.exports = { distanceMeters, assertWithinGeofence };
+// Measure a punch against the branch fence. Never blocks — the caller
+// records the result so reports can flag out-of-range punches.
+const evaluateGeofence = ({ latitude, longitude, branch } = {}) => {
+    const bLat = Number(branch?.attendanceLatitude);
+    const bLng = Number(branch?.attendanceLongitude);
+    const radius = Number(branch?.attendanceRadiusMeters);
+    if (!Number.isFinite(bLat) || !Number.isFinite(bLng)) {
+        return {
+            configured: false,
+            inRange: null,
+            distanceMeters: null,
+            radiusMeters: null
+        };
+    }
+    const limit = Number.isFinite(radius) && radius > 0 ? radius : 100;
+    if (latitude == null || longitude == null) {
+        return {
+            configured: true,
+            inRange: false,
+            distanceMeters: null,
+            radiusMeters: limit
+        };
+    }
+    const d = Math.round(distanceMeters(latitude, longitude, bLat, bLng));
+    return {
+        configured: true,
+        inRange: d <= limit,
+        distanceMeters: d,
+        radiusMeters: limit
+    };
+};
+
+module.exports = { distanceMeters, assertWithinGeofence, evaluateGeofence };

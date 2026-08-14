@@ -181,6 +181,10 @@ checkOutAppVersion:{ type:String, default:"" },
 checkOutLatitude:{ type:Number },
 checkOutLongitude:{ type:Number },
 checkOutLocationName:{ type:String, default:"" },
+checkOutLocationAccuracy:{ type:Number, default:null },
+checkOutLocationSource:{ type:String, enum:["Device","IP","Manual",""], default:"" },
+checkOutIsOutOfRange:{ type:Boolean, default:false },
+checkOutGeofenceDistanceMeters:{ type:Number, default:null },
 checkOutIpAddress:{ type:String, default:"" },
 checkOutDeviceId:{ type:String, default:"" },
 
@@ -349,6 +353,32 @@ locationName:{
 
     type:String,
     default:""
+},
+
+// Radius of uncertainty in metres for the stored point, and where it came
+// from. A desktop without Wi-Fi positioning yields a very wide fix, so the
+// quality has to travel with the coordinates to stay auditable.
+locationAccuracy:{
+
+    type:Number,
+    default:null
+},
+
+locationSource:{
+
+    type:String,
+    enum:["Device","IP","Manual",""],
+    default:""
+},
+
+isOutOfRange:{
+    type:Boolean,
+    default:false
+},
+
+geofenceDistanceMeters:{
+    type:Number,
+    default:null
 },
 
 ipAddress:{

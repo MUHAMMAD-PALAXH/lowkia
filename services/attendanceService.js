@@ -18,6 +18,7 @@ const {
 } = require("../utils/timezone");
 const { writeActivityLog } = require("./activityLogService");
 const { resolvePunchLocation } = require("../utils/reverseGeocode");
+const { evaluateGeofence } = require("../utils/geo");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -60,6 +61,22 @@ const branchNameOf = (branch) => {
         return branch.name || branch.branchName || "";
     }
     return "";
+};
+
+const applyGeofence = (doc, loc, branch, { checkOut = false } = {}) => {
+    const fence = evaluateGeofence({
+        latitude: loc?.latitude,
+        longitude: loc?.longitude,
+        branch
+    });
+    const out = fence.configured && fence.inRange === false;
+    if (checkOut) {
+        doc.checkOutIsOutOfRange = out;
+        doc.checkOutGeofenceDistanceMeters = fence.distanceMeters;
+        return;
+    }
+    doc.isOutOfRange = out;
+    doc.geofenceDistanceMeters = fence.distanceMeters;
 };
 
 const loadContext = async (user) => {
@@ -568,11 +585,16 @@ const checkIn = async (user, payload = {}, meta = {}) => {
         latitude: payload.latitude,
         longitude: payload.longitude,
         locationName: payload.locationName,
+        accuracy: payload.accuracy,
+        locationSource: payload.locationSource,
         ipAddress: meta.ipAddress || payload.ipAddress
     });
     if (checkInLoc.latitude != null) doc.latitude = checkInLoc.latitude;
     if (checkInLoc.longitude != null) doc.longitude = checkInLoc.longitude;
     doc.locationName = checkInLoc.locationName || "";
+    doc.locationAccuracy = checkInLoc.locationAccuracy;
+    doc.locationSource = checkInLoc.locationSource || "";
+    applyGeofence(doc, checkInLoc, branch);
     doc.checkInSelfie = payload.selfie || payload.checkInSelfie || "";
     doc.checkInPlatform = payload.platform || meta.platform || "";
     doc.checkInAppVersion = payload.appVersion || "";
@@ -664,6 +686,8 @@ const checkOut = async (user, payload = {}, meta = {}) => {
         latitude: payload.latitude,
         longitude: payload.longitude,
         locationName: payload.locationName,
+        accuracy: payload.accuracy,
+        locationSource: payload.locationSource,
         ipAddress: meta.ipAddress || payload.ipAddress
     });
     if (checkOutLoc.latitude != null) doc.checkOutLatitude = checkOutLoc.latitude;
@@ -671,6 +695,9 @@ const checkOut = async (user, payload = {}, meta = {}) => {
         doc.checkOutLongitude = checkOutLoc.longitude;
     }
     doc.checkOutLocationName = checkOutLoc.locationName || "";
+    doc.checkOutLocationAccuracy = checkOutLoc.locationAccuracy;
+    doc.checkOutLocationSource = checkOutLoc.locationSource || "";
+    applyGeofence(doc, checkOutLoc, branch, { checkOut: true });
     doc.checkOutIpAddress = meta.ipAddress || payload.ipAddress || "";
     doc.checkOutDeviceId = payload.deviceId || meta.deviceId || "";
     doc.checkOutSelfie = payload.selfie || payload.checkOutSelfie || "";
