@@ -182,7 +182,7 @@ checkOutLatitude:{ type:Number },
 checkOutLongitude:{ type:Number },
 checkOutLocationName:{ type:String, default:"" },
 checkOutLocationAccuracy:{ type:Number, default:null },
-checkOutLocationSource:{ type:String, enum:["Device","IP","Manual",""], default:"" },
+checkOutLocationSource:{ type:String, enum:["Device","Branch","IP","Manual",""], default:"" },
 checkOutIsOutOfRange:{ type:Boolean, default:false },
 checkOutGeofenceDistanceMeters:{ type:Number, default:null },
 checkOutIpAddress:{ type:String, default:"" },
@@ -367,7 +367,7 @@ locationAccuracy:{
 locationSource:{
 
     type:String,
-    enum:["Device","IP","Manual",""],
+    enum:["Device","Branch","IP","Manual",""],
     default:""
 },
 

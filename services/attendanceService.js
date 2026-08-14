@@ -605,7 +605,8 @@ const checkIn = async (user, payload = {}, meta = {}) => {
         locationName: payload.locationName,
         accuracy: payload.accuracy,
         locationSource: payload.locationSource,
-        ipAddress: meta.ipAddress || payload.ipAddress
+        ipAddress: meta.ipAddress || payload.ipAddress,
+        branch
     });
     if (checkInLoc.latitude != null) doc.latitude = checkInLoc.latitude;
     if (checkInLoc.longitude != null) doc.longitude = checkInLoc.longitude;
@@ -706,7 +707,8 @@ const checkOut = async (user, payload = {}, meta = {}) => {
         locationName: payload.locationName,
         accuracy: payload.accuracy,
         locationSource: payload.locationSource,
-        ipAddress: meta.ipAddress || payload.ipAddress
+        ipAddress: meta.ipAddress || payload.ipAddress,
+        branch
     });
     if (checkOutLoc.latitude != null) doc.checkOutLatitude = checkOutLoc.latitude;
     if (checkOutLoc.longitude != null) {

@@ -279,13 +279,24 @@ const ipCoordinates = async (ipAddress) => {
     return null;
 };
 
+/// A fix wider than this cannot tell one workplace from another.
+const COARSE_FIX_METERS = 500;
+
+const isUsableFix = (lat, lng, radius, source) => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+    if (source === "Manual") return true;
+    if (source === "IP") return false;
+    return Number.isFinite(radius) && radius > 0 && radius <= COARSE_FIX_METERS;
+};
+
 const resolvePunchLocation = async ({
     latitude,
     longitude,
     locationName,
     accuracy,
     locationSource,
-    ipAddress
+    ipAddress,
+    branch
 } = {}) => {
     let name = stripCoords(locationName);
     let lat = Number(latitude);
@@ -293,15 +304,33 @@ const resolvePunchLocation = async ({
     let source = String(locationSource || "").trim();
     let radius = Number(accuracy);
 
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        // No device fix at all: an IP lookup is the only option left, and it
-        // resolves to the ISP city, so label it rather than passing it off.
-        const fromIp = await ipCoordinates(ipAddress);
-        lat = fromIp?.latitude;
-        lng = fromIp?.longitude;
-        source = fromIp ? "IP" : "";
-        radius = NaN;
+    // Desktops have no GPS and are located by Wi-Fi, so a machine on cable
+    // internet can only ever report its ISP city. Such a workstation does not
+    // move, so its registered branch office is the truthful answer — and it
+    // needs no prompt. Only a fix good enough to identify a workplace, or one
+    // set by hand, is preferred over it.
+    if (!isUsableFix(lat, lng, radius, source)) {
+        const bLat = Number(branch?.attendanceLatitude);
+        const bLng = Number(branch?.attendanceLongitude);
+        if (Number.isFinite(bLat) && Number.isFinite(bLng)) {
+            lat = bLat;
+            lng = bLng;
+            source = "Branch";
+            radius = NaN;
+            name = "";
+        } else if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+            // No office on file either: an IP lookup is all that is left, and
+            // it lands on the ISP city, so label it rather than pass it off.
+            const fromIp = await ipCoordinates(ipAddress);
+            lat = fromIp?.latitude;
+            lng = fromIp?.longitude;
+            source = fromIp ? "IP" : "";
+            radius = NaN;
+        } else if (!source) {
+            source = "IP";
+        }
     }
+
     if (!name && Number.isFinite(lat) && Number.isFinite(lng)) {
         name = await reverseGeocode(lat, lng);
     }
