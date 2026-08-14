@@ -72,8 +72,17 @@ const loadContext = async (user) => {
     const attendanceDate = startOfWorkDay(workDate, timezone);
 
     let shift = employee.shiftId;
-    if (shift && !shift.startTime) {
+    if (shift && (!shift.startTime || shift.status === undefined)) {
         shift = await Shift.findOne({ _id: shift._id || shift, ...NOT_DELETED });
+    }
+    // An inactive shift must no longer control punches or weekly-off rules.
+    // Employees can remain linked to it for history/configuration, so use the
+    // active attendance policy as today's schedule until they are reassigned.
+    if (
+        shift &&
+        (shift.status !== "Active" || shift.isDeleted === true)
+    ) {
+        shift = null;
     }
     if (!shift) {
         // Fallback synthetic shift from policy

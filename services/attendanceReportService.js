@@ -96,9 +96,15 @@ const bumpCard = (cards, status) => {
 };
 
 const isWeeklyOffFor = (shift, policy, weekday) => {
+    const activeShift =
+        shift &&
+        shift.status !== "Inactive" &&
+        shift.isDeleted !== true
+            ? shift
+            : null;
     const offs =
-        (shift?.weeklyOff && shift.weeklyOff.length
-            ? shift.weeklyOff
+        (activeShift?.weeklyOff && activeShift.weeklyOff.length
+            ? activeShift.weeklyOff
             : policy?.weeklyOff) || [];
     return offs.map(String).includes(String(weekday));
 };
@@ -154,7 +160,10 @@ const getDailyReport = async (query = {}, managedBranchIds = null) => {
     const employees = await Employee.find(empFilter)
         .populate("branchId", "branchCode name")
         .populate("departmentId", "departmentCode departmentName")
-        .populate("shiftId", "shiftCode shiftName startTime endTime weeklyOff")
+        .populate(
+            "shiftId",
+            "shiftCode shiftName startTime endTime weeklyOff status isDeleted"
+        )
         .populate("designationId", "designationCode designationName")
         .sort({ fullName: 1, firstName: 1 })
         .lean();
