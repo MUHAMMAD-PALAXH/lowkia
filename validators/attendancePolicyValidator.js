@@ -36,7 +36,6 @@ const createPolicyValidator = [
     body("overtimeAfterMinutes").optional().isInt({ min: 0, max: 480 }),
     body("overtimeEnabled").optional().isBoolean(),
     body("overtimeRequiresApproval").optional().isBoolean(),
-    body("locationRequired").optional().isBoolean(),
     body("selfieRequired").optional().isBoolean(),
     body("isDefault").optional().isBoolean(),
     body("weeklyOff")
@@ -66,7 +65,6 @@ const updatePolicyValidator = [
     body("overtimeAfterMinutes").optional().isInt({ min: 0, max: 480 }),
     body("overtimeEnabled").optional().isBoolean(),
     body("overtimeRequiresApproval").optional().isBoolean(),
-    body("locationRequired").optional().isBoolean(),
     body("selfieRequired").optional().isBoolean(),
     body("isDefault").optional().isBoolean(),
     body("status").optional().isIn(["Active", "Inactive"]),

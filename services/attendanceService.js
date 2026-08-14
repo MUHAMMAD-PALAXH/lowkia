@@ -2,7 +2,6 @@ const mongoose = require("mongoose");
 const Attendance = require("../model/attendance");
 const Leave = require("../model/leave");
 const Shift = require("../model/shift");
-const Branch = require("../model/branch");
 const { generateAttendanceCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const settingsService = require("./settingsService");
@@ -17,8 +16,6 @@ const {
     isNightShiftTimes
 } = require("../utils/timezone");
 const { writeActivityLog } = require("./activityLogService");
-const { resolvePunchLocation } = require("../utils/reverseGeocode");
-const { evaluateGeofence } = require("../utils/geo");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -63,22 +60,6 @@ const branchNameOf = (branch) => {
     return "";
 };
 
-const applyGeofence = (doc, loc, branch, { checkOut = false } = {}) => {
-    const fence = evaluateGeofence({
-        latitude: loc?.latitude,
-        longitude: loc?.longitude,
-        branch
-    });
-    const out = fence.configured && fence.inRange === false;
-    if (checkOut) {
-        doc.checkOutIsOutOfRange = out;
-        doc.checkOutGeofenceDistanceMeters = fence.distanceMeters;
-        return;
-    }
-    doc.isOutOfRange = out;
-    doc.geofenceDistanceMeters = fence.distanceMeters;
-};
-
 const loadContext = async (user) => {
     const employee = await resolveEmployeeFromUser(user, { requireActive: true });
     const timezone = await settingsService.getTimezone();
@@ -117,10 +98,7 @@ const loadContext = async (user) => {
         };
     }
 
-    let branch = employee.branchId;
-    if (branch && branch.attendanceLatitude === undefined && branch._id) {
-        branch = await Branch.findById(branch._id || branch).lean();
-    }
+    const branch = employee.branchId;
 
     return { employee, timezone, policy, now, workDate, weekday, attendanceDate, shift, branch };
 };
@@ -422,14 +400,9 @@ const getMyToday = async (user) => {
             branchId: employee.branchId?._id || employee.branchId,
             branchName: branchNameOf(employee.branchId)
         },
-        // Office coordinates let a fixed workstation punch from a known point
-        // instead of an ISP guess, and drive the out-of-range flag.
         branch: {
             id: branch?._id || employee.branchId?._id || null,
-            name: branchNameOf(branch || employee.branchId),
-            latitude: branch?.attendanceLatitude ?? null,
-            longitude: branch?.attendanceLongitude ?? null,
-            radiusMeters: branch?.attendanceRadiusMeters ?? null
+            name: branchNameOf(branch || employee.branchId)
         },
         shift: {
             id: shift._id || null,
@@ -443,7 +416,6 @@ const getMyToday = async (user) => {
             id: policy._id,
             name: policy.policyName,
             gracePeriodMinutes: policy.gracePeriodMinutes,
-            locationRequired: policy.locationRequired,
             selfieRequired: policy.selfieRequired,
             overtimeEnabled: policy.overtimeEnabled,
             overtimeRequiresApproval: policy.overtimeRequiresApproval,
@@ -599,21 +571,6 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     doc.deviceId = payload.deviceId || meta.deviceId || "";
     doc.deviceName = payload.deviceName || "";
     doc.ipAddress = meta.ipAddress || payload.ipAddress || "";
-    const checkInLoc = await resolvePunchLocation({
-        latitude: payload.latitude,
-        longitude: payload.longitude,
-        locationName: payload.locationName,
-        accuracy: payload.accuracy,
-        locationSource: payload.locationSource,
-        ipAddress: meta.ipAddress || payload.ipAddress,
-        branch
-    });
-    if (checkInLoc.latitude != null) doc.latitude = checkInLoc.latitude;
-    if (checkInLoc.longitude != null) doc.longitude = checkInLoc.longitude;
-    doc.locationName = checkInLoc.locationName || "";
-    doc.locationAccuracy = checkInLoc.locationAccuracy;
-    doc.locationSource = checkInLoc.locationSource || "";
-    applyGeofence(doc, checkInLoc, branch);
     doc.checkInSelfie = payload.selfie || payload.checkInSelfie || "";
     doc.checkInPlatform = payload.platform || meta.platform || "";
     doc.checkInAppVersion = payload.appVersion || "";
@@ -652,9 +609,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
             checkIn: doc.checkIn,
             lateMinutes: doc.lateMinutes,
             status: doc.attendanceStatus,
-            deviceId: doc.deviceId,
-            latitude: doc.latitude,
-            longitude: doc.longitude
+            deviceId: doc.deviceId
         },
         ipAddress: meta.ipAddress || "",
         userAgent: meta.userAgent || "",
@@ -666,8 +621,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
 
 const checkOut = async (user, payload = {}, meta = {}) => {
     const ctx = await loadContext(user);
-    const { employee, shift, policy, workDate, attendanceDate, now, branch } =
-        ctx;
+    const { employee, shift, policy, workDate, attendanceDate, now } = ctx;
 
     const doc = await findTodayAttendance(
         employee._id,
@@ -701,24 +655,6 @@ const checkOut = async (user, payload = {}, meta = {}) => {
     }
 
     doc.checkOut = now;
-    const checkOutLoc = await resolvePunchLocation({
-        latitude: payload.latitude,
-        longitude: payload.longitude,
-        locationName: payload.locationName,
-        accuracy: payload.accuracy,
-        locationSource: payload.locationSource,
-        ipAddress: meta.ipAddress || payload.ipAddress,
-        branch
-    });
-    if (checkOutLoc.latitude != null) doc.checkOutLatitude = checkOutLoc.latitude;
-    if (checkOutLoc.longitude != null) {
-        doc.checkOutLongitude = checkOutLoc.longitude;
-    }
-    doc.checkOutLocationName = checkOutLoc.locationName || "";
-    doc.checkOutLocationAccuracy = checkOutLoc.locationAccuracy;
-    doc.checkOutLocationSource = checkOutLoc.locationSource || "";
-    applyGeofence(doc, checkOutLoc, branch, { checkOut: true });
-    doc.checkOutIpAddress = meta.ipAddress || payload.ipAddress || "";
     doc.checkOutDeviceId = payload.deviceId || meta.deviceId || "";
     doc.checkOutSelfie = payload.selfie || payload.checkOutSelfie || "";
     doc.checkOutPlatform = payload.platform || meta.platform || "";

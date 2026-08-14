@@ -93,11 +93,6 @@ const attendancePolicySchema = new mongoose.Schema(
             min: 0
         },
 
-        locationRequired: {
-            type: Boolean,
-            default: false
-        },
-
         selfieRequired: {
             type: Boolean,
             default: false

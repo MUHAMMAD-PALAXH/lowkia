@@ -33,15 +33,6 @@ const monthlyValidator = [
 ];
 
 const checkInValidator = [
-    body("latitude")
-        .optional({ nullable: true })
-        .isFloat({ min: -90, max: 90 }),
-    body("longitude")
-        .optional({ nullable: true })
-        .isFloat({ min: -180, max: 180 }),
-    body("locationName").optional().isString().trim().isLength({ max: 240 }),
-    body("accuracy").optional({ nullable: true }).isFloat({ min: 0 }),
-    body("locationSource").optional().isIn(["Device", "IP", "Manual"]),
     body("deviceId").optional().isString().trim(),
     body("deviceName").optional().isString().trim(),
     body("platform").optional().isString().trim(),
@@ -70,15 +61,6 @@ const checkInValidator = [
 ];
 
 const checkOutValidator = [
-    body("latitude")
-        .optional({ nullable: true })
-        .isFloat({ min: -90, max: 90 }),
-    body("longitude")
-        .optional({ nullable: true })
-        .isFloat({ min: -180, max: 180 }),
-    body("locationName").optional().isString().trim().isLength({ max: 240 }),
-    body("accuracy").optional({ nullable: true }).isFloat({ min: 0 }),
-    body("locationSource").optional().isIn(["Device", "IP", "Manual"]),
     body("deviceId").optional().isString().trim(),
     body("platform").optional().isString().trim(),
     body("appVersion").optional().isString().trim(),

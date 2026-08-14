@@ -178,14 +178,6 @@ checkOutPlatform:{ type:String, default:"" },
 checkInAppVersion:{ type:String, default:"" },
 checkOutAppVersion:{ type:String, default:"" },
 
-checkOutLatitude:{ type:Number },
-checkOutLongitude:{ type:Number },
-checkOutLocationName:{ type:String, default:"" },
-checkOutLocationAccuracy:{ type:Number, default:null },
-checkOutLocationSource:{ type:String, enum:["Device","Branch","IP","Manual",""], default:"" },
-checkOutIsOutOfRange:{ type:Boolean, default:false },
-checkOutGeofenceDistanceMeters:{ type:Number, default:null },
-checkOutIpAddress:{ type:String, default:"" },
 checkOutDeviceId:{ type:String, default:"" },
 
 grossWorkedMinutes:{ type:Number, default:0 },
@@ -336,50 +328,8 @@ terminalId:{
 },
 
 // ===================================================
-// Location
+// Check-in Request Metadata
 // ===================================================
-
-latitude:{
-
-    type:Number
-},
-
-longitude:{
-
-    type:Number
-},
-
-locationName:{
-
-    type:String,
-    default:""
-},
-
-// Radius of uncertainty in metres for the stored point, and where it came
-// from. A desktop without Wi-Fi positioning yields a very wide fix, so the
-// quality has to travel with the coordinates to stay auditable.
-locationAccuracy:{
-
-    type:Number,
-    default:null
-},
-
-locationSource:{
-
-    type:String,
-    enum:["Device","Branch","IP","Manual",""],
-    default:""
-},
-
-isOutOfRange:{
-    type:Boolean,
-    default:false
-},
-
-geofenceDistanceMeters:{
-    type:Number,
-    default:null
-},
 
 ipAddress:{
 

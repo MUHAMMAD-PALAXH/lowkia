@@ -161,7 +161,7 @@ const resolveEmployeeFromUser = async (user, { requireActive = true } = {}) => {
     })
         .populate(
             "branchId",
-            "branchCode name attendanceLatitude attendanceLongitude attendanceRadiusMeters"
+            "branchCode name"
         )
         .populate("shiftId")
         .populate("departmentId", "departmentCode departmentName")

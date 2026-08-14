@@ -115,18 +115,6 @@ const createBranchValidator = [
     body("description")
         .optional({ nullable: true })
         .isString(),
-    body("attendanceLatitude")
-        .optional({ nullable: true })
-        .isFloat({ min: -90, max: 90 })
-        .withMessage("attendanceLatitude must be between -90 and 90."),
-    body("attendanceLongitude")
-        .optional({ nullable: true })
-        .isFloat({ min: -180, max: 180 })
-        .withMessage("attendanceLongitude must be between -180 and 180."),
-    body("attendanceRadiusMeters")
-        .optional({ nullable: true })
-        .isFloat({ min: 0, max: 50000 })
-        .withMessage("attendanceRadiusMeters must be >= 0."),
     body("branchCode")
         .not()
         .exists()
@@ -174,15 +162,6 @@ const updateBranchValidator = [
     body("managerId")
         .optional({ checkFalsy: true })
         .isMongoId(),
-    body("attendanceLatitude")
-        .optional({ nullable: true })
-        .isFloat({ min: -90, max: 90 }),
-    body("attendanceLongitude")
-        .optional({ nullable: true })
-        .isFloat({ min: -180, max: 180 }),
-    body("attendanceRadiusMeters")
-        .optional({ nullable: true })
-        .isFloat({ min: 0, max: 50000 }),
     body("branchCode")
         .not()
         .exists()
