@@ -120,12 +120,16 @@ const findApprovedLeave = async (employeeId, workDateStr, timezone) => {
     }).lean();
 };
 
-const isWeeklyOff = (shift, policy, weekday) => {
-    const offs = (shift.weeklyOff && shift.weeklyOff.length
-        ? shift.weeklyOff
-        : policy.weeklyOff) || [];
-    return offs.map(String).includes(String(weekday));
+// An assigned shift owns its weekly-off list: clearing every day on the shift
+// means "no weekly off". The policy default only applies to the synthetic
+// shift used when the employee has no active shift assigned.
+const weeklyOffDays = (shift, policy) => {
+    if (shift && shift._id) return shift.weeklyOff || [];
+    return (policy && policy.weeklyOff) || [];
 };
+
+const isWeeklyOff = (shift, policy, weekday) =>
+    weeklyOffDays(shift, policy).map(String).includes(String(weekday));
 
 const scheduledWindow = (workDate, shift, timezone) => {
     const night = isNightShiftTimes(shift.startTime, shift.endTime);
@@ -416,6 +420,7 @@ const getMyToday = async (user) => {
         scheduledOut,
         flags: {
             isWeeklyOff: weeklyOff,
+            weeklyOffSource: weeklyOff ? (shift._id ? "shift" : "policy") : null,
             isOnLeave: Boolean(leave),
             leaveDuration: leave?.leaveDuration || null,
             isHoliday: Boolean(holiday),

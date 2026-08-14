@@ -102,10 +102,11 @@ const isWeeklyOffFor = (shift, policy, weekday) => {
         shift.isDeleted !== true
             ? shift
             : null;
+    // An assigned shift owns its weekly-off list, so an empty list means the
+    // employee has no weekly off. The policy default only fills in for
+    // employees without an active shift.
     const offs =
-        (activeShift?.weeklyOff && activeShift.weeklyOff.length
-            ? activeShift.weeklyOff
-            : policy?.weeklyOff) || [];
+        (activeShift ? activeShift.weeklyOff : policy?.weeklyOff) || [];
     return offs.map(String).includes(String(weekday));
 };
 
