@@ -376,8 +376,17 @@ const populateAttendance = (q) =>
  */
 const getMyToday = async (user) => {
     const ctx = await loadContext(user);
-    const { employee, shift, policy, workDate, weekday, attendanceDate, timezone, now } =
-        ctx;
+    const {
+        employee,
+        shift,
+        policy,
+        workDate,
+        weekday,
+        attendanceDate,
+        timezone,
+        now,
+        branch
+    } = ctx;
 
     const attendance = await findTodayAttendance(
         employee._id,
@@ -412,6 +421,15 @@ const getMyToday = async (user) => {
             fullName: employee.fullName || `${employee.firstName} ${employee.lastName}`,
             branchId: employee.branchId?._id || employee.branchId,
             branchName: branchNameOf(employee.branchId)
+        },
+        // Office coordinates let a fixed workstation punch from a known point
+        // instead of an ISP guess, and drive the out-of-range flag.
+        branch: {
+            id: branch?._id || employee.branchId?._id || null,
+            name: branchNameOf(branch || employee.branchId),
+            latitude: branch?.attendanceLatitude ?? null,
+            longitude: branch?.attendanceLongitude ?? null,
+            radiusMeters: branch?.attendanceRadiusMeters ?? null
         },
         shift: {
             id: shift._id || null,

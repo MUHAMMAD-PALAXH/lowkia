@@ -1,5 +1,7 @@
 const UA = "LOWKIA-Admin/1.0 (attendance)";
 
+const hasLatinLetters = (s) => /[A-Za-z]/.test(s);
+
 const uniqueParts = (parts) => {
     const out = [];
     for (const p of parts) {
@@ -9,7 +11,10 @@ const uniqueParts = (parts) => {
             out.push(cleaned);
         }
     }
-    return out;
+    // Two sources answer in different languages, which lists the same area
+    // twice (once local script, once English). Keep one when both are present.
+    const latin = out.filter(hasLatinLetters);
+    return latin.length ? latin : out;
 };
 
 const cleanPart = (value) => {
@@ -152,10 +157,12 @@ const reverseOverpass = async (latitude, longitude) => {
 const reverseNominatim = async (latitude, longitude) => {
     const url =
         "https://nominatim.openstreetmap.org/reverse" +
-        `?lat=${latitude}&lon=${longitude}&format=jsonv2&zoom=18&addressdetails=1`;
+        `?lat=${latitude}&lon=${longitude}&format=jsonv2&zoom=18&addressdetails=1` +
+        "&accept-language=en";
     const res = await fetch(url, {
         headers: {
             Accept: "application/json",
+            "Accept-Language": "en",
             "User-Agent": UA
         },
         signal: AbortSignal.timeout(5000)
