@@ -168,6 +168,8 @@ app.use('/api/employee-advances', require('./routes/employeeAdvance'));
 app.use('/api/employee-payments', require('./routes/employeePayment'));
 // Finance Phase 8 — reports + printable payloads (PDF on-demand client-side)
 app.use('/api/finance-reports', require('./routes/financeReport'));
+// Tenant- and branch-scoped ERP sales reporting
+app.use('/api/sales-reports', require('./routes/salesReport'));
 // Finance Phase 9 — customer Stripe checkout
 app.use('/api/customer-payments', require('./routes/customerPayment'));
 
