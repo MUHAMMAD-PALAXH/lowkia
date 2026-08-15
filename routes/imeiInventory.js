@@ -5,6 +5,7 @@ const ItemTrack = require('../model/itemTrack');
 const ProductVariant = require('../model/productVariant');
 const Order = require('../model/order');
 const Branch = require('../model/branch');
+const BranchTransfer = require('../model/branchTransfer');
 const { protect, vendorOrAdmin } = require('../middleware/auth');
 const asyncHandler = require('express-async-handler');
 
@@ -95,54 +96,225 @@ router.post('/add-branch', protect, vendorOrAdmin, asyncHandler(async (req, res)
   }
 }));
 
-// =========================================================
-// STEP 2A: DISPATCH TRANSFER (Set Status to 'in-transit')
-// =========================================================
-router.put('/transfer/dispatch', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
-  const { imeis, targetBranchId } = req.body;
+const transferPopulate = (query) => query
+  .populate('productId', 'name productCode trackingType')
+  .populate('variantId', 'combinationString sku')
+  .populate('fromBranchId', 'name branchCode city')
+  .populate('toBranchId', 'name branchCode city');
 
-  if (!Array.isArray(imeis) || imeis.length === 0 || !targetBranchId) {
-    return res.status(400).json({ success: false, message: "IMEI items and target branch are mandatory." });
+router.get('/transfers', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+  const status = String(req.query.status || '').trim();
+  const search = String(req.query.search || '').trim();
+  const filter = {};
+  if (status) filter.status = status;
+  if (search) {
+    filter.$or = [
+      { transferNumber: { $regex: search, $options: 'i' } },
+      { imeis: { $elemMatch: { $regex: search, $options: 'i' } } }
+    ];
   }
-
-  const cleanImeis = imeis.map(i => i.trim());
-
-  const result = await ItemTrack.updateMany(
-    { imei: { $in: cleanImeis }, status: 'available' },
-    { 
-      $set: { status: 'in-transit' },
-      $push: { history: { status: 'in-transit', branchId: targetBranchId, updatedBy: req.user._id, notes: 'Dispatched to branch transit' } }
-    }
+  const items = await transferPopulate(
+    BranchTransfer.find(filter).sort({ dispatchedAt: -1 }).lean()
   );
-
-  if (result.matchedCount === 0) {
-    return res.status(404).json({ success: false, message: "No available matching IMEI records found to dispatch." });
-  }
-
-  res.json({ success: true, message: `${result.modifiedCount} units are now marked 'in-transit'.` });
+  res.json({ success: true, data: items });
 }));
 
-// =========================================================
-// STEP 2B: RECEIVE TRANSFER (Set Status back to 'available')
-// =========================================================
-router.put('/transfer/receive', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
-  const { imeis, receivingBranchId } = req.body;
+router.get('/transfers/in-transit', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+  const items = await transferPopulate(
+    BranchTransfer.find({ status: 'In Transit' })
+      .sort({ dispatchedAt: -1 })
+      .lean()
+  );
+  res.json({ success: true, data: items });
+}));
 
-  if (!Array.isArray(imeis) || imeis.length === 0 || !receivingBranchId) {
-    return res.status(400).json({ success: false, message: "Scanned items and destination identifier required." });
+router.get('/transfers/history', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+  const items = await transferPopulate(
+    BranchTransfer.find({ status: { $in: ['Completed', 'Cancelled'] } })
+      .sort({ dispatchedAt: -1 })
+      .lean()
+  );
+  res.json({ success: true, data: items });
+}));
+
+// Dispatch only when every IMEI belongs to the selected product, variant and
+// source branch. Partial updates are rejected to keep a manifest atomic.
+router.put('/transfer/dispatch', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+  const {
+    imeis,
+    productId,
+    variantId,
+    fromBranchId,
+    targetBranchId,
+    note
+  } = req.body;
+
+  if (
+    !Array.isArray(imeis) ||
+    imeis.length === 0 ||
+    !productId ||
+    !variantId ||
+    !fromBranchId ||
+    !targetBranchId
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: 'Product, variant, source, target and IMEI items are mandatory.'
+    });
+  }
+  if (String(fromBranchId) === String(targetBranchId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Source and target branches must be different.'
+    });
   }
 
-  const cleanImeis = imeis.map(i => i.trim());
+  const cleanImeis = [...new Set(
+    imeis.map((value) => String(value || '').trim()).filter(Boolean)
+  )];
+  if (cleanImeis.length !== imeis.length) {
+    return res.status(400).json({
+      success: false,
+      message: 'IMEIs must be non-empty and unique.'
+    });
+  }
 
-  const result = await ItemTrack.updateMany(
-    { imei: { $in: cleanImeis }, status: 'in-transit' },
+  const [fromBranch, toBranch, tracks] = await Promise.all([
+    Branch.findById(fromBranchId).lean(),
+    Branch.findById(targetBranchId).lean(),
+    ItemTrack.find({
+      imei: { $in: cleanImeis },
+      productId,
+      variantId,
+      currentBranchId: fromBranchId,
+      status: 'available'
+    }).lean()
+  ]);
+  if (!fromBranch || !toBranch) {
+    return res.status(404).json({
+      success: false,
+      message: 'Source or target branch was not found.'
+    });
+  }
+  if (tracks.length !== cleanImeis.length) {
+    const found = new Set(tracks.map((item) => item.imei));
+    const invalid = cleanImeis.filter((imei) => !found.has(imei));
+    return res.status(409).json({
+      success: false,
+      message: `These IMEIs are not available at the source branch: ${invalid.join(', ')}`
+    });
+  }
+
+  const transferNumber = `BTR-${Date.now()}`;
+  const transfer = await BranchTransfer.create({
+    transferNumber,
+    productId,
+    variantId,
+    fromBranchId,
+    toBranchId: targetBranchId,
+    imeis: cleanImeis,
+    note: String(note || '').trim(),
+    dispatchedBy: req.user._id
+  });
+
+  await ItemTrack.updateMany(
+    { _id: { $in: tracks.map((item) => item._id) }, status: 'available' },
     {
-      $set: { status: 'available', currentBranchId: receivingBranchId },
-      $push: { history: { status: 'available', branchId: receivingBranchId, updatedBy: req.user._id, notes: 'Received into physical branch inventory' } }
+      $set: {
+        status: 'in-transit',
+        transferInfo: {
+          transferId: transfer._id,
+          transferNumber,
+          fromBranchId,
+          toBranchId: targetBranchId,
+          dispatchedAt: transfer.dispatchedAt
+        }
+      },
+      $push: {
+        history: {
+          status: 'in-transit',
+          branchId: targetBranchId,
+          updatedBy: req.user._id,
+          notes: `Dispatched as ${transferNumber}`
+        }
+      }
     }
   );
 
-  res.json({ success: true, message: `${result.modifiedCount} units safely received at target branch.` });
+  const populated = await transferPopulate(
+    BranchTransfer.findById(transfer._id).lean()
+  );
+  res.json({
+    success: true,
+    message: `${cleanImeis.length} units dispatched as ${transferNumber}.`,
+    data: populated
+  });
+}));
+
+router.put('/transfer/receive/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+  const transfer = await BranchTransfer.findById(req.params.id);
+  if (!transfer) {
+    return res.status(404).json({ success: false, message: 'Transfer not found.' });
+  }
+  if (transfer.status !== 'In Transit') {
+    return res.status(409).json({
+      success: false,
+      message: `Transfer is already ${transfer.status.toLowerCase()}.`
+    });
+  }
+
+  const scanned = Array.isArray(req.body.imeis)
+    ? [...new Set(req.body.imeis.map((value) => String(value || '').trim()).filter(Boolean))]
+    : [];
+  const expected = [...transfer.imeis].sort();
+  if (
+    scanned.length !== expected.length ||
+    scanned.sort().some((imei, index) => imei !== expected[index])
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: 'Received IMEIs must exactly match the dispatched manifest.'
+    });
+  }
+
+  const result = await ItemTrack.updateMany(
+    {
+      imei: { $in: transfer.imeis },
+      status: 'in-transit',
+      'transferInfo.transferId': transfer._id
+    },
+    {
+      $set: {
+        status: 'available',
+        currentBranchId: transfer.toBranchId,
+        transferInfo: null
+      },
+      $push: {
+        history: {
+          status: 'available',
+          branchId: transfer.toBranchId,
+          updatedBy: req.user._id,
+          notes: `Received from ${transfer.transferNumber}`
+        }
+      }
+    }
+  );
+  if (result.modifiedCount !== transfer.imeis.length) {
+    return res.status(409).json({
+      success: false,
+      message: 'Some manifest units are no longer in transit. Refresh and investigate before receiving.'
+    });
+  }
+
+  transfer.status = 'Completed';
+  transfer.receivedBy = req.user._id;
+  transfer.receivedAt = new Date();
+  await transfer.save();
+
+  res.json({
+    success: true,
+    message: `${result.modifiedCount} units received at the destination branch.`
+  });
 }));
 
 // =========================================================

@@ -45,6 +45,25 @@ const itemTrackSchema = new mongoose.Schema({
       notes: String
     }
   ],
+  transferInfo: {
+    transferId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'BranchTransfer',
+      default: null
+    },
+    transferNumber: { type: String, default: '' },
+    fromBranchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Branch',
+      default: null
+    },
+    toBranchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Branch',
+      default: null
+    },
+    dispatchedAt: { type: Date, default: null }
+  },
   // Sale lifecycle attachments
   saleInfo: {
     orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
