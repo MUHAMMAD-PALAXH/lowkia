@@ -39,6 +39,7 @@ app.post(
 );
 
 app.use(express.json());
+app.use(require('./middleware/notificationCapture'));
 
 app.use('/image/products', express.static('public/products'));
 app.use('/image/category', express.static('public/category'));
@@ -110,6 +111,7 @@ require('./model/salaryStructure');
 require('./model/payrollRun');
 require('./model/payroll');
 require('./model/employeeAdvance');
+require('./model/notificationCenterEvent');
 
 // ============================================================
 // ROUTES
@@ -127,6 +129,7 @@ app.use('/admin-users', require('./routes/adminUser'));
 app.use('/orders', require('./routes/order'));
 app.use('/payment', require('./routes/payment'));
 app.use('/notification', require('./routes/notification'));
+app.use('/api/notification-center', require('./routes/notificationCenter'));
 app.use('/api/reviews', require('./routes/reviewRoute'));
 app.use('/api/imei-inventory', require('./routes/imeiInventory'));
 app.use('/api/suppliers', require('./routes/supplier')); 

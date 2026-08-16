@@ -6,6 +6,7 @@ const {
 const {
     completeByPaymentIntent,
 } = require("../services/customerPaymentService");
+const { emitNotification } = require("../services/notificationCenterService");
 
 /**
  * Stripe webhook — must receive raw Buffer body.
@@ -32,11 +33,31 @@ module.exports = asyncHandler(async (req, res) => {
         switch (event.type) {
             case "payment_intent.succeeded": {
                 const intent = event.data.object;
-                await completeByPaymentIntent(intent.id, {
+                const result = await completeByPaymentIntent(intent.id, {
                     skipProviderCheck: true,
                     webhookAmountMinor: intent.amount_received ?? intent.amount,
                     webhookCurrency: intent.currency,
                 });
+                const payment = result?.payment;
+                if (payment?.companyId) {
+                    await emitNotification({
+                        companyId: payment.companyId,
+                        branchId: payment.branchId || null,
+                        audienceRoles: ["admin", "branch_manager"],
+                        category: "payment",
+                        eventType: "paid",
+                        priority: "high",
+                        title: `Payment ${payment.paymentNumber || ""} completed`.trim(),
+                        message: "Stripe confirmed a customer payment.",
+                        entityType: "Payment",
+                        entityId: String(payment.id || payment._id || ""),
+                        entityLabel: payment.paymentNumber || "",
+                        screen: "Finance",
+                        source: "stripe",
+                        eventKey: `stripe:${event.id}`,
+                        metadata: { provider: "STRIPE" },
+                    });
+                }
                 break;
             }
             case "payment_intent.payment_failed": {
@@ -65,6 +86,31 @@ module.exports = asyncHandler(async (req, res) => {
                         },
                     }
                 );
+                const payment = await Payment.findOne({
+                    providerPaymentIntentId: intent.id,
+                    paymentType: "CustomerPayment",
+                }).lean();
+                if (payment?.companyId) {
+                    await emitNotification({
+                        companyId: payment.companyId,
+                        branchId: payment.branchId || null,
+                        audienceRoles: ["admin", "branch_manager"],
+                        category: "payment",
+                        eventType: "failed",
+                        priority: "critical",
+                        title: `Payment ${payment.paymentNumber || ""} failed`.trim(),
+                        message:
+                            intent.last_payment_error?.message ||
+                            "Stripe reported a failed customer payment.",
+                        entityType: "Payment",
+                        entityId: String(payment._id),
+                        entityLabel: payment.paymentNumber || "",
+                        screen: "Finance",
+                        source: "stripe",
+                        eventKey: `stripe:${event.id}`,
+                        metadata: { provider: "STRIPE" },
+                    });
+                }
                 break;
             }
             default:

@@ -2,6 +2,12 @@ const mongoose = require('mongoose');
 
 // Define the Notification schema
 const notificationSchema = new mongoose.Schema({
+    companyId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Company',
+        required: true,
+        index: true
+    },
     notificationId: {
         type: String,
         required: [true, 'Notification ID is required'],
