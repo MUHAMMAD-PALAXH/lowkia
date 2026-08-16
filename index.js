@@ -176,6 +176,8 @@ app.use('/api/purchase-reports', require('./routes/purchaseReport'));
 app.use('/api/inventory-reports', require('./routes/inventoryReport'));
 // Tenant- and branch-scoped repair service reporting
 app.use('/api/repair-reports', require('./routes/repairReport'));
+// Tenant- and branch-scoped operational profit and loss reporting
+app.use('/api/profit-loss-reports', require('./routes/profitLossReport'));
 // Finance Phase 9 — customer Stripe checkout
 app.use('/api/customer-payments', require('./routes/customerPayment'));
 
