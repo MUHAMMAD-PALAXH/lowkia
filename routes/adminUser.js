@@ -93,6 +93,12 @@ const protect = asyncHandler(async (req, res, next) => {
   const decoded = jwt.verify(token, process.env.JWT_SECRET);
   req.user = await AdminUser.findById(decoded.id);
   if (!req.user) return res.status(401).json({ success: false, message: 'Invalid token' });
+  if (req.user.status === 'Blocked') {
+    return res.status(403).json({
+      success: false,
+      message: 'This account has been blocked. Contact an administrator.',
+    });
+  }
   next();
 });
 
@@ -117,6 +123,40 @@ router.post('/:id/approve', protect, adminOnly, asyncHandler(async (req, res) =>
   user.status = 'Active';
   await user.save();
   res.json({ success: true, message: 'User approved successfully' });
+}));
+
+// Block access without deleting the directory or its related business data.
+router.post('/:id/block', protect, adminOnly, asyncHandler(async (req, res) => {
+  if (String(req.user._id) === String(req.params.id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'You cannot block your own account',
+    });
+  }
+
+  const user = await AdminUser.findById(req.params.id);
+  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  if (user.status === 'Blocked') {
+    return res.status(400).json({ success: false, message: 'Account is already blocked' });
+  }
+
+  user.status = 'Blocked';
+  user.updatedBy = req.user._id;
+  await user.save();
+  res.json({ success: true, message: 'Account blocked successfully', data: user });
+}));
+
+router.post('/:id/unblock', protect, adminOnly, asyncHandler(async (req, res) => {
+  const user = await AdminUser.findById(req.params.id);
+  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  if (user.status !== 'Blocked') {
+    return res.status(400).json({ success: false, message: 'Account is not blocked' });
+  }
+
+  user.status = user.isApproved ? 'Active' : 'Pending';
+  user.updatedBy = req.user._id;
+  await user.save();
+  res.json({ success: true, message: 'Account unblocked successfully', data: user });
 }));
 
 // GET all admins + vendors + branch managers (admin only)
@@ -447,6 +487,12 @@ router.post('/login', asyncHandler(async (req, res) => {
   const user = await AdminUser.findOne({ email: String(email || '').toLowerCase() });
   if (!user || !(await user.comparePassword(password))) {
     return res.status(401).json({ success: false, message: 'Invalid credentials' });
+  }
+  if (user.status === 'Blocked') {
+    return res.status(403).json({
+      success: false,
+      message: 'This account has been blocked. Contact an administrator.',
+    });
   }
   if (!user.isVerified) {
     return res.status(401).json({
