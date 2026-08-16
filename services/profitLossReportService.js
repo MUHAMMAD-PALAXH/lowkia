@@ -1,6 +1,8 @@
 const mongoose = require("mongoose");
 const SalesOrder = require("../model/salesOrder");
 const SalesReturn = require("../model/salesReturn");
+const OnlineOrder = require("../model/order");
+const Product = require("../model/product");
 const StockMovement = require("../model/StockMovement");
 const RepairTicket = require("../model/repairTicket");
 const Expense = require("../model/expense");
@@ -9,6 +11,7 @@ const Journal = require("../model/journal");
 const Account = require("../model/account");
 const AdminUser = require("../model/adminUser");
 const Branch = require("../model/branch");
+const Company = require("../model/company");
 const AppError = require("../utils/appError");
 const { toMajor } = require("../utils/money");
 const { companySnapshot } = require("./financeReportService");
@@ -101,6 +104,14 @@ const payrollRecognitionDate = (run) =>
 const movementCost = (row) =>
     n(row.totalCost) > 0 ? n(row.totalCost) : n(row.quantity) * n(row.unitCost);
 
+const onlineOrderRevenue = (row) =>
+    n(row.orderTotal?.total) > 0 ? n(row.orderTotal.total) : n(row.totalPrice);
+
+const onlineItemCost = (item) => n(item.quantity) * n(item.unitCost);
+
+const onlineOrderCost = (row) =>
+    (row.items || []).reduce((sum, item) => sum + onlineItemCost(item), 0);
+
 const journalTotals = async (journals) => {
     const accountIds = [
         ...new Set(
@@ -148,6 +159,8 @@ const loadPeriod = async ({
     tenantId,
     creatorIds,
     tenantOrderIds,
+    tenantBranchIds,
+    includeUnassignedOnline,
     query,
     managedBranchIds,
     from,
@@ -160,6 +173,36 @@ const loadPeriod = async ({
         orderDate: { $gte: from, $lte: to },
     };
     applyBranchScope(salesMatch, query.branchId, managedBranchIds);
+
+    let onlineBranchIds = (tenantBranchIds || []).map(String);
+    if (managedBranchIds !== null) {
+        const managed = new Set((managedBranchIds || []).map(String));
+        onlineBranchIds = onlineBranchIds.filter((branchId) =>
+            managed.has(branchId)
+        );
+    }
+    if (query.branchId) {
+        onlineBranchIds = onlineBranchIds.includes(String(query.branchId))
+            ? [String(query.branchId)]
+            : [];
+    }
+    const onlineMatch = {
+        orderStatus: "delivered",
+        orderDate: { $gte: from, $lte: to },
+        branchId: { $in: onlineBranchIds.map(oid).filter(Boolean) },
+    };
+    if (
+        includeUnassignedOnline &&
+        managedBranchIds === null &&
+        !query.branchId
+    ) {
+        onlineMatch.$or = [
+            { branchId: onlineMatch.branchId },
+            { branchId: null },
+            { branchId: { $exists: false } },
+        ];
+        delete onlineMatch.branchId;
+    }
 
     const returnMatch = {
         isDeleted: { $ne: true },
@@ -215,11 +258,24 @@ const loadPeriod = async ({
     };
     applyBranchScope(journalMatch, query.branchId, managedBranchIds);
 
-    const [sales, returns, repairs, expenses, payrollCandidates, journals] =
+    const [
+        sales,
+        onlineOrders,
+        returns,
+        repairs,
+        expenses,
+        payrollCandidates,
+        journals,
+    ] =
         await Promise.all([
             SalesOrder.find(salesMatch)
                 .select(
                     "branchId orderNumber orderDate customerName salesType grandTotal paidAmount dueAmount stockUpdated items"
+                )
+                .lean(),
+            OnlineOrder.find(onlineMatch)
+                .select(
+                    "branchId orderDate orderStatus orderTotal totalPrice paymentMethod items"
                 )
                 .lean(),
             SalesReturn.find(returnMatch)
@@ -251,6 +307,32 @@ const loadPeriod = async ({
                 .lean(),
         ]);
 
+    const onlineProductIds = [
+        ...new Set(
+            onlineOrders.flatMap((order) =>
+                (order.items || []).map((item) => id(item.productID))
+            )
+        ),
+    ].filter(Boolean);
+    const onlineProducts = onlineProductIds.length
+        ? await Product.find({ _id: { $in: onlineProductIds.map(oid) } })
+              .select("name sku purchasePrice costPrice")
+              .lean()
+        : [];
+    const onlineProductMap = new Map(
+        onlineProducts.map((product) => [id(product._id), product])
+    );
+    for (const order of onlineOrders) {
+        for (const item of order.items || []) {
+            const product = onlineProductMap.get(id(item.productID));
+            item.unitCost =
+                n(product?.costPrice) > 0
+                    ? n(product.costPrice)
+                    : n(product?.purchasePrice);
+            item.sku = product?.sku || "";
+        }
+    }
+
     const payroll = payrollCandidates.filter((run) => {
         const date = payrollRecognitionDate(run);
         return date >= from && date <= to;
@@ -274,7 +356,17 @@ const loadPeriod = async ({
         movement.branchId = movement.branchId || order?.branchId || null;
     }
     const journal = await journalTotals(journals);
-    return { sales, returns, repairs, expenses, payroll, journals, movements, journal };
+    return {
+        sales,
+        onlineOrders,
+        returns,
+        repairs,
+        expenses,
+        payroll,
+        journals,
+        movements,
+        journal,
+    };
 };
 
 const summarize = (data) => {
@@ -283,7 +375,12 @@ const summarize = (data) => {
         (sum, row) => sum + n(row.refundAmount),
         0
     );
-    const netSales = grossSales - salesReturns;
+    const salesOrderRevenue = grossSales - salesReturns;
+    const onlineSalesRevenue = data.onlineOrders.reduce(
+        (sum, row) => sum + onlineOrderRevenue(row),
+        0
+    );
+    const netSales = salesOrderRevenue + onlineSalesRevenue;
     const repairRevenue = data.repairs.reduce(
         (sum, row) => sum + n(row.totalAmount),
         0
@@ -291,7 +388,15 @@ const summarize = (data) => {
     const otherIncome = data.journal.otherIncome;
     const operatingRevenue = netSales + repairRevenue;
     const totalRevenue = operatingRevenue + otherIncome;
-    const cogs = data.movements.reduce((sum, row) => sum + movementCost(row), 0);
+    const salesOrderCogs = data.movements.reduce(
+        (sum, row) => sum + movementCost(row),
+        0
+    );
+    const onlineCogs = data.onlineOrders.reduce(
+        (sum, row) => sum + onlineOrderCost(row),
+        0
+    );
+    const cogs = salesOrderCogs + onlineCogs;
     const operatingExpenses = data.expenses.reduce(
         (sum, row) => sum + n(row.totalAmount),
         0
@@ -314,14 +419,20 @@ const summarize = (data) => {
     const safeMargin = (value) =>
         totalRevenue === 0 ? 0 : (value / totalRevenue) * 100;
     return {
-        orderCount: data.sales.length,
+        orderCount: data.sales.length + data.onlineOrders.length,
+        salesOrderCount: data.sales.length,
+        onlineOrderCount: data.onlineOrders.length,
         grossSales,
         salesReturns,
+        salesOrderRevenue,
+        onlineSalesRevenue,
         netSales,
         repairRevenue,
         otherIncome,
         operatingRevenue,
         totalRevenue,
+        salesOrderCogs,
+        onlineCogs,
         cogs,
         grossProfit,
         operatingExpenses,
@@ -336,7 +447,8 @@ const summarize = (data) => {
         netMargin: safeMargin(netProfit),
         cashCollected:
             data.sales.reduce((sum, row) => sum + n(row.paidAmount), 0) +
-            data.repairs.reduce((sum, row) => sum + n(row.paidAmount), 0),
+            data.repairs.reduce((sum, row) => sum + n(row.paidAmount), 0) +
+            onlineSalesRevenue,
         receivables:
             data.sales.reduce((sum, row) => sum + n(row.dueAmount), 0) +
             data.repairs.reduce((sum, row) => sum + n(row.dueAmount), 0),
@@ -364,6 +476,7 @@ const buildTrend = (data, from, to, groupBy) => {
                 label: key,
                 revenue: 0,
                 netSales: 0,
+                onlineSalesRevenue: 0,
                 repairRevenue: 0,
                 cogs: 0,
                 grossProfit: 0,
@@ -381,6 +494,13 @@ const buildTrend = (data, from, to, groupBy) => {
     for (const row of data.sales) {
         add(row.orderDate, "netSales", n(row.grandTotal));
         add(row.orderDate, "revenue", n(row.grandTotal));
+    }
+    for (const row of data.onlineOrders) {
+        const revenue = onlineOrderRevenue(row);
+        add(row.orderDate, "onlineSalesRevenue", revenue);
+        add(row.orderDate, "netSales", revenue);
+        add(row.orderDate, "revenue", revenue);
+        add(row.orderDate, "cogs", onlineOrderCost(row));
     }
     for (const row of data.returns) {
         add(row.returnDate, "netSales", -n(row.refundAmount));
@@ -478,6 +598,10 @@ const branchBreakdown = async (data) => {
         return groups.get(key);
     };
     for (const row of data.sales) get(row.branchId).revenue += n(row.grandTotal);
+    for (const row of data.onlineOrders) {
+        get(row.branchId).revenue += onlineOrderRevenue(row);
+        get(row.branchId).cogs += onlineOrderCost(row);
+    }
     for (const row of data.returns)
         get(row.branchId).revenue -= n(row.refundAmount);
     for (const row of data.repairs)
@@ -547,6 +671,19 @@ const topProducts = (data) => {
             row.revenue += n(item.total);
         }
     }
+    for (const order of data.onlineOrders) {
+        for (const item of order.items || []) {
+            const row = get(
+                item.productID,
+                null,
+                item.productName,
+                item.sku
+            );
+            row.units += n(item.quantity);
+            row.revenue += n(item.quantity) * n(item.price);
+            row.cogs += onlineItemCost(item);
+        }
+    }
     for (const returned of data.returns) {
         for (const item of returned.items || []) {
             const row = get(
@@ -591,7 +728,13 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
         includePayroll: query.includePayroll !== false,
         includeExpenses: query.includeExpenses !== false,
     };
-    const [company, creatorIds, tenantOrderIds, tenantBranchIds] = await Promise.all([
+    const [
+        company,
+        creatorIds,
+        tenantOrderIds,
+        salesOrderBranchIds,
+        activeCompanyCount,
+    ] = await Promise.all([
         companySnapshot(tenantId),
         AdminUser.distinct("_id", { companyId: tenantId }),
         SalesOrder.distinct("_id", {
@@ -603,11 +746,31 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
             isDeleted: { $ne: true },
             branchId: { $ne: null },
         }),
+        Company.countDocuments({
+            isDeleted: { $ne: true },
+            status: { $ne: "Closed" },
+        }),
     ]);
+    const ownedBranchIds = await Branch.distinct("_id", {
+        isDeleted: { $ne: true },
+        $or: [
+            { createdBy: { $in: creatorIds } },
+            { managerId: { $in: creatorIds } },
+        ],
+    });
+    const tenantBranchIds = [
+        ...new Map(
+            [...salesOrderBranchIds, ...ownedBranchIds]
+                .filter(Boolean)
+                .map((branchId) => [String(branchId), branchId])
+        ).values(),
+    ];
     const common = {
         tenantId,
         creatorIds,
         tenantOrderIds,
+        tenantBranchIds,
+        includeUnassignedOnline: activeCompanyCount === 1,
         query: { ...query, ...includeFlags },
         managedBranchIds,
     };
@@ -641,6 +804,21 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
             "COGS and profit are provisional because linked Sale/OUT cost movements do not cover every stock-updated completed sales order."
         );
     }
+    const onlineLines = current.onlineOrders.flatMap((order) => order.items || []);
+    const onlineCostedLines = onlineLines.filter((item) => n(item.unitCost) > 0);
+    const onlineCogsCoveragePercent = onlineLines.length
+        ? (onlineCostedLines.length / onlineLines.length) * 100
+        : 100;
+    if (onlineCogsCoveragePercent < 100) {
+        warnings.push(
+            "Online COGS is provisional because some delivered online-order products have no costPrice or purchasePrice."
+        );
+    }
+    warnings.push(
+        activeCompanyCount === 1
+            ? "Unassigned legacy online orders are included because this installation has one active company; assign branches before enabling another company."
+            : "Online orders are included only when their branch is linked to this company; unassigned legacy online orders are excluded to prevent cross-company totals."
+    );
     if (includeFlags.includeExpenses) {
         warnings.push(
             "Legacy expenses lack companyId; only approved/paid expenses created by users in this company are included."
@@ -651,7 +829,8 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
     );
     const expenseBreakdown = getExpenseBreakdown(current, summary);
     const incomeMap = new Map([
-        ["Net product sales", summary.netSales],
+        ["Sales order revenue", summary.salesOrderRevenue],
+        ["Online sales revenue", summary.onlineSalesRevenue],
         ...(summary.repairRevenue
             ? [["Repair services", summary.repairRevenue]]
             : []),
@@ -673,9 +852,11 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
         {
             section: "Revenue",
             lines: [
-                { key: "grossSales", label: "Gross product sales", amount: summary.grossSales },
+                { key: "grossSales", label: "Gross sales orders", amount: summary.grossSales },
                 { key: "salesReturns", label: "Less: sales returns", amount: -summary.salesReturns },
-                { key: "netSales", label: "Net product sales", amount: summary.netSales },
+                { key: "salesOrderRevenue", label: "Net sales order revenue", amount: summary.salesOrderRevenue },
+                { key: "onlineSalesRevenue", label: "Delivered online sales", amount: summary.onlineSalesRevenue },
+                { key: "netSales", label: "Combined product sales", amount: summary.netSales },
                 { key: "repairRevenue", label: "Repair service revenue", amount: summary.repairRevenue },
             ],
             totalLabel: "Operating revenue",
@@ -683,7 +864,19 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
         },
         {
             section: "Cost of sales",
-            lines: [{ key: "cogs", label: "Cost of goods sold", amount: summary.cogs }],
+            lines: [
+                {
+                    key: "salesOrderCogs",
+                    label: "Sales order COGS",
+                    amount: summary.salesOrderCogs,
+                },
+                {
+                    key: "onlineCogs",
+                    label: "Estimated online sales COGS",
+                    amount: summary.onlineCogs,
+                },
+                { key: "cogs", label: "Total cost of goods sold", amount: summary.cogs },
+            ],
             totalLabel: "Gross profit",
             total: summary.grossProfit,
         },
@@ -728,6 +921,8 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
             basis: "operational_accrual",
             recognitionPolicy: {
                 sales: "Completed sales orders by orderDate",
+                onlineSales:
+                    "Delivered ecommerce orders by orderDate, scoped through company-linked branches",
                 returns: "Received/Refunded sales returns by returnDate",
                 repairs: "Completed/Ready/Delivered tickets by completedDate",
                 payroll: "Approved/Locked/Paid gross payroll by recognition date",
@@ -744,8 +939,11 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
             reliability: {
                 provisional: warnings.length > 1 || cogsCoveragePercent < 100,
                 cogsCoveragePercent,
+                onlineCogsCoveragePercent,
                 coveredSalesOrders: coveredOrders.size,
                 eligibleSalesOrders: eligibleOrders,
+                costedOnlineLines: onlineCostedLines.length,
+                eligibleOnlineLines: onlineLines.length,
                 expenseScope: "company_creator",
                 warnings,
             },

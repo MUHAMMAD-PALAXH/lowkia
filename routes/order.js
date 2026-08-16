@@ -84,11 +84,16 @@ router.get('/admin/analytics', asyncHandler(async (req, res) => {
       currentStart = new Date(0);
   }
 
-  const currentMatch = { createdAt: { $gte: currentStart } };
+  const currentMatch = { orderDate: { $gte: currentStart } };
 
   // Top 5 products
   const topProducts = await Order.aggregate([
-    { $match: currentMatch },
+    {
+      $match: {
+        ...currentMatch,
+        orderStatus: 'delivered'
+      }
+    },
     { $unwind: '$items' },
     {
       $group: {
@@ -112,14 +117,22 @@ router.get('/admin/analytics', asyncHandler(async (req, res) => {
           $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, { $ifNull: ['$orderTotal.total', 0] }, 0] }
         },
         lossRevenue: {
-          $sum: { $cond: [{ $in: ['$orderStatus', ['cancelled', 'returned']] }, { $ifNull: ['$orderTotal.total', 0] }, 0] }
+          $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, { $ifNull: ['$orderTotal.total', 0] }, 0] }
+        },
+        deliveredCount: {
+          $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
         },
         orderCount: { $sum: 1 }
       }
     }
   ]);
 
-  const summary = stats[0] || { deliveredRevenue: 0, lossRevenue: 0, orderCount: 0 };
+  const summary = stats[0] || {
+    deliveredRevenue: 0,
+    lossRevenue: 0,
+    deliveredCount: 0,
+    orderCount: 0
+  };
 
   const currentRevenue = summary.deliveredRevenue;
 
@@ -134,7 +147,7 @@ router.get('/admin/analytics', asyncHandler(async (req, res) => {
     default:      prevStart = new Date(0);
   }
 
-  const prevMatch = { createdAt: { $gte: prevStart, $lt: currentStart } };
+  const prevMatch = { orderDate: { $gte: prevStart, $lt: currentStart } };
 
   const prevAgg = await Order.aggregate([
     { $match: prevMatch },
@@ -190,15 +203,15 @@ router.get('/daily-profit-by-status', asyncHandler(async (req, res) => {
   }
 
   const aggregated = await Order.aggregate([
-    { $match: { createdAt: { $gte: startDate } } },
+    { $match: { orderDate: { $gte: startDate } } },
     {
       $group: {
-        _id: { $dateToString: { format: dateFormat, date: '$createdAt' } },
+        _id: { $dateToString: { format: dateFormat, date: '$orderDate' } },
         positiveProfit: {
           $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, { $ifNull: ['$orderTotal.total', 0] }, 0] }
         },
         negativeProfit: {
-          $sum: { $cond: [{ $in: ['$orderStatus', ['cancelled', 'returned']] }, { $multiply: [{ $ifNull: ['$orderTotal.total', 0] }, -1] }, 0] }
+          $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, { $multiply: [{ $ifNull: ['$orderTotal.total', 0] }, -1] }, 0] }
         },
         potentialProfit: {
           $sum: { $cond: [{ $in: ['$orderStatus', ['pending', 'processing', 'shipped']] }, { $ifNull: ['$orderTotal.total', 0] }, 0] }
@@ -283,7 +296,16 @@ router.post('/', asyncHandler(async (req, res) => {
   session.startTransaction();
 
   try {
-    const { userID, items, totalPrice, orderTotal, shippingAddress, paymentMethod, couponCode } = req.body;
+    const {
+      userID,
+      items,
+      totalPrice,
+      orderTotal,
+      shippingAddress,
+      paymentMethod,
+      couponCode,
+      branchId
+    } = req.body;
 
     if (!userID || !items?.length || !totalPrice || !orderTotal || !shippingAddress || !paymentMethod) {
       return res.status(400).json({ success: false, message: 'Missing required fields' });
@@ -304,7 +326,7 @@ router.post('/', asyncHandler(async (req, res) => {
     }
 
     const order = new Order({
-      userID, items, totalPrice, orderTotal, shippingAddress, paymentMethod, couponCode,
+      userID, items, totalPrice, orderTotal, shippingAddress, paymentMethod, couponCode, branchId,
       orderStatus: 'pending'
     });
 
