@@ -8,7 +8,8 @@ const getActorId = (req) =>
 exports.createRepairTicket = asyncHandler(async (req, res) => {
     const doc = await repairTicketService.createRepairTicket(
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Repair ticket created.", doc, 201);
 });

@@ -97,6 +97,13 @@ const repairItemSchema = new mongoose.Schema(
 const repairTicketSchema = new mongoose.Schema(
 {
 
+companyId:{
+
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"Company",
+    default:null,
+    index:true
+},
 
 branchId:{
 
@@ -604,6 +611,8 @@ repairTicketSchema.index({assignedTechnician:1});
 repairTicketSchema.index({receivedDate:-1});
 repairTicketSchema.index({expectedDeliveryDate:1});
 repairTicketSchema.index({pickupDate:1});
+repairTicketSchema.index({companyId:1,receivedDate:-1});
+repairTicketSchema.index({companyId:1,branchId:1,status:1,receivedDate:-1});
 
 
 module.exports = mongoose.model("RepairTicket",repairTicketSchema);

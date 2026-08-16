@@ -128,7 +128,11 @@ const populateTicket = (query) =>
         .populate("createdBy", "name email")
         .populate("updatedBy", "name email");
 
-const createRepairTicket = async (payload = {}, actorId = null) => {
+const createRepairTicket = async (
+    payload = {},
+    actorId = null,
+    companyId = null
+) => {
     const branchId = toObjectId(payload.branchId);
     if (!branchId) {
         const err = new Error("Branch is required.");
@@ -233,6 +237,7 @@ const createRepairTicket = async (payload = {}, actorId = null) => {
     }
 
     const doc = await RepairTicket.create({
+        companyId: toObjectId(companyId),
         branchId,
         ticketNumber,
         repairCode,

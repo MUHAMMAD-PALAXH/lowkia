@@ -174,6 +174,8 @@ app.use('/api/sales-reports', require('./routes/salesReport'));
 app.use('/api/purchase-reports', require('./routes/purchaseReport'));
 // Tenant-evidence- and branch-scoped ERP inventory reporting
 app.use('/api/inventory-reports', require('./routes/inventoryReport'));
+// Tenant- and branch-scoped repair service reporting
+app.use('/api/repair-reports', require('./routes/repairReport'));
 // Finance Phase 9 — customer Stripe checkout
 app.use('/api/customer-payments', require('./routes/customerPayment'));
 
