@@ -93,6 +93,9 @@ router.get(
         if (req.query.unread === "true") {
             query["readBy.userId"] = { $ne: req.user._id };
         }
+        if (req.query.read === "true") {
+            query["readBy.userId"] = req.user._id;
+        }
         if (req.query.search) {
             const pattern = new RegExp(escapeRegex(req.query.search), "i");
             query.$and.push({
