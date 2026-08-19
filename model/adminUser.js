@@ -99,7 +99,8 @@ const adminUserSchema = new mongoose.Schema(
         enum: [
             "admin",
             "vendor",
-            "branch_manager"
+            "branch_manager",
+            "supplier"
         ],
         default: "vendor"
     },

@@ -7,10 +7,10 @@ const asyncHandler = require("express-async-handler");
 
 const blockVendorFromFinance = (req, res, next) => {
     const role = (req.user?.role || "").toLowerCase();
-    if (role === "vendor") {
+    if (role === "vendor" || role === "supplier") {
         return res.status(403).json({
             success: false,
-            message: "Vendors cannot access finance or payroll.",
+            message: "Vendors and suppliers cannot access finance or payroll.",
             data: null,
             errors: null,
         });

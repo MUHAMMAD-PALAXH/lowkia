@@ -63,6 +63,13 @@ const roles = [
         displayName: "HR Manager",
         description: "Human Resource",
         isSystem: true
+    },
+
+    {
+        name: "supplier",
+        displayName: "Supplier",
+        description: "Supplier portal login",
+        isSystem: true
     }
 
 ];

@@ -99,6 +99,14 @@ const supplierSchema = new mongoose.Schema(
             trim: true
         },
 
+        // Login account (AdminUser.role === "supplier")
+        userId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "AdminUser",
+            default: null,
+            index: true
+        },
+
         // Supplier's own business/trade name (not system Company entity)
         companyName: {
             type: String,
@@ -361,6 +369,10 @@ const supplierSchema = new mongoose.Schema(
 supplierSchema.index({ name: 1 });
 supplierSchema.index({ phone: 1 });
 supplierSchema.index({ email: 1 });
+supplierSchema.index(
+    { userId: 1 },
+    { unique: true, sparse: true }
+);
 supplierSchema.index({ status: 1 });
 supplierSchema.index({ isApproved: 1 });
 supplierSchema.index({ isDeleted: 1, status: 1 });

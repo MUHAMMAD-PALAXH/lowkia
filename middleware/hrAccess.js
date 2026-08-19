@@ -17,10 +17,10 @@ const attendanceAdminOnly = (req, res, next) => {
             errors: null
         });
     }
-    if (req.user.role === "vendor") {
+    if (req.user.role === "vendor" || req.user.role === "supplier") {
         return res.status(403).json({
             success: false,
-            message: "Vendors cannot access employee attendance.",
+            message: "Vendors and suppliers cannot access employee attendance.",
             data: null,
             errors: null
         });
@@ -52,10 +52,10 @@ const ownerOnly = (req, res, next) => {
 
 /** Block pure vendors from any HR attendance route. */
 const blockVendor = (req, res, next) => {
-    if (req.user?.role === "vendor") {
+    if (req.user?.role === "vendor" || req.user?.role === "supplier") {
         return res.status(403).json({
             success: false,
-            message: "Vendors cannot access employee attendance.",
+            message: "Vendors and suppliers cannot access employee attendance.",
             data: null,
             errors: null
         });

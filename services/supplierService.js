@@ -38,7 +38,8 @@ const PROTECTED_FIELDS = [
     "isApproved",
     "createdBy",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "userId"
 ];
 
 const escapeRegex = (value = "") => {
@@ -2211,8 +2212,71 @@ const getSupplierDetails = async (id, query = {}) => {
     };
 };
 
+/**
+ * Ensure a supplier-role AdminUser has a linked Supplier profile.
+ * Links an existing CRM row by email when possible; otherwise creates one.
+ */
+const ensureSupplierLoginProfile = async (user) => {
+    if (!user || user.role !== "supplier") return null;
+
+    const userId = user._id;
+    let linked = await Supplier.findOne({
+        userId,
+        isDeleted: false
+    });
+    if (linked) return linked;
+
+    const email = String(user.email || "").toLowerCase().trim();
+    if (email) {
+        linked = await Supplier.findOne({
+            email,
+            isDeleted: false,
+            $or: [{ userId: { $exists: false } }, { userId: null }]
+        });
+        if (linked) {
+            linked.userId = userId;
+            if (!linked.phone && user.phone) linked.phone = user.phone;
+            linked.updatedBy = userId;
+            await linked.save();
+            return linked;
+        }
+    }
+
+    const baseName =
+        `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
+        email ||
+        "Supplier";
+    let name = baseName;
+    const nameTaken = await Supplier.findOne({
+        name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
+        isDeleted: false
+    });
+    if (nameTaken) {
+        name = `${baseName} (${email || String(userId).slice(-6)})`;
+    }
+
+    let phone = String(user.phone || "").trim();
+    if (phone) {
+        const phoneTaken = await Supplier.findOne({ phone, isDeleted: false });
+        if (phoneTaken) phone = "";
+    }
+
+    return Supplier.create({
+        name,
+        email,
+        phone,
+        supplierCode: await generateSupplierCode(),
+        userId,
+        companyId: user.companyId || null,
+        isApproved: false,
+        status: "Active",
+        createdBy: userId
+    });
+};
+
 module.exports = {
     createSupplier,
+    ensureSupplierLoginProfile,
     getSuppliers,
     getSupplierById,
     getSupplierDetails,

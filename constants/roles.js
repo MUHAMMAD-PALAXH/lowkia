@@ -16,4 +16,6 @@ module.exports = {
     ACCOUNTS_MANAGER: "accounts_manager",
 
     VENDOR: "vendor",
+
+    SUPPLIER: "supplier",
 };

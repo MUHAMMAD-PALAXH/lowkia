@@ -871,10 +871,14 @@ const getPurchaseOrderById = async (id, { includeDeleted = false } = {}) => {
     return enrichPosWithGrnMeta(po);
 };
 
-const getPurchaseOrderStats = async () => {
+const getPurchaseOrderStats = async (query = {}) => {
+    const match = { ...NOT_DELETED };
+    const supplierId = toObjectId(query.supplierId);
+    if (supplierId) match.supplierId = supplierId;
+
     const [rows, trashCount] = await Promise.all([
         PurchaseOrder.aggregate([
-            { $match: { ...NOT_DELETED } },
+            { $match: match },
             {
                 $group: {
                     _id: "$status",
@@ -883,7 +887,7 @@ const getPurchaseOrderStats = async () => {
                 }
             }
         ]),
-        trash.trashCount()
+        supplierId ? Promise.resolve(0) : trash.trashCount()
     ]);
 
     const stats = {

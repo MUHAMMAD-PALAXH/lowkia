@@ -90,9 +90,9 @@ const assertRefs = async (data) => {
             isDeleted: { $ne: true }
         });
         if (!user) throw new AppError("Admin user not found.", 404);
-        if (user.role === "vendor") {
+        if (user.role === "vendor" || user.role === "supplier") {
             throw new AppError(
-                "Cannot link a vendor account as an employee without converting role first.",
+                "Cannot link a vendor or supplier account as an employee without converting role first.",
                 400
             );
         }
@@ -126,9 +126,9 @@ const createEmployee = async (payload = {}, actorId = null) => {
         isDeleted: { $ne: true },
     });
     if (!adminUser) throw new AppError("Admin user not found.", 404);
-    if (adminUser.role === "vendor") {
+    if (adminUser.role === "vendor" || adminUser.role === "supplier") {
         throw new AppError(
-            "Cannot link a vendor account as an employee without converting role first.",
+            "Cannot link a vendor or supplier account as an employee without converting role first.",
             400
         );
     }

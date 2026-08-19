@@ -18,6 +18,17 @@ const {
 // Base: /api/suppliers
 // ==========================================================
 router.use(protect, resolveTenant);
+router.use((req, res, next) => {
+    if (req.user?.role === "supplier") {
+        return res.status(403).json({
+            success: false,
+            message: "Suppliers cannot manage the supplier directory.",
+            data: null,
+            errors: null,
+        });
+    }
+    next();
+});
 
 router.get(
     "/",

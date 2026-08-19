@@ -6,6 +6,8 @@ const Product = require('../model/product');
 const ProductVariant = require('../model/productVariant');
 const Coupon = require('../model/couponCode');
 const Order = require('../model/order');
+const Supplier = require('../model/supplier');
+const { ensureSupplierLoginProfile } = require('../services/supplierService');
 const jwt = require('jsonwebtoken');
 const otpGenerator = require('otp-generator');
 const { Resend } = require('resend');
@@ -159,7 +161,7 @@ router.post('/:id/unblock', protect, adminOnly, asyncHandler(async (req, res) =>
   res.json({ success: true, message: 'Account unblocked successfully', data: user });
 }));
 
-// GET all admins + vendors + branch managers (admin only)
+// GET all login accounts (admin, vendor, employee, supplier)
 router.get('/', protect, adminOnly, asyncHandler(async (req, res) => {
   const users = await AdminUser.find()
     .select('-password -__v')
@@ -214,6 +216,7 @@ router.delete('/:id', protect, adminOnly, asyncHandler(async (req, res) => {
   await ProductVariant.deleteMany({ productId: { $in: productIds } });
   await Product.deleteMany({ vendorId: user._id });
   await Coupon.deleteMany({ vendorId: user._id });
+  await Supplier.updateMany({ userId: user._id }, { $unset: { userId: 1 } });
 
   await user.deleteOne();
 
@@ -231,7 +234,7 @@ router.post('/register', asyncHandler(async (req, res) => {
     });
   }
 
-  if (!['admin', 'vendor', 'branch_manager'].includes(role)) {
+  if (!['admin', 'vendor', 'branch_manager', 'supplier'].includes(role)) {
     return res.status(400).json({ success: false, message: 'Invalid role' });
   }
 
@@ -474,6 +477,10 @@ router.post('/verify-phone', asyncHandler(async (req, res) => {
   await user.save();
   delete otpStore[key];
 
+  if (user.role === 'supplier') {
+    await ensureSupplierLoginProfile(user);
+  }
+
   res.json({
     success: true,
     message: 'Phone verified. Awaiting admin approval.',
@@ -513,6 +520,10 @@ router.post('/login', asyncHandler(async (req, res) => {
       success: false,
       message: 'Account pending admin approval',
     });
+  }
+
+  if (user.role === 'supplier') {
+    await ensureSupplierLoginProfile(user);
   }
 
   const token = user.generateToken();

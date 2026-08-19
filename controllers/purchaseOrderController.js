@@ -25,12 +25,20 @@ exports.createPurchaseOrder = asyncHandler(async (req, res) => {
 });
 
 exports.getPurchaseOrders = asyncHandler(async (req, res) => {
-    const result = await purchaseOrderService.getPurchaseOrders(req.query);
+    const query = { ...req.query };
+    if (req.linkedSupplier) {
+        query.supplierId = String(req.linkedSupplier._id);
+    }
+    const result = await purchaseOrderService.getPurchaseOrders(query);
     return success(res, "Purchase orders retrieved successfully.", result);
 });
 
 exports.getPurchaseOrderStats = asyncHandler(async (req, res) => {
-    const stats = await purchaseOrderService.getPurchaseOrderStats();
+    const query = { ...req.query };
+    if (req.linkedSupplier) {
+        query.supplierId = String(req.linkedSupplier._id);
+    }
+    const stats = await purchaseOrderService.getPurchaseOrderStats(query);
     return success(res, "Purchase order stats retrieved successfully.", stats);
 });
 
