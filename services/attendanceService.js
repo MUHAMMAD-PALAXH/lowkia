@@ -1,5 +1,7 @@
 const mongoose = require("mongoose");
 const Attendance = require("../model/attendance");
+const Employee = require("../model/employee");
+const Branch = require("../model/branch");
 const Leave = require("../model/leave");
 const Shift = require("../model/shift");
 const { generateAttendanceCode } = require("./codeGenerator");
@@ -81,6 +83,54 @@ const branchNameOf = (branch) => {
     return "";
 };
 
+/** Normalize populated refs / ObjectIds / strings to ObjectId. */
+const refId = (value) => {
+    if (!value) return null;
+    if (value instanceof mongoose.Types.ObjectId) return value;
+    if (typeof value === "object" && value._id != null) return refId(value._id);
+    if (typeof value === "string" && mongoose.Types.ObjectId.isValid(value)) {
+        return new mongoose.Types.ObjectId(value);
+    }
+    return null;
+};
+
+/**
+ * Resolve employee branch even when populate dropped the id (deleted branch, etc.).
+ */
+const resolveEmployeeBranch = async (employee) => {
+    let branchId = refId(employee.branchId);
+    if (!branchId) {
+        const snap = await Employee.findById(employee._id)
+            .select("branchId")
+            .lean();
+        branchId = refId(snap?.branchId);
+    }
+    if (!branchId) {
+        throw new AppError(
+            "Employee has no branch assigned. Open Setup → Employees and assign a branch.",
+            400
+        );
+    }
+
+    let branch =
+        employee.branchId &&
+        typeof employee.branchId === "object" &&
+        (employee.branchId.name || employee.branchId.branchName)
+            ? employee.branchId
+            : null;
+    if (!branch || !branchNameOf(branch)) {
+        branch = await Branch.findOne({ _id: branchId, ...NOT_DELETED }).lean();
+    }
+    if (!branch) {
+        throw new AppError(
+            "Employee branch is missing or inactive. Reassign branch in Setup → Employees.",
+            400
+        );
+    }
+
+    return { branchId, branch };
+};
+
 const loadContext = async (user) => {
     const employee = await resolveEmployeeFromUser(user, { requireActive: true });
     const timezone = await settingsService.getTimezone();
@@ -119,9 +169,20 @@ const loadContext = async (user) => {
         };
     }
 
-    const branch = employee.branchId;
+    const { branchId, branch } = await resolveEmployeeBranch(employee);
 
-    return { employee, timezone, policy, now, workDate, weekday, attendanceDate, shift, branch };
+    return {
+        employee,
+        timezone,
+        policy,
+        now,
+        workDate,
+        weekday,
+        attendanceDate,
+        shift,
+        branch,
+        branchId
+    };
 };
 
 const findApprovedLeave = async (employeeId, workDateStr, timezone) => {
@@ -375,13 +436,15 @@ const populateAttendance = (q) =>
  */
 const getMyEmployee = async (user) => {
     const employee = await resolveEmployeeFromUser(user, { requireActive: false });
+    const { branchId, branch } = await resolveEmployeeBranch(employee);
     return {
         id: employee._id,
         employeeCode: employee.employeeCode,
         fullName:
             employee.fullName ||
             `${employee.firstName || ""} ${employee.lastName || ""}`.trim(),
-        branchName: branchNameOf(employee.branchId),
+        branchId,
+        branchName: branchNameOf(branch),
         isActive: employee.isActive !== false,
         employmentStatus: employee.employmentStatus || "Active"
     };
@@ -401,7 +464,8 @@ const getMyToday = async (user) => {
         attendanceDate,
         timezone,
         now,
-        branch
+        branch,
+        branchId
     } = ctx;
 
     const attendance = await findTodayAttendance(
@@ -422,7 +486,7 @@ const getMyToday = async (user) => {
     const weeklyOff = isWeeklyOff(shift, policy, weekday);
     const holiday = await holidayService.findHolidayForWorkDate(
         workDate,
-        employee.branchId?._id || employee.branchId,
+        branchId,
         employee._id
     );
 
@@ -435,12 +499,12 @@ const getMyToday = async (user) => {
             id: employee._id,
             employeeCode: employee.employeeCode,
             fullName: employee.fullName || `${employee.firstName} ${employee.lastName}`,
-            branchId: employee.branchId?._id || employee.branchId,
-            branchName: branchNameOf(employee.branchId)
+            branchId,
+            branchName: branchNameOf(branch)
         },
         branch: {
-            id: branch?._id || employee.branchId?._id || null,
-            name: branchNameOf(branch || employee.branchId)
+            id: branchId,
+            name: branchNameOf(branch)
         },
         shift: {
             id: shift._id || null,
@@ -515,7 +579,8 @@ const checkIn = async (user, payload = {}, meta = {}) => {
         attendanceDate,
         timezone,
         now,
-        branch
+        branch,
+        branchId
     } = ctx;
 
     const existing = await findTodayAttendance(
@@ -545,7 +610,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
 
     const holiday = await holidayService.findHolidayForWorkDate(
         workDate,
-        employee.branchId?._id || employee.branchId,
+        branchId,
         employee._id
     );
     if (holiday && !policy.allowCheckInOnHoliday) {
@@ -574,7 +639,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     const attendanceCode = await generateAttendanceCode();
     const doc = existing || new Attendance({});
 
-    doc.branchId = employee.branchId?._id || employee.branchId;
+    doc.branchId = branchId;
     doc.departmentId = employee.departmentId?._id || employee.departmentId || null;
     doc.designationId =
         employee.designationId?._id || employee.designationId || null;
