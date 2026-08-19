@@ -30,6 +30,7 @@ router.use(protect, blockVendor);
 
 // ---- Employee self ----
 router.get("/me/today", controller.getMyToday);
+router.get("/me/employee", controller.getMyEmployee);
 router.get("/me", historyValidator, validate, controller.getMyHistory);
 router.get(
     "/me/monthly-summary",

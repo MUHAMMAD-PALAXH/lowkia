@@ -1,5 +1,8 @@
 const ActivityLog = require("../model/activityLog");
 const { generateActivityLogCode } = require("./codeGenerator");
+const { applyBranchScopeFilter } = require("../middleware/hrAccess");
+
+const NOT_DELETED = { isDeleted: { $ne: true } };
 
 /**
  * Best-effort audit writer using existing ActivityLog model.
@@ -68,4 +71,41 @@ const writeActivityLog = async ({
     }
 };
 
-module.exports = { writeActivityLog };
+const listAttendanceAudit = async (query = {}, managedBranchIds = null) => {
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 50, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const filter = {
+        module: "Attendance",
+        ...NOT_DELETED
+    };
+
+    if (query.activityType) filter.activityType = query.activityType;
+    if (query.subModule) filter.subModule = query.subModule;
+    if (query.userId) filter.userId = query.userId;
+    if (query.referenceId) filter.referenceId = query.referenceId;
+
+    applyBranchScopeFilter(filter, managedBranchIds, query.branchId);
+
+    const [items, total] = await Promise.all([
+        ActivityLog.find(filter)
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        ActivityLog.countDocuments(filter)
+    ]);
+
+    return {
+        items,
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit) || 0
+        }
+    };
+};
+
+module.exports = { writeActivityLog, listAttendanceAudit };

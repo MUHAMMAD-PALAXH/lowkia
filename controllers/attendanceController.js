@@ -17,6 +17,11 @@ exports.getMyToday = asyncHandler(async (req, res) => {
     return success(res, "Today's attendance retrieved.", data);
 });
 
+exports.getMyEmployee = asyncHandler(async (req, res) => {
+    const data = await attendanceService.getMyEmployee(req.user);
+    return success(res, "Employee profile linked.", data);
+});
+
 exports.checkIn = asyncHandler(async (req, res) => {
     const doc = await attendanceService.checkIn(
         req.user,

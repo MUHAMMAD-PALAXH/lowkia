@@ -52,6 +52,27 @@ const sumBreakMinutes = (breaks = [], now = new Date()) => {
 const getActiveBreak = (breaks = []) =>
     (breaks || []).find((b) => b.startTime && !b.endTime) || null;
 
+const saveAttendanceDoc = async (doc) => {
+    try {
+        await doc.save();
+    } catch (err) {
+        if (err?.code === 11000) {
+            throw new AppError(
+                "Attendance record already exists for this workday.",
+                409
+            );
+        }
+        if (err?.name === "ValidationError") {
+            const msg = Object.values(err.errors || {})
+                .map((e) => e.message)
+                .filter(Boolean)
+                .join(" ");
+            throw new AppError(msg || "Invalid attendance data.", 400);
+        }
+        throw err;
+    }
+};
+
 const branchNameOf = (branch) => {
     if (!branch) return "";
     if (typeof branch === "object") {
@@ -350,6 +371,23 @@ const populateAttendance = (q) =>
         .populate("policyId", "policyCode policyName gracePeriodMinutes");
 
 /**
+ * Lightweight employee link probe for self-service punch screens.
+ */
+const getMyEmployee = async (user) => {
+    const employee = await resolveEmployeeFromUser(user, { requireActive: false });
+    return {
+        id: employee._id,
+        employeeCode: employee.employeeCode,
+        fullName:
+            employee.fullName ||
+            `${employee.firstName || ""} ${employee.lastName || ""}`.trim(),
+        branchName: branchNameOf(employee.branchId),
+        isActive: employee.isActive !== false,
+        employmentStatus: employee.employmentStatus || "Active"
+    };
+};
+
+/**
  * Today's attendance card for Flutter (employee self).
  */
 const getMyToday = async (user) => {
@@ -586,7 +624,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     doc.isDeleted = false;
 
     recomputeDurations(doc, { shift, policy, now });
-    await doc.save();
+    await saveAttendanceDoc(doc);
 
     // Touch employee lastAttendance if field exists
     try {
@@ -672,7 +710,7 @@ const checkOut = async (user, payload = {}, meta = {}) => {
     const { applyAutoApprovedOvertime } = require("./overtimeService");
     applyAutoApprovedOvertime(doc, policy);
     doc.markModified("breaks");
-    await doc.save();
+    await saveAttendanceDoc(doc);
 
     await writeActivityLog({
         user,
@@ -732,7 +770,7 @@ const startBreak = async (user, payload = {}, meta = {}) => {
     doc.updatedBy = user._id;
     recomputeDurations(doc, { shift, policy, now });
     doc.markModified("breaks");
-    await doc.save();
+    await saveAttendanceDoc(doc);
 
     await writeActivityLog({
         user,
@@ -775,7 +813,7 @@ const endBreak = async (user, meta = {}) => {
     doc.updatedBy = user._id;
     recomputeDurations(doc, { shift, policy, now });
     doc.markModified("breaks");
-    await doc.save();
+    await saveAttendanceDoc(doc);
 
     await writeActivityLog({
         user,
@@ -996,6 +1034,7 @@ const getAttendanceById = async (id, managedBranchIds = null) => {
 };
 
 module.exports = {
+    getMyEmployee,
     getMyToday,
     checkIn,
     checkOut,
