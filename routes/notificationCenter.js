@@ -260,4 +260,42 @@ router.patch(
     })
 );
 
+router.post(
+    "/archive-bulk",
+    asyncHandler(async (req, res) => {
+        const ids = req.body.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "No notification ids provided.",
+                data: null,
+            });
+        }
+        const validIds = ids
+            .filter((id) => mongoose.isValidObjectId(id))
+            .map((id) => new mongoose.Types.ObjectId(id));
+        if (validIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "No valid notification ids provided.",
+                data: null,
+            });
+        }
+        const query = {
+            _id: { $in: validIds },
+            ...visibilityQuery(req),
+        };
+        const result = await NotificationCenterEvent.updateMany(query, {
+            $addToSet: {
+                archivedBy: { userId: req.user._id, at: new Date() },
+            },
+        });
+        res.json({
+            success: true,
+            message: `${result.modifiedCount} notification(s) archived.`,
+            data: { archived: result.modifiedCount },
+        });
+    })
+);
+
 module.exports = router;
