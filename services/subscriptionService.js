@@ -248,6 +248,11 @@ const markSubscriptionPaid = async (
         paymentNote = "",
         paymentMethod = "manual",
         extendFromNow = true,
+        paidAt = null,
+        bankName = "",
+        transactionRef = "",
+        payerName = "",
+        chequeNumber = "",
     } = {}
 ) => {
     const sub = await CompanySubscription.findOne({
@@ -257,6 +262,33 @@ const markSubscriptionPaid = async (
     if (!sub) throw new AppError("Subscription not found.", 404);
 
     const now = new Date();
+    const paidWhen = paidAt ? new Date(paidAt) : now;
+    if (Number.isNaN(paidWhen.getTime())) {
+        throw new AppError("Invalid paidAt date.", 400);
+    }
+
+    const method = [
+        "manual",
+        "bank_transfer",
+        "cash",
+        "cheque",
+        "card",
+        "other",
+        "gateway",
+    ].includes(String(paymentMethod || "").toLowerCase())
+        ? String(paymentMethod).toLowerCase()
+        : "manual";
+
+    if (method === "bank_transfer") {
+        const ref = String(transactionRef || "").trim();
+        if (!ref) {
+            throw new AppError(
+                "Bank transaction reference is required for bank transfer.",
+                400
+            );
+        }
+    }
+
     const periodStart = extendFromNow
         ? now
         : sub.currentPeriodStart || now;
@@ -264,18 +296,16 @@ const markSubscriptionPaid = async (
 
     sub.paymentStatus = "paid";
     sub.status = "active";
-    sub.paidAt = now;
+    sub.paidAt = paidWhen;
     sub.paidBy = actor?._id || null;
-    sub.paymentMethod = [
-        "manual",
-        "bank_transfer",
-        "cash",
-        "other",
-        "gateway",
-    ].includes(paymentMethod)
-        ? paymentMethod
-        : "manual";
+    sub.paymentMethod = method;
     if (paymentNote) sub.paymentNote = String(paymentNote).trim();
+    sub.bankPayment = {
+        bankName: String(bankName || "").trim(),
+        transactionRef: String(transactionRef || "").trim(),
+        payerName: String(payerName || "").trim(),
+        chequeNumber: String(chequeNumber || "").trim(),
+    };
     sub.currentPeriodStart = periodStart;
     sub.currentPeriodEnd = periodEnd;
     sub.updatedBy = actor?._id || sub.updatedBy;
@@ -294,14 +324,21 @@ const markSubscriptionPaid = async (
         activityType: "Update",
         module: "Platform",
         subModule: "MarkPaid",
-        description: `Marked subscription ${sub.subscriptionNumber} paid for ${company.companyCode}`,
+        description: `Marked subscription ${sub.subscriptionNumber} paid for ${company.companyCode}${
+            method === "bank_transfer" && transactionRef
+                ? ` (bank ref ${String(transactionRef).trim()})`
+                : ""
+        }`,
         shortDescription: `Mark paid ${sub.subscriptionNumber}`,
         referenceType: "CompanySubscription",
         referenceId: sub._id,
         newData: {
             paymentStatus: "paid",
+            paymentMethod: method,
             periodEnd,
             amountMinor: sub.amountMinor,
+            bankPayment: sub.bankPayment,
+            paidAt: paidWhen,
         },
         securityLevel: "High",
     });

@@ -116,6 +116,14 @@ exports.markPaid = asyncHandler(async (req, res) => {
         paymentNote: req.body?.paymentNote || "",
         paymentMethod: req.body?.paymentMethod || "manual",
         extendFromNow: req.body?.extendFromNow !== false,
+        paidAt: req.body?.paidAt || null,
+        bankName: req.body?.bankName || "",
+        transactionRef:
+            req.body?.transactionRef ||
+            req.body?.bankTransactionRef ||
+            "",
+        payerName: req.body?.payerName || "",
+        chequeNumber: req.body?.chequeNumber || "",
     });
     return success(res, "Subscription marked paid", sub);
 });

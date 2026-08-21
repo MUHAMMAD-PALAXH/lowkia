@@ -74,8 +74,24 @@ const companySubscriptionSchema = new mongoose.Schema(
         paymentNote: { type: String, default: "", trim: true },
         paymentMethod: {
             type: String,
-            enum: ["manual", "bank_transfer", "cash", "other", "gateway"],
+            enum: [
+                "manual",
+                "bank_transfer",
+                "cash",
+                "cheque",
+                "card",
+                "other",
+                "gateway",
+            ],
             default: "manual",
+        },
+
+        /** Bank transfer / cheque reference (V1 manual verification). */
+        bankPayment: {
+            bankName: { type: String, default: "", trim: true },
+            transactionRef: { type: String, default: "", trim: true },
+            payerName: { type: String, default: "", trim: true },
+            chequeNumber: { type: String, default: "", trim: true },
         },
 
         cancelledAt: { type: Date, default: null },
