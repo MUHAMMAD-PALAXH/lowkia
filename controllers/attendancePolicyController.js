@@ -7,23 +7,30 @@ const getActorId = (req) => req.user?._id || null;
 exports.createPolicy = asyncHandler(async (req, res) => {
     const doc = await attendancePolicyService.createPolicy(
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Attendance policy created.", doc, 201);
 });
 
 exports.getPolicies = asyncHandler(async (req, res) => {
-    const result = await attendancePolicyService.getPolicies(req.query);
+    const result = await attendancePolicyService.getPolicies(
+        req.query,
+        req.companyId
+    );
     return success(res, "Attendance policies retrieved.", result);
 });
 
 exports.getDefaultPolicy = asyncHandler(async (req, res) => {
-    const doc = await attendancePolicyService.getActiveOrDefault();
+    const doc = await attendancePolicyService.getActiveOrDefault(req.companyId);
     return success(res, "Default attendance policy retrieved.", doc);
 });
 
 exports.getPolicyById = asyncHandler(async (req, res) => {
-    const doc = await attendancePolicyService.getPolicyById(req.params.id);
+    const doc = await attendancePolicyService.getPolicyById(
+        req.params.id,
+        req.companyId
+    );
     return success(res, "Attendance policy retrieved.", doc);
 });
 
@@ -31,7 +38,8 @@ exports.updatePolicy = asyncHandler(async (req, res) => {
     const doc = await attendancePolicyService.updatePolicy(
         req.params.id,
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Attendance policy updated.", doc);
 });
@@ -39,7 +47,8 @@ exports.updatePolicy = asyncHandler(async (req, res) => {
 exports.setDefault = asyncHandler(async (req, res) => {
     const doc = await attendancePolicyService.setDefault(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Default attendance policy set.", doc);
 });
@@ -47,7 +56,8 @@ exports.setDefault = asyncHandler(async (req, res) => {
 exports.deletePolicy = asyncHandler(async (req, res) => {
     const doc = await attendancePolicyService.deletePolicy(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Attendance policy moved to trash.", doc);
 });
@@ -55,14 +65,16 @@ exports.deletePolicy = asyncHandler(async (req, res) => {
 exports.restorePolicy = asyncHandler(async (req, res) => {
     const doc = await attendancePolicyService.restorePolicy(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Attendance policy restored.", doc);
 });
 
 exports.permanentDeletePolicy = asyncHandler(async (req, res) => {
     const result = await attendancePolicyService.permanentDeletePolicy(
-        req.params.id
+        req.params.id,
+        req.companyId
     );
     return success(res, "Attendance policy permanently deleted.", result);
 });

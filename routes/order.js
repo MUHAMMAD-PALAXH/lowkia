@@ -8,30 +8,37 @@ const router = express.Router();
 const Order = require('../model/order');
 const Product = require('../model/product');
 const ProductVariant = require('../model/productVariant');
-const Settings = require('../model/settings'); // ← NEW
+const Settings = require('../model/settings');
 
 const mongoose = require('mongoose');
+const { protect } = require('../middleware/auth');
+const { resolveTenant, requireCompany } = require('../middleware/tenant');
+const { companyFilter, stampCompany } = require('../utils/tenantScope');
+const { assertDocumentCompany } = require('../services/companyService');
+
+router.use(protect, resolveTenant, requireCompany);
 
 // ────────────────────────────────────────────────
-// Helper: Get or initialize global settings document
+// Helper: Get or initialize company settings document
 // ────────────────────────────────────────────────
-async function getGlobalSettings() {
-  let settings = await Settings.findOne({ key: 'global' });
+async function getCompanySettings(companyId) {
+  const tenant = companyFilter(companyId);
+  let settings = await Settings.findOne({ key: 'global', ...tenant });
   if (!settings) {
-    settings = await Settings.create({ key: 'global' });
+    settings = await Settings.create(stampCompany({ key: 'global' }, companyId));
   }
   return settings;
 }
 
 // ────────────────────────────────────────────────
-// SALES TARGET ENDPOINTS (admin only – add auth middleware later)
+// SALES TARGET ENDPOINTS
 // ────────────────────────────────────────────────
 
 /**
  * GET /orders/admin/sales-targets
  */
 router.get('/admin/sales-targets', asyncHandler(async (req, res) => {
-  const settings = await getGlobalSettings();
+  const settings = await getCompanySettings(req.companyId);
   res.json({
     success: true,
     data: settings.salesTargets
@@ -43,7 +50,7 @@ router.get('/admin/sales-targets', asyncHandler(async (req, res) => {
  */
 router.put('/admin/sales-targets', asyncHandler(async (req, res) => {
   const { daily, weekly, monthly, yearly } = req.body;
-  const settings = await getGlobalSettings();
+  const settings = await getCompanySettings(req.companyId);
 
   if (daily !== undefined)    settings.salesTargets.daily    = Number(daily);
   if (weekly !== undefined)   settings.salesTargets.weekly   = Number(weekly);
@@ -64,6 +71,7 @@ router.put('/admin/sales-targets', asyncHandler(async (req, res) => {
 
 router.get('/admin/analytics', asyncHandler(async (req, res) => {
   const { period = 'month' } = req.query;
+  const tenant = companyFilter(req.companyId);
 
   let currentStart = new Date();
 
@@ -84,9 +92,8 @@ router.get('/admin/analytics', asyncHandler(async (req, res) => {
       currentStart = new Date(0);
   }
 
-  const currentMatch = { orderDate: { $gte: currentStart } };
+  const currentMatch = { ...tenant, orderDate: { $gte: currentStart } };
 
-  // Top 5 products
   const topProducts = await Order.aggregate([
     {
       $match: {
@@ -107,7 +114,6 @@ router.get('/admin/analytics', asyncHandler(async (req, res) => {
     { $limit: 5 }
   ]);
 
-  // Main summary stats
   const stats = await Order.aggregate([
     { $match: currentMatch },
     {
@@ -136,7 +142,6 @@ router.get('/admin/analytics', asyncHandler(async (req, res) => {
 
   const currentRevenue = summary.deliveredRevenue;
 
-  // Previous period for change %
   let prevStart = new Date(currentStart);
 
   switch (period) {
@@ -147,7 +152,7 @@ router.get('/admin/analytics', asyncHandler(async (req, res) => {
     default:      prevStart = new Date(0);
   }
 
-  const prevMatch = { orderDate: { $gte: prevStart, $lt: currentStart } };
+  const prevMatch = { ...tenant, orderDate: { $gte: prevStart, $lt: currentStart } };
 
   const prevAgg = await Order.aggregate([
     { $match: prevMatch },
@@ -164,8 +169,7 @@ router.get('/admin/analytics', asyncHandler(async (req, res) => {
   const prevRevenue = prevAgg[0]?.prevRevenue || 0;
   const changePercent = prevRevenue > 0 ? ((currentRevenue - prevRevenue) / prevRevenue) * 100 : 0;
 
-  // Current period target
-  const settings = await getGlobalSettings();
+  const settings = await getCompanySettings(req.companyId);
   const targetForPeriod = Number(settings.salesTargets?.[period] || 0);
 
   res.json({
@@ -187,6 +191,7 @@ router.get('/admin/analytics', asyncHandler(async (req, res) => {
 
 router.get('/daily-profit-by-status', asyncHandler(async (req, res) => {
   const { period = 'month' } = req.query;
+  const tenant = companyFilter(req.companyId);
 
   let startDate = new Date();
   let dateFormat = '%Y-%m-%d';
@@ -203,7 +208,7 @@ router.get('/daily-profit-by-status', asyncHandler(async (req, res) => {
   }
 
   const aggregated = await Order.aggregate([
-    { $match: { orderDate: { $gte: startDate } } },
+    { $match: { ...tenant, orderDate: { $gte: startDate } } },
     {
       $group: {
         _id: { $dateToString: { format: dateFormat, date: '$orderDate' } },
@@ -246,12 +251,13 @@ router.get('/daily-profit-by-status', asyncHandler(async (req, res) => {
 }));
 
 // ────────────────────────────────────────────────
-// STANDARD CRUD ROUTES (unchanged)
+// STANDARD CRUD ROUTES
 // ────────────────────────────────────────────────
 
 router.get('/', asyncHandler(async (req, res) => {
   const { userId } = req.query;
-  const filter = userId ? { userID: userId } : {};
+  const tenant = companyFilter(req.companyId);
+  const filter = userId ? { userID: userId, ...tenant } : { ...tenant };
 
   let orders = await Order.find(filter)
     .populate('userID', 'name email')
@@ -262,7 +268,7 @@ router.get('/', asyncHandler(async (req, res) => {
   for (const order of orders) {
     for (const item of order.items) {
       if (item.productID && mongoose.isValidObjectId(item.productID)) {
-        const product = await Product.findById(item.productID).select('images').lean();
+        const product = await Product.findOne({ _id: item.productID, ...tenant }).select('images').lean();
         item.image = product?.images?.[0]?.url || null;
       } else {
         item.image = null;
@@ -274,7 +280,8 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {
-  const order = await Order.findById(req.params.id)
+  const tenant = companyFilter(req.companyId);
+  const order = await Order.findOne({ _id: req.params.id, ...tenant })
     .populate('userID', 'name email')
     .populate('couponCode', 'couponCode')
     .lean();
@@ -283,7 +290,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
   for (const item of order.items) {
     if (item.productID && mongoose.isValidObjectId(item.productID)) {
-      const product = await Product.findById(item.productID).select('images').lean();
+      const product = await Product.findOne({ _id: item.productID, ...tenant }).select('images').lean();
       item.image = product?.images?.[0]?.url || null;
     }
   }
@@ -311,24 +318,25 @@ router.post('/', asyncHandler(async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing required fields' });
     }
 
+    const tenant = companyFilter(req.companyId);
     const bulkOps = [];
     for (const item of items) {
-      const variant = await ProductVariant.findById(item.productVariantID).session(session);
+      const variant = await ProductVariant.findOne({ _id: item.productVariantID, ...tenant }).session(session);
       if (!variant || variant.quantity < item.quantity) {
         throw new Error(`Stock insufficient for ${item.productName || 'item'}`);
       }
       bulkOps.push({
         updateOne: {
-          filter: { _id: variant._id },
+          filter: { _id: variant._id, ...tenant },
           update: { $inc: { quantity: -item.quantity } }
         }
       });
     }
 
-    const order = new Order({
+    const order = new Order(stampCompany({
       userID, items, totalPrice, orderTotal, shippingAddress, paymentMethod, couponCode, branchId,
       orderStatus: 'pending'
-    });
+    }, req.companyId));
 
     await order.save({ session });
     if (bulkOps.length) await ProductVariant.bulkWrite(bulkOps, { session });
@@ -350,7 +358,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
   }
 
   const ItemTrack = require('../model/itemTrack');
-  const order = await Order.findById(req.params.id);
+  const tenant = companyFilter(req.companyId);
+  const order = await Order.findOne({ _id: req.params.id, ...tenant });
   if (!order) {
     return res.status(404).json({ success: false, message: 'Order not found' });
   }
@@ -359,7 +368,6 @@ router.put('/:id', asyncHandler(async (req, res) => {
   order.orderStatus = orderStatus;
   if (trackingUrl !== undefined) order.trackingUrl = trackingUrl;
 
-  // Persist per-line IMEIs when admin assigns them during fulfillment
   if (Array.isArray(items) && items.length) {
     for (const incoming of items) {
       const key = String(incoming.sId || incoming.productID || '');
@@ -375,7 +383,6 @@ router.put('/:id', asyncHandler(async (req, res) => {
     order.markModified('items');
   }
 
-  // On deliver: validate IMEI count for lines that have IMEIs and mark ItemTrack sold
   if (orderStatus === 'delivered' && previousStatus !== 'delivered') {
     const allImeis = [];
     for (const item of order.items || []) {
@@ -394,7 +401,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
       const unique = [...new Set(allImeis)];
       const available = await ItemTrack.find({
         imei: { $in: unique },
-        status: 'available'
+        status: 'available',
+        ...tenant
       });
       if (available.length !== unique.length) {
         const found = available.map((t) => t.imei);
@@ -406,7 +414,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
       }
 
       await ItemTrack.updateMany(
-        { imei: { $in: unique } },
+        { imei: { $in: unique }, ...tenant },
         {
           $set: {
             status: 'sold',
@@ -430,7 +438,10 @@ router.put('/:id', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/:id', asyncHandler(async (req, res) => {
-  const order = await Order.findByIdAndDelete(req.params.id);
+  const order = await Order.findOneAndDelete({
+    _id: req.params.id,
+    ...companyFilter(req.companyId)
+  });
   if (!order) return res.status(404).json({ success: false, message: 'Not found' });
   res.json({ success: true, message: 'Deleted' });
 }));

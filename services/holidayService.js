@@ -5,6 +5,8 @@ const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const settingsService = require("./settingsService");
 const { eachWorkDate } = require("../utils/workDates");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -25,7 +27,8 @@ const PROTECTED = [
     "deletedBy",
     "createdBy",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "companyId"
 ];
 
 const escapeRegex = (value = "") =>
@@ -45,12 +48,13 @@ const pickFields = (payload = {}) => {
     return data;
 };
 
-const buildWorkDates = async (startDate, endDate) => {
-    const timezone = await settingsService.getTimezone();
+const buildWorkDates = async (startDate, endDate, companyId = null) => {
+    const timezone = await settingsService.getTimezone(companyId);
     return eachWorkDate(startDate, endDate, timezone);
 };
 
-const createHoliday = async (payload = {}, actorId = null) => {
+const createHoliday = async (payload = {}, actorId = null, companyId = null) => {
+    companyFilter(companyId);
     const data = pickFields(payload);
     const holidayName = String(data.holidayName || "").trim();
     if (!holidayName) throw new AppError("Holiday name is required.", 400);
@@ -67,7 +71,7 @@ const createHoliday = async (payload = {}, actorId = null) => {
         throw new AppError("End date cannot be before start date.", 400);
     }
 
-    const workDates = await buildWorkDates(startDate, endDate);
+    const workDates = await buildWorkDates(startDate, endDate, companyId);
     const holidayCode = await generateHolidayCode();
     const applicableBranchIds = Array.isArray(data.applicableBranchIds)
         ? data.applicableBranchIds.map(toObjectId).filter(Boolean)
@@ -76,17 +80,22 @@ const createHoliday = async (payload = {}, actorId = null) => {
         ? data.applicableEmployeeIds.map(toObjectId).filter(Boolean)
         : [];
 
-    const doc = await Holiday.create({
-        ...data,
-        holidayName,
-        holidayCode,
-        startDate,
-        endDate,
-        workDates,
-        applicableBranchIds,
-        applicableEmployeeIds,
-        createdBy: actorId || null
-    });
+    const doc = await Holiday.create(
+        stampCompany(
+            {
+                ...data,
+                holidayName,
+                holidayCode,
+                startDate,
+                endDate,
+                workDates,
+                applicableBranchIds,
+                applicableEmployeeIds,
+                createdBy: actorId || null
+            },
+            companyId
+        )
+    );
 
     try {
         const { writeActivityLog } = require("./activityLogService");
@@ -114,12 +123,15 @@ const createHoliday = async (payload = {}, actorId = null) => {
     return doc;
 };
 
-const getHolidays = async (query = {}) => {
+const getHolidays = async (query = {}, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
 
     if (query.status) filter.status = query.status;
     if (query.year) {
@@ -157,23 +169,25 @@ const getHolidays = async (query = {}) => {
     };
 };
 
-const getHolidayById = async (id) => {
-    const doc = await Holiday.findOne({ _id: id, ...NOT_DELETED });
+const getHolidayById = async (id, companyId = null) => {
+    const doc = await Holiday.findOne({
+        _id: id,
+        ...companyFilter(companyId),
+        ...NOT_DELETED
+    });
     if (!doc) throw new AppError("Holiday not found.", 404);
     return doc;
 };
 
-/**
- * Find active holiday covering workDate for an optional branch / employee.
- * Empty applicable* arrays mean "all".
- */
 const findHolidayForWorkDate = async (
     workDate,
     branchId = null,
-    employeeId = null
+    employeeId = null,
+    companyId = null
 ) => {
     if (!workDate) return null;
     const filter = {
+        ...companyFilter(companyId),
         ...NOT_DELETED,
         status: "Active",
         workDates: workDate
@@ -194,8 +208,8 @@ const findHolidayForWorkDate = async (
     return null;
 };
 
-const updateHoliday = async (id, payload = {}, actorId = null) => {
-    const doc = await getHolidayById(id);
+const updateHoliday = async (id, payload = {}, actorId = null, companyId = null) => {
+    const doc = await getHolidayById(id, companyId);
     const data = pickFields(payload);
 
     if (data.holidayName) data.holidayName = String(data.holidayName).trim();
@@ -208,7 +222,7 @@ const updateHoliday = async (id, payload = {}, actorId = null) => {
         }
         data.startDate = startDate;
         data.endDate = endDate;
-        data.workDates = await buildWorkDates(startDate, endDate);
+        data.workDates = await buildWorkDates(startDate, endDate, companyId);
     }
 
     if (data.applicableBranchIds) {
@@ -228,9 +242,22 @@ const updateHoliday = async (id, payload = {}, actorId = null) => {
     return doc;
 };
 
-const deleteHoliday = (id, actorId) => trash.softDelete(id, actorId);
-const restoreHoliday = (id, actorId) => trash.restore(id, actorId);
-const permanentDeleteHoliday = (id) => trash.permanentDelete(id);
+const deleteHoliday = async (id, actorId, companyId = null) => {
+    await getHolidayById(id, companyId);
+    return trash.softDelete(id, actorId);
+};
+const restoreHoliday = async (id, actorId, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await trash.restore(id, actorId);
+    assertDocumentCompany(doc, companyId, "Holiday");
+    return doc;
+};
+const permanentDeleteHoliday = async (id, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await Holiday.findOne({ _id: id, isDeleted: true });
+    assertDocumentCompany(doc, companyId, "Holiday");
+    return trash.permanentDelete(id);
+};
 
 module.exports = {
     createHoliday,

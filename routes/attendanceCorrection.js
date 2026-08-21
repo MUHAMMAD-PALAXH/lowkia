@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const { protect } = require("../middleware/auth");
+const { resolveTenant, requireCompany } = require("../middleware/tenant");
 const {
     attendanceAdminOnly,
     blockVendor,
@@ -22,7 +23,7 @@ const {
 } = require("../validators/attendanceCorrectionValidator");
 
 // Base: /api/attendance-corrections
-router.use(protect, blockVendor);
+router.use(protect, resolveTenant, requireCompany, blockVendor);
 
 // Employee
 router.get("/me", listValidator, validate, controller.getMyCorrections);

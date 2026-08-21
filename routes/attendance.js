@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const { protect } = require("../middleware/auth");
+const { resolveTenant, requireCompany } = require("../middleware/tenant");
 const {
     attendanceAdminOnly,
     blockVendor,
@@ -26,7 +27,7 @@ const {
 const { query } = require("express-validator");
 
 // Base: /api/attendances
-router.use(protect, blockVendor);
+router.use(protect, resolveTenant, requireCompany, blockVendor);
 
 // ---- Employee self ----
 router.get("/me/today", controller.getMyToday);

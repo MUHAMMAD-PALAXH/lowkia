@@ -4,6 +4,9 @@ const Attendance = require("../model/attendance");
 const Shift = require("../model/shift");
 const { generateAttendanceCorrectionCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { ensureUserCompany, assertDocumentCompany } = require("./companyService");
+
 const {
     createTrashOps,
     isTrashQuery,
@@ -83,6 +86,8 @@ const loadShiftAndPolicy = async (attendance) => {
 };
 
 const createCorrection = async (user, payload = {}, meta = {}) => {
+    const companyId = await ensureUserCompany(user);
+    const tenant = companyFilter(companyId);
     const employee = await resolveEmployeeFromUser(user);
     const attendanceId = toObjectId(payload.attendanceId);
     if (!attendanceId) {
@@ -107,6 +112,7 @@ const createCorrection = async (user, payload = {}, meta = {}) => {
 
     const attendance = await Attendance.findOne({
         _id: attendanceId,
+        ...tenant,
         ...NOT_DELETED
     });
     if (!attendance) throw new AppError("Attendance not found.", 404);
@@ -147,7 +153,7 @@ const createCorrection = async (user, payload = {}, meta = {}) => {
     }
 
     const correctionCode = await generateAttendanceCorrectionCode();
-    const doc = await AttendanceCorrection.create({
+    const doc = await AttendanceCorrection.create(stampCompany({
         correctionCode,
         branchId: attendance.branchId,
         employeeId: employee._id,
@@ -174,7 +180,7 @@ const createCorrection = async (user, payload = {}, meta = {}) => {
         status: "pending",
         oldValue: snapshotAttendance(attendance),
         createdBy: user._id
-    });
+    }, companyId));
 
     await writeActivityLog({
         user,
@@ -467,13 +473,16 @@ const cancelCorrection = async (id, user, { asAdmin = false } = {}, meta = {}) =
 const getCorrections = async (
     query = {},
     user = null,
-    { selfOnly = false, managedBranchIds = null } = {}
+    { selfOnly = false, managedBranchIds = null } = {},
+    companyIdArg = null
 ) => {
+    const companyId = companyIdArg || (user ? await ensureUserCompany(user) : null);
+    const tenant = companyFilter(companyId);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const filter = trashMode ? { isDeleted: true, ...tenant } : { ...NOT_DELETED, ...tenant };
 
     if (selfOnly && user) {
         const employee = await resolveEmployeeFromUser(user, {
@@ -536,9 +545,10 @@ const getCorrections = async (
     };
 };
 
-const getCorrectionById = async (id) => {
+const getCorrectionById = async (id, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const doc = await populateCorrection(
-        AttendanceCorrection.findOne({ _id: id, ...NOT_DELETED })
+        AttendanceCorrection.findOne({ _id: id, ...tenant, ...NOT_DELETED })
     );
     if (!doc) throw new AppError("Correction request not found.", 404);
     return doc;
@@ -616,7 +626,8 @@ const bulkRestoreCorrections = (payload, actorId = null) =>
     trash.bulkRestore(payload, actorId);
 const bulkPermanentDeleteCorrections = (payload) =>
     trash.bulkPermanentDelete(payload);
-const trashCount = () => trash.trashCount();
+const trashCount = async (companyId = null) =>
+    AttendanceCorrection.countDocuments({ isDeleted: true, ...companyFilter(companyId) });
 
 module.exports = {
     createCorrection,

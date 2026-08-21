@@ -13,6 +13,8 @@ const settingsService = require("./settingsService");
 const { resolveEmployeeFromUser } = require("../middleware/hrAccess");
 const { eachWorkDate } = require("../utils/workDates");
 const { startOfWorkDay, formatWeekday } = require("../utils/timezone");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { ensureUserCompany, assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -46,9 +48,13 @@ const populateLeave = (q) =>
 const syncLeaveToAttendance = async (leave, actorId = null) => {
     if (!leave || leave.approvalStatus !== "Approved") return leave;
 
-    const timezone = await settingsService.getTimezone();
+    const companyId = leave.companyId;
+    const timezone = await settingsService.getTimezone(companyId);
     const workDates = eachWorkDate(leave.startDate, leave.endDate, timezone);
-    const employee = await Employee.findById(leave.employeeId);
+    const employee = await Employee.findOne({
+        _id: leave.employeeId,
+        ...companyFilter(companyId)
+    });
     if (!employee) return leave;
 
     const recordIds = [...(leave.attendanceRecordIds || []).map(String)];
@@ -60,6 +66,7 @@ const syncLeaveToAttendance = async (leave, actorId = null) => {
         let att = await Attendance.findOne({
             employeeId: leave.employeeId,
             workDate,
+            ...companyFilter(companyId),
             ...NOT_DELETED
         });
 
@@ -67,6 +74,7 @@ const syncLeaveToAttendance = async (leave, actorId = null) => {
             att = await Attendance.findOne({
                 employeeId: leave.employeeId,
                 attendanceDate,
+                ...companyFilter(companyId),
                 ...NOT_DELETED
             });
         }
@@ -83,7 +91,9 @@ const syncLeaveToAttendance = async (leave, actorId = null) => {
         }
 
         if (!att) {
-            att = new Attendance({
+            att = new Attendance(
+                stampCompany(
+                    {
                 branchId: leave.branchId || employee.branchId,
                 departmentId: leave.departmentId || employee.departmentId,
                 designationId: employee.designationId,
@@ -107,7 +117,10 @@ const syncLeaveToAttendance = async (leave, actorId = null) => {
                 attendanceSource: "Manual",
                 createdBy: actorId || null,
                 updatedBy: actorId || null
-            });
+                    },
+                    companyId
+                )
+            );
         } else {
             att.attendanceStatus = "Leave";
             att.isLeave = true;
@@ -163,16 +176,25 @@ const unsyncLeaveAttendance = async (leave, actorId = null) => {
     return leave;
 };
 
-const createLeaveRequest = async (user, payload = {}, { asAdmin = false } = {}) => {
+const createLeaveRequest = async (
+    user,
+    payload = {},
+    { asAdmin = false } = {},
+    companyIdArg = null
+) => {
+    const companyId = companyIdArg || (await ensureUserCompany(user));
+    const tenant = companyFilter(companyId);
     let employee;
     if (asAdmin && payload.employeeId) {
         employee = await Employee.findOne({
             _id: payload.employeeId,
+            ...tenant,
             ...NOT_DELETED
         });
         if (!employee) throw new AppError("Employee not found.", 404);
     } else {
         employee = await resolveEmployeeFromUser(user);
+        assertDocumentCompany(employee, companyId, "Employee");
     }
 
     const leaveType = payload.leaveType;
@@ -192,6 +214,7 @@ const createLeaveRequest = async (user, payload = {}, { asAdmin = false } = {}) 
 
     // Overlap with another pending/approved leave
     const overlap = await Leave.findOne({
+        ...tenant,
         employeeId: employee._id,
         approvalStatus: { $in: ["Pending", "Approved"] },
         isDeleted: { $ne: true },
@@ -208,7 +231,9 @@ const createLeaveRequest = async (user, payload = {}, { asAdmin = false } = {}) 
     const leaveCategory =
         leaveType === "Unpaid Leave" ? "Unpaid" : payload.leaveCategory || "Paid";
 
-    const doc = await Leave.create({
+    const doc = await Leave.create(
+        stampCompany(
+            {
         branchId: employee.branchId,
         departmentId: employee.departmentId || null,
         employeeId: employee._id,
@@ -227,7 +252,10 @@ const createLeaveRequest = async (user, payload = {}, { asAdmin = false } = {}) 
         createdBy: user._id,
         // Optional code stored in notes prefix if schema has no leaveCode
         notes: payload.notes || `REF:${await generateLeaveCode()}`
-    });
+            },
+            companyId
+        )
+    );
 
     return populateLeave(Leave.findById(doc._id));
 };
@@ -235,13 +263,18 @@ const createLeaveRequest = async (user, payload = {}, { asAdmin = false } = {}) 
 const getLeaves = async (
     query = {},
     user = null,
-    { selfOnly = false, managedBranchIds = null } = {}
+    { selfOnly = false, managedBranchIds = null } = {},
+    companyIdArg = null
 ) => {
+    const companyId = companyIdArg || (user ? await ensureUserCompany(user) : null);
+    const tenant = companyFilter(companyId);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
 
     if (selfOnly && user) {
         const employee = await resolveEmployeeFromUser(user, {
@@ -298,16 +331,22 @@ const getLeaves = async (
     };
 };
 
-const getLeaveById = async (id) => {
+const getLeaveById = async (id, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const doc = await populateLeave(
-        Leave.findOne({ _id: id, ...NOT_DELETED })
+        Leave.findOne({ _id: id, ...tenant, ...NOT_DELETED })
     );
     if (!doc) throw new AppError("Leave request not found.", 404);
     return doc;
 };
 
-const approveLeave = async (id, user, comment = "") => {
-    const leave = await Leave.findOne({ _id: id, ...NOT_DELETED });
+const approveLeave = async (id, user, comment = "", companyIdArg = null) => {
+    const companyId = companyIdArg || (await ensureUserCompany(user));
+    const leave = await Leave.findOne({
+        _id: id,
+        ...companyFilter(companyId),
+        ...NOT_DELETED
+    });
     if (!leave) throw new AppError("Leave request not found.", 404);
     if (leave.approvalStatus !== "Pending") {
         throw new AppError(
@@ -343,11 +382,16 @@ const approveLeave = async (id, user, comment = "") => {
         securityLevel: "Sensitive"
     });
 
-    return getLeaveById(id);
+    return getLeaveById(id, companyId);
 };
 
-const rejectLeave = async (id, user, reason = "") => {
-    const leave = await Leave.findOne({ _id: id, ...NOT_DELETED });
+const rejectLeave = async (id, user, reason = "", companyIdArg = null) => {
+    const companyId = companyIdArg || (await ensureUserCompany(user));
+    const leave = await Leave.findOne({
+        _id: id,
+        ...companyFilter(companyId),
+        ...NOT_DELETED
+    });
     if (!leave) throw new AppError("Leave request not found.", 404);
     if (leave.approvalStatus !== "Pending") {
         throw new AppError(
@@ -370,11 +414,22 @@ const rejectLeave = async (id, user, reason = "") => {
     leave.notes = String(reason).trim();
     leave.updatedBy = user._id;
     await leave.save();
-    return getLeaveById(id);
+    return getLeaveById(id, companyId);
 };
 
-const cancelLeave = async (id, user, reason = "", { asAdmin = false } = {}) => {
-    const leave = await Leave.findOne({ _id: id, ...NOT_DELETED });
+const cancelLeave = async (
+    id,
+    user,
+    reason = "",
+    { asAdmin = false } = {},
+    companyIdArg = null
+) => {
+    const companyId = companyIdArg || (await ensureUserCompany(user));
+    const leave = await Leave.findOne({
+        _id: id,
+        ...companyFilter(companyId),
+        ...NOT_DELETED
+    });
     if (!leave) throw new AppError("Leave request not found.", 404);
 
     if (!asAdmin) {
@@ -406,19 +461,42 @@ const cancelLeave = async (id, user, reason = "", { asAdmin = false } = {}) => {
         await unsyncLeaveAttendance(leave, user._id);
     }
 
-    return getLeaveById(id);
+    return getLeaveById(id, companyId);
 };
 
-const deleteLeave = (id, actorId = null) => trash.softDelete(id, actorId);
-const restoreLeave = (id, actorId = null) => trash.restore(id, actorId);
-const permanentDeleteLeave = (id) => trash.permanentDelete(id);
-const bulkSoftDeleteLeaves = (payload, actorId = null) =>
-    trash.bulkSoftDelete(payload, actorId);
-const bulkRestoreLeaves = (payload, actorId = null) =>
-    trash.bulkRestore(payload, actorId);
-const bulkPermanentDeleteLeaves = (payload) =>
-    trash.bulkPermanentDelete(payload);
-const trashCount = () => trash.trashCount();
+const deleteLeave = async (id, actorId = null, companyId = null) => {
+    await getLeaveById(id, companyId);
+    return trash.softDelete(id, actorId);
+};
+const restoreLeave = async (id, actorId = null, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await trash.restore(id, actorId);
+    assertDocumentCompany(doc, companyId, "Leave");
+    return doc;
+};
+const permanentDeleteLeave = async (id, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await Leave.findOne({ _id: id, isDeleted: true });
+    assertDocumentCompany(doc, companyId, "Leave");
+    return trash.permanentDelete(id);
+};
+const bulkSoftDeleteLeaves = async (payload, actorId = null, companyId = null) => {
+    companyFilter(companyId);
+    return trash.bulkSoftDelete(payload, actorId);
+};
+const bulkRestoreLeaves = async (payload, actorId = null, companyId = null) => {
+    companyFilter(companyId);
+    return trash.bulkRestore(payload, actorId);
+};
+const bulkPermanentDeleteLeaves = async (payload, companyId = null) => {
+    companyFilter(companyId);
+    return trash.bulkPermanentDelete(payload);
+};
+const trashCount = async (companyId = null) =>
+    Leave.countDocuments({
+        isDeleted: true,
+        ...companyFilter(companyId)
+    });
 
 module.exports = {
     createLeaveRequest,

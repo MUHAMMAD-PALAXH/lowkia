@@ -5,6 +5,9 @@ const Shift = require("../model/shift");
 const Leave = require("../model/leave");
 const Branch = require("../model/branch");
 const AppError = require("../utils/appError");
+const { companyFilter } = require("../utils/tenantScope");
+const { ensureUserCompany } = require("./companyService");
+
 const settingsService = require("./settingsService");
 const attendancePolicyService = require("./attendancePolicyService");
 const {
@@ -98,9 +101,10 @@ const formatMinutes = (mins) => {
 /**
  * Owner daily dashboard for a work date.
  */
-const getDailyReport = async (query = {}, managedBranchIds = null) => {
-    const timezone = await settingsService.getTimezone();
-    const policy = await attendancePolicyService.getActiveOrDefault();
+const getDailyReport = async (query = {}, managedBranchIds = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const timezone = await settingsService.getTimezone(companyId);
+    const policy = await attendancePolicyService.getActiveOrDefault(companyId);
     const now = new Date();
     const workDate =
         query.date || query.workDate || formatWorkDate(now, timezone);
@@ -114,6 +118,7 @@ const getDailyReport = async (query = {}, managedBranchIds = null) => {
 
     const empFilter = {
         ...NOT_DELETED,
+        ...tenant,
         isActive: { $ne: false },
         employmentStatus: { $in: ["Active", "On Leave"] }
     };
@@ -154,12 +159,14 @@ const getDailyReport = async (query = {}, managedBranchIds = null) => {
             ? Attendance.find({
                   employeeId: { $in: employeeIds },
                   workDate,
+                  ...tenant,
                   ...NOT_DELETED
               }).lean()
             : Promise.resolve([]),
         employeeIds.length
             ? Leave.find({
                   employeeId: { $in: employeeIds },
+                  ...tenant,
                   approvalStatus: "Approved",
                   isDeleted: { $ne: true },
                   startDate: { $lte: dayEnd },
@@ -179,6 +186,7 @@ const getDailyReport = async (query = {}, managedBranchIds = null) => {
     // Prefetch holidays covering this workDate (avoid N+1)
     const Holiday = require("../model/holiday");
     const holidaysToday = await Holiday.find({
+        ...tenant,
         ...NOT_DELETED,
         status: "Active",
         workDates: workDate
@@ -365,8 +373,9 @@ const summarizeAttendanceRows = (rows = []) => {
 /**
  * Monthly report — per employee rows + optional single employee.
  */
-const getMonthlyReport = async (query = {}, managedBranchIds = null) => {
-    const timezone = await settingsService.getTimezone();
+const getMonthlyReport = async (query = {}, managedBranchIds = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const timezone = await settingsService.getTimezone(companyId);
     const now = new Date();
     const today = formatWorkDate(now, timezone);
     const year = Number(query.year) || Number(today.slice(0, 4));
@@ -375,6 +384,7 @@ const getMonthlyReport = async (query = {}, managedBranchIds = null) => {
 
     const empFilter = {
         ...NOT_DELETED,
+        ...tenant,
         isActive: { $ne: false }
     };
     const { applyBranchScopeFilter } = require("../middleware/hrAccess");
@@ -404,6 +414,7 @@ const getMonthlyReport = async (query = {}, managedBranchIds = null) => {
               employeeId: { $in: employeeIds },
               year,
               month,
+              ...tenant,
               ...NOT_DELETED
           }).lean()
         : [];
@@ -451,8 +462,8 @@ const getMonthlyReport = async (query = {}, managedBranchIds = null) => {
 /**
  * Branch rollup for a single work date (default today).
  */
-const getBranchReport = async (query = {}, managedBranchIds = null) => {
-    const daily = await getDailyReport(query, managedBranchIds);
+const getBranchReport = async (query = {}, managedBranchIds = null, companyId = null) => {
+    const daily = await getDailyReport(query, managedBranchIds, companyId);
     const byBranch = new Map();
 
     for (const row of daily.employees) {

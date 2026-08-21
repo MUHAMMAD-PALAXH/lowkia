@@ -21,9 +21,12 @@ exports.createMyCorrection = asyncHandler(async (req, res) => {
 });
 
 exports.getMyCorrections = asyncHandler(async (req, res) => {
-    const result = await correctionService.getCorrections(req.query, req.user, {
-        selfOnly: true
-    });
+    const result = await correctionService.getCorrections(
+        req.query,
+        req.user,
+        { selfOnly: true },
+        req.companyId
+    );
     return success(res, "My correction requests retrieved.", result);
 });
 
@@ -38,14 +41,20 @@ exports.cancelMyCorrection = asyncHandler(async (req, res) => {
 });
 
 exports.getCorrections = asyncHandler(async (req, res) => {
-    const result = await correctionService.getCorrections(req.query, req.user, {
-        managedBranchIds: req.managedBranchIds ?? null
-    });
+    const result = await correctionService.getCorrections(
+        req.query,
+        req.user,
+        { managedBranchIds: req.managedBranchIds ?? null },
+        req.companyId
+    );
     return success(res, "Correction requests retrieved.", result);
 });
 
 exports.getCorrectionById = asyncHandler(async (req, res) => {
-    const doc = await correctionService.getCorrectionById(req.params.id);
+    const doc = await correctionService.getCorrectionById(
+        req.params.id,
+        req.companyId
+    );
     return success(res, "Correction request retrieved.", doc);
 });
 
@@ -140,6 +149,6 @@ exports.bulkPermanentDeleteCorrections = asyncHandler(async (req, res) => {
 });
 
 exports.getTrashCount = asyncHandler(async (req, res) => {
-    const count = await correctionService.trashCount();
+    const count = await correctionService.trashCount(req.companyId);
     return success(res, "Correction trash count retrieved.", { count });
 });

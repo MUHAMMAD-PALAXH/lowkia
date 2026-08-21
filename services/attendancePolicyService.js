@@ -3,6 +3,8 @@ const { generateAttendancePolicyCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const settingsService = require("./settingsService");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -23,7 +25,8 @@ const PROTECTED = [
     "deletedBy",
     "createdBy",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "companyId"
 ];
 
 const escapeRegex = (value = "") =>
@@ -35,13 +38,18 @@ const pickFields = (payload = {}) => {
     return data;
 };
 
-const clearOtherDefaults = async (exceptId = null) => {
-    const filter = { isDefault: true, ...NOT_DELETED };
+const clearOtherDefaults = async (exceptId = null, companyId = null) => {
+    const filter = {
+        isDefault: true,
+        ...companyFilter(companyId),
+        ...NOT_DELETED
+    };
     if (exceptId) filter._id = { $ne: exceptId };
     await AttendancePolicy.updateMany(filter, { $set: { isDefault: false } });
 };
 
-const createPolicy = async (payload = {}, actorId = null) => {
+const createPolicy = async (payload = {}, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const data = pickFields(payload);
     const policyName = String(data.policyName || "").trim();
     if (!policyName) {
@@ -50,6 +58,7 @@ const createPolicy = async (payload = {}, actorId = null) => {
 
     const exists = await AttendancePolicy.findOne({
         policyName: { $regex: `^${escapeRegex(policyName)}$`, $options: "i" },
+        ...tenant,
         ...NOT_DELETED
     });
     if (exists) {
@@ -59,21 +68,29 @@ const createPolicy = async (payload = {}, actorId = null) => {
     const policyCode = await generateAttendancePolicyCode();
     const isDefault = data.isDefault === true;
 
-    if (isDefault) await clearOtherDefaults();
+    if (isDefault) await clearOtherDefaults(null, companyId);
 
-    const count = await AttendancePolicy.countDocuments(NOT_DELETED);
+    const count = await AttendancePolicy.countDocuments({
+        ...tenant,
+        ...NOT_DELETED
+    });
     const makeDefault = isDefault || count === 0;
 
-    const doc = await AttendancePolicy.create({
-        ...data,
-        policyName,
-        policyCode,
-        isDefault: makeDefault,
-        createdBy: actorId || null
-    });
+    const doc = await AttendancePolicy.create(
+        stampCompany(
+            {
+                ...data,
+                policyName,
+                policyCode,
+                isDefault: makeDefault,
+                createdBy: actorId || null
+            },
+            companyId
+        )
+    );
 
     if (makeDefault) {
-        const settings = await settingsService.getGlobalSettings();
+        const settings = await settingsService.getGlobalSettings(companyId);
         settings.defaultAttendancePolicyId = doc._id;
         await settings.save();
     }
@@ -81,16 +98,19 @@ const createPolicy = async (payload = {}, actorId = null) => {
     return doc;
 };
 
-const ensureDefaultPolicy = async (actorId = null) => {
+const ensureDefaultPolicy = async (actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
     let policy = await AttendancePolicy.findOne({
         isDefault: true,
         status: "Active",
+        ...tenant,
         ...NOT_DELETED
     });
     if (policy) return policy;
 
     policy = await AttendancePolicy.findOne({
         status: "Active",
+        ...tenant,
         ...NOT_DELETED
     }).sort({ createdAt: 1 });
     if (policy) {
@@ -106,17 +126,21 @@ const ensureDefaultPolicy = async (actorId = null) => {
             isDefault: true,
             weeklyOff: ["Friday"]
         },
-        actorId
+        actorId,
+        companyId
     );
 };
 
-const getPolicies = async (query = {}) => {
+const getPolicies = async (query = {}, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
 
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
     if (query.status) filter.status = query.status;
     if (query.search) {
         const s = escapeRegex(String(query.search).trim());
@@ -145,16 +169,22 @@ const getPolicies = async (query = {}) => {
     };
 };
 
-const getPolicyById = async (id) => {
-    const doc = await AttendancePolicy.findOne({ _id: id, ...NOT_DELETED });
+const getPolicyById = async (id, companyId = null) => {
+    const doc = await AttendancePolicy.findOne({
+        _id: id,
+        ...companyFilter(companyId),
+        ...NOT_DELETED
+    });
     if (!doc) throw new AppError("Attendance policy not found.", 404);
     return doc;
 };
 
-const getActiveOrDefault = async () => ensureDefaultPolicy();
+const getActiveOrDefault = async (companyId = null) =>
+    ensureDefaultPolicy(null, companyId);
 
-const updatePolicy = async (id, payload = {}, actorId = null) => {
-    const doc = await getPolicyById(id);
+const updatePolicy = async (id, payload = {}, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const doc = await getPolicyById(id, companyId);
     const data = pickFields(payload);
 
     if (data.policyName) {
@@ -165,6 +195,7 @@ const updatePolicy = async (id, payload = {}, actorId = null) => {
                 $regex: `^${escapeRegex(policyName)}$`,
                 $options: "i"
             },
+            ...tenant,
             ...NOT_DELETED
         });
         if (exists) {
@@ -174,8 +205,8 @@ const updatePolicy = async (id, payload = {}, actorId = null) => {
     }
 
     if (data.isDefault === true) {
-        await clearOtherDefaults(id);
-        const settings = await settingsService.getGlobalSettings();
+        await clearOtherDefaults(id, companyId);
+        const settings = await settingsService.getGlobalSettings(companyId);
         settings.defaultAttendancePolicyId = doc._id;
         await settings.save();
     }
@@ -186,23 +217,36 @@ const updatePolicy = async (id, payload = {}, actorId = null) => {
     return doc;
 };
 
-const setDefault = async (id, actorId = null) => {
-    const doc = await getPolicyById(id);
-    await clearOtherDefaults(id);
+const setDefault = async (id, actorId = null, companyId = null) => {
+    const doc = await getPolicyById(id, companyId);
+    await clearOtherDefaults(id, companyId);
     doc.isDefault = true;
     doc.status = "Active";
     doc.updatedBy = actorId || null;
     await doc.save();
 
-    const settings = await settingsService.getGlobalSettings();
+    const settings = await settingsService.getGlobalSettings(companyId);
     settings.defaultAttendancePolicyId = doc._id;
     await settings.save();
     return doc;
 };
 
-const deletePolicy = (id, actorId) => trash.softDelete(id, actorId);
-const restorePolicy = (id, actorId) => trash.restore(id, actorId);
-const permanentDeletePolicy = (id) => trash.permanentDelete(id);
+const deletePolicy = async (id, actorId, companyId = null) => {
+    await getPolicyById(id, companyId);
+    return trash.softDelete(id, actorId);
+};
+const restorePolicy = async (id, actorId, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await trash.restore(id, actorId);
+    assertDocumentCompany(doc, companyId, "Attendance policy");
+    return doc;
+};
+const permanentDeletePolicy = async (id, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await AttendancePolicy.findOne({ _id: id, isDeleted: true });
+    assertDocumentCompany(doc, companyId, "Attendance policy");
+    return trash.permanentDelete(id);
+};
 
 module.exports = {
     createPolicy,

@@ -24,7 +24,8 @@ exports.getMyOvertime = asyncHandler(async (req, res) => {
     const result = await overtimeService.getOvertimeRequests(
         req.query,
         req.user,
-        { selfOnly: true }
+        { selfOnly: true },
+        req.companyId
     );
     return success(res, "My overtime requests retrieved.", result);
 });
@@ -43,13 +44,17 @@ exports.getOvertimeRequests = asyncHandler(async (req, res) => {
     const result = await overtimeService.getOvertimeRequests(
         req.query,
         req.user,
-        { managedBranchIds: req.managedBranchIds ?? null }
+        { managedBranchIds: req.managedBranchIds ?? null },
+        req.companyId
     );
     return success(res, "Overtime requests retrieved.", result);
 });
 
 exports.getOvertimeById = asyncHandler(async (req, res) => {
-    const doc = await overtimeService.getOvertimeById(req.params.id);
+    const doc = await overtimeService.getOvertimeById(
+        req.params.id,
+        req.companyId
+    );
     return success(res, "Overtime request retrieved.", doc);
 });
 
@@ -134,6 +139,6 @@ exports.bulkPermanentDeleteOvertimeRequests = asyncHandler(async (req, res) => {
 });
 
 exports.getTrashCount = asyncHandler(async (req, res) => {
-    const count = await overtimeService.trashCount();
+    const count = await overtimeService.trashCount(req.companyId);
     return success(res, "Overtime trash count retrieved.", { count });
 });

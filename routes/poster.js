@@ -4,14 +4,20 @@ const Poster = require('../model/poster');
 const { uploadPosters } = require('../uploadFile');
 const multer = require('multer');
 const asyncHandler = require('express-async-handler');
+const { protect } = require('../middleware/auth');
+const { resolveTenant, requireCompany } = require('../middleware/tenant');
+const { companyFilter, stampCompany } = require('../utils/tenantScope');
+const { assertDocumentCompany } = require('../services/companyService');
+
+router.use(protect, resolveTenant, requireCompany);
 
 // --- GET ALL POSTERS ---
 router.get('/', asyncHandler(async (req, res) => {
-    const posters = await Poster.find({});
-    res.json({ 
-        success: true, 
-        message: "Posters retrieved successfully.", 
-        data: posters 
+    const posters = await Poster.find({ ...companyFilter(req.companyId) });
+    res.json({
+        success: true,
+        message: "Posters retrieved successfully.",
+        data: posters
     });
 }));
 
@@ -19,14 +25,15 @@ router.get('/', asyncHandler(async (req, res) => {
 router.get('/:id', asyncHandler(async (req, res) => {
     const posterID = req.params.id;
     const poster = await Poster.findById(posterID);
-    
+
     if (!poster) {
         return res.status(404).json({ success: false, message: "Poster not found." });
     }
-    res.json({ 
-        success: true, 
-        message: "Poster retrieved successfully.", 
-        data: poster 
+    assertDocumentCompany(poster, req.companyId, 'Poster');
+    res.json({
+        success: true,
+        message: "Poster retrieved successfully.",
+        data: poster
     });
 }));
 
@@ -34,8 +41,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
 router.post('/', asyncHandler(async (req, res) => {
     uploadPosters.single('img')(req, res, async function (err) {
         if (err instanceof multer.MulterError) {
-            const message = err.code === 'LIMIT_FILE_SIZE' 
-                ? 'File size is too large. Maximum filesize is 5MB.' 
+            const message = err.code === 'LIMIT_FILE_SIZE'
+                ? 'File size is too large. Maximum filesize is 5MB.'
                 : err.message;
             console.log(`Add poster Multer Error: ${message}`);
             return res.status(400).json({ success: false, message });
@@ -44,20 +51,17 @@ router.post('/', asyncHandler(async (req, res) => {
             return res.status(500).json({ success: false, message: err.message });
         }
 
-        // Extract fields from body
-        const { 
-            posterName, 
-            navigationTo = 'none',  // default to 'none' if not provided
-            targetId                // can be null, empty string, or valid ID
+        const {
+            posterName,
+            navigationTo = 'none',
+            targetId
         } = req.body;
 
-        // Image handling
         let imageUrl = 'no_url';
         if (req.file) {
-            imageUrl = req.file.path; // Cloudinary permanent URL
+            imageUrl = req.file.path;
         }
 
-        // Validation
         if (!posterName?.trim()) {
             return res.status(400).json({ success: false, message: "Poster name is required." });
         }
@@ -67,19 +71,19 @@ router.post('/', asyncHandler(async (req, res) => {
         }
 
         try {
-            const newPoster = new Poster({
+            const newPoster = new Poster(stampCompany({
                 posterName: posterName.trim(),
                 imageUrl,
-                navigationTo,   // ← NOW SAVED
-                targetId: targetId || null  // ← NOW SAVED (null if empty)
-            });
+                navigationTo,
+                targetId: targetId || null
+            }, req.companyId));
 
             await newPoster.save();
 
-            res.status(201).json({ 
-                success: true, 
-                message: "Poster created successfully.", 
-                data: newPoster 
+            res.status(201).json({
+                success: true,
+                message: "Poster created successfully.",
+                data: newPoster
             });
         } catch (error) {
             console.error("Error creating Poster:", error);
@@ -94,8 +98,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
 
     uploadPosters.single('img')(req, res, async function (err) {
         if (err instanceof multer.MulterError) {
-            const message = err.code === 'LIMIT_FILE_SIZE' 
-                ? 'File size is too large. Maximum filesize is 5MB.' 
+            const message = err.code === 'LIMIT_FILE_SIZE'
+                ? 'File size is too large. Maximum filesize is 5MB.'
                 : err.message;
             console.log(`Update poster Multer Error: ${message}`);
             return res.status(400).json({ success: false, message });
@@ -104,21 +108,18 @@ router.put('/:id', asyncHandler(async (req, res) => {
             return res.status(500).json({ success: false, message: err.message });
         }
 
-        // Extract fields from body
-        const { 
-            posterName, 
-            image,                  // existing imageUrl sent from client when no new image
-            navigationTo = 'none', 
-            targetId 
+        const {
+            posterName,
+            image,
+            navigationTo = 'none',
+            targetId
         } = req.body;
 
-        // Determine final image URL
-        let imageUrl = image?.trim(); // use existing if provided
+        let imageUrl = image?.trim();
         if (req.file) {
-            imageUrl = req.file.path; // override with new uploaded image
+            imageUrl = req.file.path;
         }
 
-        // Validation
         if (!posterName?.trim()) {
             return res.status(400).json({ success: false, message: "Poster name is required." });
         }
@@ -128,13 +129,13 @@ router.put('/:id', asyncHandler(async (req, res) => {
         }
 
         try {
-            const updatedPoster = await Poster.findByIdAndUpdate(
-                posterID,
+            const updatedPoster = await Poster.findOneAndUpdate(
+                { _id: posterID, ...companyFilter(req.companyId) },
                 {
                     posterName: posterName.trim(),
                     imageUrl,
-                    navigationTo,           // ← NOW UPDATED
-                    targetId: targetId || null  // ← NOW UPDATED
+                    navigationTo,
+                    targetId: targetId || null
                 },
                 { new: true, runValidators: true }
             );
@@ -143,10 +144,10 @@ router.put('/:id', asyncHandler(async (req, res) => {
                 return res.status(404).json({ success: false, message: "Poster not found." });
             }
 
-            res.json({ 
-                success: true, 
-                message: "Poster updated successfully.", 
-                data: updatedPoster 
+            res.json({
+                success: true,
+                message: "Poster updated successfully.",
+                data: updatedPoster
             });
         } catch (error) {
             console.error("Error updating Poster:", error);
@@ -159,18 +160,19 @@ router.put('/:id', asyncHandler(async (req, res) => {
 router.delete('/:id', asyncHandler(async (req, res) => {
     const posterID = req.params.id;
 
-    const deletedPoster = await Poster.findByIdAndDelete(posterID);
-    
+    const deletedPoster = await Poster.findOneAndDelete({
+        _id: posterID,
+        ...companyFilter(req.companyId)
+    });
+
     if (!deletedPoster) {
         return res.status(404).json({ success: false, message: "Poster not found." });
     }
 
-    // Optional: In production, delete the image from Cloudinary here using cloudinary.uploader.destroy(public_id)
-
-    res.json({ 
-        success: true, 
+    res.json({
+        success: true,
         message: "Poster deleted successfully.",
-        data: deletedPoster 
+        data: deletedPoster
     });
 }));
 

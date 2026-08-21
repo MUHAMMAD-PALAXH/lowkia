@@ -3,11 +3,19 @@ const router = express.Router();
 const Variant = require('../model/variant');
 const Product = require('../model/product');
 const asyncHandler = require('express-async-handler');
+const { protect } = require('../middleware/auth');
+const { resolveTenant, requireCompany } = require('../middleware/tenant');
+const { companyFilter, stampCompany } = require('../utils/tenantScope');
+const { assertDocumentCompany } = require('../services/companyService');
+
+router.use(protect, resolveTenant, requireCompany);
 
 // Get all variants
 router.get('/', asyncHandler(async (req, res) => {
     try {
-        const variants = await Variant.find().populate('variantTypeId').sort({'variantTypeId': 1});
+        const variants = await Variant.find({ ...companyFilter(req.companyId) })
+            .populate('variantTypeId')
+            .sort({'variantTypeId': 1});
         res.json({ success: true, message: "Variants retrieved successfully.", data: variants });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -22,6 +30,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
         if (!variant) {
             return res.status(404).json({ success: false, message: "Variant not found." });
         }
+        assertDocumentCompany(variant, req.companyId, 'Variant');
         res.json({ success: true, message: "Variant retrieved successfully.", data: variant });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -36,8 +45,8 @@ router.post('/', asyncHandler(async (req, res) => {
     }
 
     try {
-        const variant = new Variant({ name, variantTypeId });
-        const newVariant = await variant.save();
+        const variant = new Variant(stampCompany({ name, variantTypeId }, req.companyId));
+        await variant.save();
         res.json({ success: true, message: "Variant created successfully.", data: null });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -53,7 +62,11 @@ router.put('/:id', asyncHandler(async (req, res) => {
     }
 
     try {
-        const updatedVariant = await Variant.findByIdAndUpdate(variantID, { name, variantTypeId }, { new: true });
+        const updatedVariant = await Variant.findOneAndUpdate(
+            { _id: variantID, ...companyFilter(req.companyId) },
+            { name, variantTypeId },
+            { new: true }
+        );
         if (!updatedVariant) {
             return res.status(404).json({ success: false, message: "Variant not found." });
         }
@@ -66,15 +79,14 @@ router.put('/:id', asyncHandler(async (req, res) => {
 // Delete a variant
 router.delete('/:id', asyncHandler(async (req, res) => {
     const variantID = req.params.id;
+    const tenant = companyFilter(req.companyId);
     try {
-        // Check if any products reference this variant
-        const products = await Product.find({ proVariantId: variantID });
+        const products = await Product.find({ proVariantId: variantID, ...tenant });
         if (products.length > 0) {
             return res.status(400).json({ success: false, message: "Cannot delete variant. Products are referencing it." });
         }
 
-        // If no products are referencing the variant, proceed with deletion
-        const variant = await Variant.findByIdAndDelete(variantID);
+        const variant = await Variant.findOneAndDelete({ _id: variantID, ...tenant });
         if (!variant) {
             return res.status(404).json({ success: false, message: "Variant not found." });
         }

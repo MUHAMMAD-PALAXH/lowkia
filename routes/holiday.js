@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const { protect } = require("../middleware/auth");
+const { resolveTenant, requireCompany } = require("../middleware/tenant");
 const { attendanceAdminOnly, ownerOnly } = require("../middleware/hrAccess");
 const validate = require("../middleware/validate");
 const controller = require("../controllers/holidayController");
@@ -13,7 +14,7 @@ const {
 } = require("../validators/holidayValidator");
 
 // Base: /api/holidays
-router.use(protect, attendanceAdminOnly);
+router.use(protect, resolveTenant, requireCompany, attendanceAdminOnly);
 
 router.get("/", listValidator, validate, controller.getHolidays);
 router.get("/:id", idValidator, validate, controller.getHolidayById);

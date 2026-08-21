@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const tenantPlugin = require('./plugins/tenant.plugin');
 
 const orderSchema = new mongoose.Schema({
   userID: {
@@ -77,6 +78,8 @@ const orderSchema = new mongoose.Schema({
 }, {
   timestamps: true 
 });
+
+orderSchema.plugin(tenantPlugin);
 
 const Order = mongoose.model('Order', orderSchema);
 module.exports = Order;

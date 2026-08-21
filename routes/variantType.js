@@ -4,11 +4,17 @@ const VariantType = require('../model/variantType');
 const Product = require('../model/product');
 const Variant = require('../model/variant');
 const asyncHandler = require('express-async-handler');
+const { protect } = require('../middleware/auth');
+const { resolveTenant, requireCompany } = require('../middleware/tenant');
+const { companyFilter, stampCompany } = require('../utils/tenantScope');
+const { assertDocumentCompany } = require('../services/companyService');
+
+router.use(protect, resolveTenant, requireCompany);
 
 // Get all variant types
 router.get('/', asyncHandler(async (req, res) => {
     try {
-        const variantTypes = await VariantType.find();
+        const variantTypes = await VariantType.find({ ...companyFilter(req.companyId) });
         res.json({ success: true, message: "VariantTypes retrieved successfully.", data: variantTypes });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -23,6 +29,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
         if (!variantType) {
             return res.status(404).json({ success: false, message: "VariantType not found." });
         }
+        assertDocumentCompany(variantType, req.companyId, 'VariantType');
         res.json({ success: true, message: "VariantType retrieved successfully.", data: variantType });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -37,8 +44,8 @@ router.post('/', asyncHandler(async (req, res) => {
     }
 
     try {
-        const variantType = new VariantType({ name , type });
-        const newVariantType = await variantType.save();
+        const variantType = new VariantType(stampCompany({ name , type }, req.companyId));
+        await variantType.save();
         res.json({ success: true, message: "VariantType created successfully.", data: null });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -54,7 +61,11 @@ router.put('/:id', asyncHandler(async (req, res) => {
     }
 
     try {
-        const updatedVariantType = await VariantType.findByIdAndUpdate(variantTypeID, { name , type}, { new: true });
+        const updatedVariantType = await VariantType.findOneAndUpdate(
+            { _id: variantTypeID, ...companyFilter(req.companyId) },
+            { name , type},
+            { new: true }
+        );
         if (!updatedVariantType) {
             return res.status(404).json({ success: false, message: "VariantType not found." });
         }
@@ -67,21 +78,19 @@ router.put('/:id', asyncHandler(async (req, res) => {
 // Delete a variant type
 router.delete('/:id', asyncHandler(async (req, res) => {
     const variantTypeID = req.params.id;
+    const tenant = companyFilter(req.companyId);
     try {
-        // Check if any variant is associated with this variant type
-        const variantCount = await Variant.countDocuments({ variantTypeId: variantTypeID });
+        const variantCount = await Variant.countDocuments({ variantTypeId: variantTypeID, ...tenant });
         if (variantCount > 0) {
             return res.status(400).json({ success: false, message: "Cannot delete variant type. It is associated with one or more variants." });
         }
-        
-        // Check if any products reference this variant type
-        const products = await Product.find({ proVariantTypeId: variantTypeID });
+
+        const products = await Product.find({ proVariantTypeId: variantTypeID, ...tenant });
         if (products.length > 0) {
             return res.status(400).json({ success: false, message: "Cannot delete variant type. Products are referencing it." });
         }
 
-        // If no variants or products are associated, proceed with deletion of the variant type
-        const variantType = await VariantType.findByIdAndDelete(variantTypeID);
+        const variantType = await VariantType.findOneAndDelete({ _id: variantTypeID, ...tenant });
         if (!variantType) {
             return res.status(404).json({ success: false, message: "Variant type not found." });
         }

@@ -1,15 +1,22 @@
 const Settings = require("../model/settings");
 const AppError = require("../utils/appError");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
 
 const DEFAULT_TIMEZONE = "Asia/Dhaka";
 
-const getGlobalSettings = async () => {
-    let settings = await Settings.findOne({ key: "global" });
+const getGlobalSettings = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
+    let settings = await Settings.findOne({ key: "global", ...tenant });
     if (!settings) {
-        settings = await Settings.create({
-            key: "global",
-            timezone: DEFAULT_TIMEZONE
-        });
+        settings = await Settings.create(
+            stampCompany(
+                {
+                    key: "global",
+                    timezone: DEFAULT_TIMEZONE
+                },
+                companyId
+            )
+        );
     }
     if (!settings.timezone) {
         settings.timezone = DEFAULT_TIMEZONE;
@@ -18,20 +25,19 @@ const getGlobalSettings = async () => {
     return settings;
 };
 
-const getTimezone = async () => {
-    const settings = await getGlobalSettings();
+const getTimezone = async (companyId = null) => {
+    const settings = await getGlobalSettings(companyId);
     return settings.timezone || DEFAULT_TIMEZONE;
 };
 
-const updateGlobalSettings = async (payload = {}) => {
-    const settings = await getGlobalSettings();
+const updateGlobalSettings = async (payload = {}, companyId = null) => {
+    const settings = await getGlobalSettings(companyId);
 
     if (payload.timezone !== undefined) {
         const tz = String(payload.timezone || "").trim();
         if (!tz) {
             throw new AppError("Timezone is required.", 400);
         }
-        // Soft validation — Node Intl will throw on bad zones at runtime
         try {
             Intl.DateTimeFormat("en-US", { timeZone: tz });
         } catch (_) {

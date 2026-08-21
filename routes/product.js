@@ -7,6 +7,11 @@ const { uploadProduct } = require('../uploadFile');
 const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const { protect, vendorOrAdmin } = require('../middleware/auth');
+const { resolveTenant, requireCompany } = require('../middleware/tenant');
+const { companyFilter, stampCompany } = require('../utils/tenantScope');
+const { assertDocumentCompany } = require('../services/companyService');
+
+router.use(protect, resolveTenant, requireCompany);
 
 // ====================== Helper Functions ======================
 function safeObjectId(value) {
@@ -25,31 +30,29 @@ const parseIdArray = (input) => {
   if (typeof input === 'string') {
     try { return JSON.parse(input); } catch { return []; }
   }
-  return Array.isArray(input) 
+  return Array.isArray(input)
     ? input.filter(id => /^[0-9a-fA-F]{24}$/.test(id)).map(safeObjectId)
     : [];
 };
 
-// ====================== PUBLIC ROUTES ======================
-
 router.get('/last-update', asyncHandler(async (req, res) => {
-  const latest = await Product.findOne().sort({ updatedAt: -1 }).select('updatedAt');
+  const latest = await Product.findOne({ ...companyFilter(req.companyId) })
+    .sort({ updatedAt: -1 })
+    .select('updatedAt');
   res.json({ success: true, last_updated: latest?.updatedAt });
 }));
 
 // Advanced Filter + Pagination
 router.get('/', asyncHandler(async (req, res) => {
   const {
-    page = 1, limit = 20, search, status, isPublished, 
+    page = 1, limit = 20, search, status, isPublished,
     proCategoryId, proSubCategoryId, proBrandId, vendorId,
     isFeatured, isNewArrival, isBestSeller, isTrending, isRecommended,
     minPrice, maxPrice, sortBy = 'createdAt', order = 'desc'
   } = req.query;
 
-  const query = { isDeleted: false };
+  const query = { isDeleted: false, ...companyFilter(req.companyId) };
 
-  // User app must not sell unapproved employee/vendor uploads.
-  // Older products without approvalStatus are treated as approved.
   query.$and = [
     {
       $or: [
@@ -88,7 +91,7 @@ router.get('/', asyncHandler(async (req, res) => {
     ];
   }
 
-  const sort = {}; 
+  const sort = {};
   sort[sortBy] = order === 'asc' ? 1 : -1;
 
   const products = await Product.find(query)
@@ -117,13 +120,14 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // Get Single Product
 router.get('/:id', asyncHandler(async (req, res) => {
-  const product = await Product.findById(req.params.id)
+  const tenant = companyFilter(req.companyId);
+  const product = await Product.findOne({ _id: req.params.id, ...tenant })
     .populate('proCategoryId proSubCategoryId proBrandId proVariantTypeId vendorId');
 
   if (!product) return res.status(404).json({ success: false, message: "প্রোডাক্ট পাওয়া যায়নি।" });
 
-  const variants = await ProductVariant.find({ productId: req.params.id }).lean();
-  const inventory = await ItemTrack.find({ productId: req.params.id }).lean();
+  const variants = await ProductVariant.find({ productId: req.params.id, ...tenant }).lean();
+  const inventory = await ItemTrack.find({ productId: req.params.id, ...tenant }).lean();
 
   const obj = product.toObject();
   obj.productVariants = variants.map(v => {
@@ -136,10 +140,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json({ success: true, data: obj });
 }));
 
-// ====================== PROTECTED ROUTES ======================
-
 // Create Product
-router.post('/', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+router.post('/', vendorOrAdmin, asyncHandler(async (req, res) => {
   uploadProduct.fields([
     { name: 'image1', maxCount: 1 }, { name: 'image2', maxCount: 1 },
     { name: 'image3', maxCount: 1 }, { name: 'image4', maxCount: 1 },
@@ -162,7 +164,7 @@ router.post('/', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
       }
     });
 
-    const productData = {
+    const productData = stampCompany({
       vendorId: req.user._id,
 
       name: body.name,
@@ -235,31 +237,30 @@ router.post('/', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
 
       notes: body.notes,
       createdBy: req.user._id,
-    };
+    }, req.companyId);
 
     const newProduct = await Product.create(productData);
 
-    // Variants + IMEI
     const variants = parseVariants(body.productVariants);
     for (let v of variants) {
-      const savedVariant = await ProductVariant.create({
+      const savedVariant = await ProductVariant.create(stampCompany({
         productId: newProduct._id,
         ...v,
         attributes: (v.attributes || []).map(a => ({
           variantTypeId: safeObjectId(a.variantTypeId),
           variantId: safeObjectId(a.variantId)
         }))
-      });
+      }, req.companyId));
 
       if (v.imeis && Array.isArray(v.imeis) && v.imeis.length > 0) {
-        const imeiDocs = v.imeis.map(imei => ({
+        const imeiDocs = v.imeis.map(imei => stampCompany({
           productId: newProduct._id,
           variantId: savedVariant._id,
           imei: imei.toString().trim(),
           status: 'available',
           supplierId: safeObjectId(body.supplierId),
           branchId: safeObjectId(body.branchId)
-        }));
+        }, req.companyId));
         await ItemTrack.insertMany(imeiDocs);
       }
     }
@@ -268,8 +269,8 @@ router.post('/', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
   });
 }));
 
-// Update Product (সম্পূর্ণ ইমেজ লজিক সহ)
-router.put('/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+// Update Product
+router.put('/:id', vendorOrAdmin, asyncHandler(async (req, res) => {
   uploadProduct.fields([
     { name: 'image1', maxCount: 1 }, { name: 'image2', maxCount: 1 },
     { name: 'image3', maxCount: 1 }, { name: 'image4', maxCount: 1 },
@@ -278,7 +279,7 @@ router.put('/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
   ])(req, res, async (err) => {
     if (err) return res.status(400).json({ success: false, message: err.message });
 
-    const product = await Product.findById(req.params.id);
+    const product = await Product.findOne({ _id: req.params.id, ...companyFilter(req.companyId) });
     if (!product) return res.status(404).json({ success: false, message: "প্রোডাক্ট পাওয়া যায়নি।" });
 
     if (req.user.role !== 'admin' && product.vendorId.toString() !== req.user._id.toString()) {
@@ -287,7 +288,6 @@ router.put('/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
 
     const body = req.body;
 
-    // Update All Fields
     product.name = body.name || product.name;
     product.description = body.description || product.description;
     product.productCode = body.productCode ? body.productCode.toUpperCase() : product.productCode;
@@ -353,12 +353,11 @@ router.put('/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
     product.showInMobileApp = body.showInMobileApp !== 'false';
     product.showOnWebsite = body.showOnWebsite !== 'false';
 
-    // ====================== Images Update Logic ======================
     ['image1','image2','image3','image4','image5'].forEach((f, i) => {
       if (req.files[f]?.[0]) {
         const newUrl = req.files[f][0].path;
         const existingIndex = product.images.findIndex(img => img.image === i+1 || img.isPrimary === (i === 0));
-        
+
         if (existingIndex !== -1) {
           product.images[existingIndex].url = newUrl;
         } else {
@@ -386,8 +385,9 @@ router.put('/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
 }));
 
 // Soft Delete
-router.delete('/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
-  const product = await Product.findById(req.params.id);
+router.delete('/:id', vendorOrAdmin, asyncHandler(async (req, res) => {
+  const tenant = companyFilter(req.companyId);
+  const product = await Product.findOne({ _id: req.params.id, ...tenant });
   if (!product) return res.status(404).json({ success: false, message: "প্রোডাক্ট পাওয়া যায়নি।" });
 
   if (req.user.role !== 'admin' && product.vendorId.toString() !== req.user._id.toString()) {
@@ -395,8 +395,8 @@ router.delete('/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
   }
 
   await product.softDelete(req.user._id);
-  await ProductVariant.deleteMany({ productId: req.params.id });
-  await ItemTrack.updateMany({ productId: req.params.id }, { status: 'deleted' });
+  await ProductVariant.deleteMany({ productId: req.params.id, ...tenant });
+  await ItemTrack.updateMany({ productId: req.params.id, ...tenant }, { status: 'deleted' });
 
   res.json({ success: true, message: "প্রোডাক্ট সফট ডিলিট হয়েছে।" });
 }));

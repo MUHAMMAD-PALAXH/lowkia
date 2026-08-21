@@ -6,16 +6,16 @@ const Product = require('../model/product');
 const { uploadCategory } = require('../uploadFile');
 const multer = require('multer');
 const asyncHandler = require('express-async-handler');
-// Removed: const os = require('os'); 
+const { protect } = require('../middleware/auth');
+const { resolveTenant, requireCompany } = require('../middleware/tenant');
+const { companyFilter, stampCompany } = require('../utils/tenantScope');
+const { assertDocumentCompany } = require('../services/companyService');
 
-// Removed: getLocalIP helper function as it's no longer needed.
-// The image URL now comes directly from Cloudinary (req.file.path).
+router.use(protect, resolveTenant, requireCompany);
 
 // --- GET ALL CATEGORIES ---
 router.get('/', asyncHandler(async (req, res) => {
-    // Error handling is handled by asyncHandler wrapping the try/catch block 
-    // in the global error handler in index.js.
-    const categories = await Category.find();
+    const categories = await Category.find({ ...companyFilter(req.companyId) });
     res.json({ success: true, message: "Categories retrieved successfully.", data: categories });
 }));
 
@@ -23,24 +23,22 @@ router.get('/', asyncHandler(async (req, res) => {
 router.get('/:id', asyncHandler(async (req, res) => {
     const categoryID = req.params.id;
     const category = await Category.findById(categoryID);
-    
+
     if (!category) {
         return res.status(404).json({ success: false, message: "Category not found." });
     }
+    assertDocumentCompany(category, req.companyId, 'Category');
     res.json({ success: true, message: "Category retrieved successfully.", data: category });
 }));
 
 // --- CREATE A NEW CATEGORY WITH IMAGE UPLOAD ---
 router.post('/', asyncHandler(async (req, res) => {
-    // uploadCategory now uses Multer-Cloudinary-Storage
     uploadCategory.single('img')(req, res, async function (err) {
         if (err instanceof multer.MulterError) {
-            // Handle Multer file limit errors
             const message = err.code === 'LIMIT_FILE_SIZE' ? 'File size is too large. Maximum filesize is 5MB.' : err.message;
             console.log(`Add category Multer Error: ${message}`);
             return res.status(400).json({ success: false, message: message });
         } else if (err) {
-            // Handle general errors (including file type error from uploadFile.js)
             console.log(`Add category Error: ${err.message}`);
             return res.status(500).json({ success: false, message: err.message });
         }
@@ -49,8 +47,7 @@ router.post('/', asyncHandler(async (req, res) => {
         let imageUrl = 'no_url';
 
         if (req.file) {
-            // 🛑 CRITICAL CHANGE: Use the permanent URL provided by Cloudinary
-            imageUrl = req.file.path; 
+            imageUrl = req.file.path;
         }
 
         if (!name) {
@@ -58,12 +55,11 @@ router.post('/', asyncHandler(async (req, res) => {
         }
 
         try {
-            const newCategory = new Category({
+            const newCategory = new Category(stampCompany({
                 name: name,
                 image: imageUrl
-            });
+            }, req.companyId));
             await newCategory.save();
-            // Using 201 status for resource creation
             res.status(201).json({ success: true, message: "Category created successfully.", data: newCategory });
         } catch (error) {
             console.error("Error creating category:", error);
@@ -87,11 +83,10 @@ router.put('/:id', asyncHandler(async (req, res) => {
         }
 
         const { name } = req.body;
-        let image = req.body.image; // Existing image URL if not uploading a new file
+        let image = req.body.image;
 
         if (req.file) {
-            // 🛑 CRITICAL CHANGE: Use the permanent URL provided by Cloudinary
-            image = req.file.path; 
+            image = req.file.path;
         }
 
         if (!name || !image) {
@@ -99,8 +94,12 @@ router.put('/:id', asyncHandler(async (req, res) => {
         }
 
         try {
-            const updatedCategory = await Category.findByIdAndUpdate(categoryID, { name: name, image: image }, { new: true });
-            
+            const updatedCategory = await Category.findOneAndUpdate(
+                { _id: categoryID, ...companyFilter(req.companyId) },
+                { name: name, image: image },
+                { new: true }
+            );
+
             if (!updatedCategory) {
                 return res.status(404).json({ success: false, message: "Category not found." });
             }
@@ -114,27 +113,23 @@ router.put('/:id', asyncHandler(async (req, res) => {
 // --- DELETE A CATEGORY ---
 router.delete('/:id', asyncHandler(async (req, res) => {
     const categoryID = req.params.id;
+    const tenant = companyFilter(req.companyId);
 
-    // Check references before deletion
-    const subcategories = await SubCategory.find({ categoryId: categoryID });
+    const subcategories = await SubCategory.find({ categoryId: categoryID, ...tenant });
     if (subcategories.length > 0) {
         return res.status(400).json({ success: false, message: "Cannot delete category. Subcategories are referencing it." });
     }
 
-    const products = await Product.find({ proCategoryId: categoryID });
+    const products = await Product.find({ proCategoryId: categoryID, ...tenant });
     if (products.length > 0) {
         return res.status(400).json({ success: false, message: "Cannot delete category. Products are referencing it." });
     }
 
-    const category = await Category.findByIdAndDelete(categoryID);
+    const category = await Category.findOneAndDelete({ _id: categoryID, ...tenant });
     if (!category) {
         return res.status(404).json({ success: false, message: "Category not found." });
     }
-    
-    // NOTE: For true production, you should add logic here to delete the 
-    // image file from Cloudinary using the stored URL/Public ID before 
-    // returning the success response.
-    
+
     res.json({ success: true, message: "Category deleted successfully." });
 }));
 

@@ -5,8 +5,8 @@ const settingsSchema = new mongoose.Schema({
     key: {
         type: String,
         required: true,
-        unique: true,
-        default: "global"
+        default: "global",
+        index: true
     },
 
     salesTargets: {
@@ -40,5 +40,6 @@ const settingsSchema = new mongoose.Schema({
 });
 
 settingsSchema.plugin(tenantPlugin);
+settingsSchema.index({ companyId: 1, key: 1 }, { unique: true });
 
 module.exports = mongoose.model("Settings", settingsSchema);

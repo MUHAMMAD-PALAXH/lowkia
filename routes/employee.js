@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const { protect } = require("../middleware/auth");
+const { resolveTenant, requireCompany } = require("../middleware/tenant");
 const { attendanceAdminOnly, ownerOnly } = require("../middleware/hrAccess");
 const validate = require("../middleware/validate");
 const controller = require("../controllers/employeeController");
@@ -14,7 +15,7 @@ const {
 } = require("../validators/employeeValidator");
 
 // Base: /api/employees
-router.use(protect, attendanceAdminOnly);
+router.use(protect, resolveTenant, requireCompany, attendanceAdminOnly);
 
 router.get("/", listValidator, validate, controller.getEmployees);
 router.get("/available-users", controller.getAvailableUsers);

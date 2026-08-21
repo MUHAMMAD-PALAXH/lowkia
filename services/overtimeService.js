@@ -3,6 +3,9 @@ const OvertimeRequest = require("../model/overtimeRequest");
 const Attendance = require("../model/attendance");
 const { generateOvertimeRequestCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { ensureUserCompany, assertDocumentCompany } = require("./companyService");
+
 const {
     createTrashOps,
     isTrashQuery,
@@ -64,8 +67,10 @@ const applyAutoApprovedOvertime = (attendance, policy) => {
 };
 
 const createOvertimeRequest = async (user, payload = {}, meta = {}) => {
+    const companyId = await ensureUserCompany(user);
+    const tenant = companyFilter(companyId);
     const employee = await resolveEmployeeFromUser(user);
-    const policy = await attendancePolicyService.getActiveOrDefault();
+    const policy = await attendancePolicyService.getActiveOrDefault(companyId);
 
     if (policy.overtimeEnabled === false) {
         throw new AppError("Overtime is disabled by attendance policy.", 400);
@@ -76,6 +81,7 @@ const createOvertimeRequest = async (user, payload = {}, meta = {}) => {
 
     const attendance = await Attendance.findOne({
         _id: attendanceId,
+        ...tenant,
         ...NOT_DELETED
     });
     if (!attendance) throw new AppError("Attendance not found.", 404);
@@ -153,7 +159,7 @@ const createOvertimeRequest = async (user, payload = {}, meta = {}) => {
     }
 
     const overtimeCode = await generateOvertimeRequestCode();
-    const doc = await OvertimeRequest.create({
+    const doc = await OvertimeRequest.create(stampCompany({
         overtimeCode,
         branchId: attendance.branchId,
         employeeId: employee._id,
@@ -166,7 +172,7 @@ const createOvertimeRequest = async (user, payload = {}, meta = {}) => {
         reason,
         status: "pending",
         createdBy: user._id
-    });
+    }, companyId));
 
     await writeActivityLog({
         user,
@@ -357,13 +363,16 @@ const cancelOvertime = async (id, user, { asAdmin = false } = {}, meta = {}) => 
 const getOvertimeRequests = async (
     query = {},
     user = null,
-    { selfOnly = false, managedBranchIds = null } = {}
+    { selfOnly = false, managedBranchIds = null } = {},
+    companyIdArg = null
 ) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const companyId = companyIdArg || (user ? await ensureUserCompany(user) : null);
+    const tenant = companyFilter(companyId);
+    const filter = trashMode ? { isDeleted: true, ...tenant } : { ...NOT_DELETED, ...tenant };
 
     if (selfOnly && user) {
         const employee = await resolveEmployeeFromUser(user, {
@@ -425,9 +434,10 @@ const getOvertimeRequests = async (
     };
 };
 
-const getOvertimeById = async (id) => {
+const getOvertimeById = async (id, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const doc = await populateOt(
-        OvertimeRequest.findOne({ _id: id, ...NOT_DELETED })
+        OvertimeRequest.findOne({ _id: id, ...(typeof tenant !== "undefined" ? tenant : companyFilter(companyId)), ...NOT_DELETED })
     );
     if (!doc) throw new AppError("Overtime request not found.", 404);
     return doc;
@@ -444,7 +454,8 @@ const bulkRestoreOvertimeRequests = (payload, actorId = null) =>
     trash.bulkRestore(payload, actorId);
 const bulkPermanentDeleteOvertimeRequests = (payload) =>
     trash.bulkPermanentDelete(payload);
-const trashCount = () => trash.trashCount();
+const trashCount = async (companyId = null) =>
+    OvertimeRequest.countDocuments({ isDeleted: true, ...companyFilter(companyId) });
 
 module.exports = {
     createOvertimeRequest,

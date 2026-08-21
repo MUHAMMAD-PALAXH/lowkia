@@ -7,13 +7,18 @@ const Order = require('../model/order');
 const Branch = require('../model/branch');
 const BranchTransfer = require('../model/branchTransfer');
 const { protect, vendorOrAdmin } = require('../middleware/auth');
+const { resolveTenant, requireCompany } = require('../middleware/tenant');
+const { companyFilter, stampCompany } = require('../utils/tenantScope');
+const { assertDocumentCompany } = require('../services/companyService');
 const asyncHandler = require('express-async-handler');
+
+router.use(protect, resolveTenant, requireCompany);
 
 // =========================================================
 // 🚀 DYNAMIC FETCH: GET ALL DISTRIBUTION BRANCHES
 // =========================================================
-router.get('/branches', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
-  const allBranches = await Branch.find({ isDeleted: { $ne: true } }).lean();
+router.get('/branches', vendorOrAdmin, asyncHandler(async (req, res) => {
+  const allBranches = await Branch.find({ isDeleted: { $ne: true }, ...companyFilter(req.companyId) }).lean();
 
   if (!allBranches || allBranches.length === 0) {
     return res.status(404).json({ success: false, message: "No distribution hubs found in database." });
@@ -25,7 +30,7 @@ router.get('/branches', protect, vendorOrAdmin, asyncHandler(async (req, res) =>
 // =========================================================
 // STEP 1: STOCK IN (Bulk creation of unique IMEI units)
 // =========================================================
-router.post('/stock-in', protect, asyncHandler(async (req, res) => {
+router.post('/stock-in', asyncHandler(async (req, res) => {
     const { productId, variantId, currentBranchId, imeis } = req.body;
 
     if (!productId || !variantId || !currentBranchId || !imeis || imeis.length === 0) {
@@ -33,21 +38,21 @@ router.post('/stock-in', protect, asyncHandler(async (req, res) => {
     }
 
     // Verify the variant exists
-    const variantExists = await ProductVariant.findById(variantId);
+    const variantExists = await ProductVariant.findOne({ _id: variantId, ...companyFilter(req.companyId) });
     if (!variantExists) {
         return res.status(404).json({ success: false, message: "Variant not found." });
     }
 
     // Prepare data with the required fields
-    const stockItems = imeis.map(imei => ({
+    const stockItems = imeis.map(imei => stampCompany({
         productId: productId,
         variantId: variantId,
-        currentBranchId: currentBranchId, // Correct field name
-        vendorId: req.user._id,           // CRITICAL: Added missing vendorId
+        currentBranchId: currentBranchId,
+        vendorId: req.user._id,
         imei: imei.trim(),
         status: 'available',
         createdAt: new Date()
-    }));
+    }, req.companyId));
 
     try {
         // Attempt insertion
@@ -64,7 +69,7 @@ router.post('/stock-in', protect, asyncHandler(async (req, res) => {
 // =========================================================
 // 🚀 CREATE NEW BRANCH
 // =========================================================
-router.post('/add-branch', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+router.post('/add-branch', vendorOrAdmin, asyncHandler(async (req, res) => {
   // Legacy endpoint — prefer POST /api/branches
   const branchService = require('../services/branchService');
   const { name, location, phone, isActive, city, address, warehouseIds } = req.body;
@@ -84,7 +89,8 @@ router.post('/add-branch', protect, vendorOrAdmin, asyncHandler(async (req, res)
         isActive: isActive ?? true,
         warehouseIds: warehouseIds || []
       },
-      req.user?._id || null
+      req.user?._id || null,
+      req.companyId
     );
 
     res.status(201).json({ success: true, data: createdBranch });
@@ -102,7 +108,7 @@ const transferPopulate = (query) => query
   .populate('fromBranchId', 'name branchCode city')
   .populate('toBranchId', 'name branchCode city');
 
-router.get('/transfers', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+router.get('/transfers', vendorOrAdmin, asyncHandler(async (req, res) => {
   const status = String(req.query.status || '').trim();
   const search = String(req.query.search || '').trim();
   const filter = {};
@@ -114,23 +120,23 @@ router.get('/transfers', protect, vendorOrAdmin, asyncHandler(async (req, res) =
     ];
   }
   const items = await transferPopulate(
-    BranchTransfer.find(filter).sort({ dispatchedAt: -1 }).lean()
+    BranchTransfer.find({ ...filter, ...companyFilter(req.companyId) }).sort({ dispatchedAt: -1 }).lean()
   );
   res.json({ success: true, data: items });
 }));
 
-router.get('/transfers/in-transit', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+router.get('/transfers/in-transit', vendorOrAdmin, asyncHandler(async (req, res) => {
   const items = await transferPopulate(
-    BranchTransfer.find({ status: 'In Transit' })
+    BranchTransfer.find({ status: 'In Transit', ...companyFilter(req.companyId) })
       .sort({ dispatchedAt: -1 })
       .lean()
   );
   res.json({ success: true, data: items });
 }));
 
-router.get('/transfers/history', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+router.get('/transfers/history', vendorOrAdmin, asyncHandler(async (req, res) => {
   const items = await transferPopulate(
-    BranchTransfer.find({ status: { $in: ['Completed', 'Cancelled'] } })
+    BranchTransfer.find({ status: { $in: ['Completed', 'Cancelled'] }, ...companyFilter(req.companyId) })
       .sort({ dispatchedAt: -1 })
       .lean()
   );
@@ -139,7 +145,7 @@ router.get('/transfers/history', protect, vendorOrAdmin, asyncHandler(async (req
 
 // Dispatch only when every IMEI belongs to the selected product, variant and
 // source branch. Partial updates are rejected to keep a manifest atomic.
-router.put('/transfer/dispatch', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+router.put('/transfer/dispatch', vendorOrAdmin, asyncHandler(async (req, res) => {
   const {
     imeis,
     productId,
@@ -179,15 +185,17 @@ router.put('/transfer/dispatch', protect, vendorOrAdmin, asyncHandler(async (req
     });
   }
 
+  const tenant = companyFilter(req.companyId);
   const [fromBranch, toBranch, tracks] = await Promise.all([
-    Branch.findById(fromBranchId).lean(),
-    Branch.findById(targetBranchId).lean(),
+    Branch.findOne({ _id: fromBranchId, ...tenant }).lean(),
+    Branch.findOne({ _id: targetBranchId, ...tenant }).lean(),
     ItemTrack.find({
       imei: { $in: cleanImeis },
       productId,
       variantId,
       currentBranchId: fromBranchId,
-      status: 'available'
+      status: 'available',
+      ...tenant
     }).lean()
   ]);
   if (!fromBranch || !toBranch) {
@@ -206,7 +214,7 @@ router.put('/transfer/dispatch', protect, vendorOrAdmin, asyncHandler(async (req
   }
 
   const transferNumber = `BTR-${Date.now()}`;
-  const transfer = await BranchTransfer.create({
+  const transfer = await BranchTransfer.create(stampCompany({
     transferNumber,
     productId,
     variantId,
@@ -215,10 +223,10 @@ router.put('/transfer/dispatch', protect, vendorOrAdmin, asyncHandler(async (req
     imeis: cleanImeis,
     note: String(note || '').trim(),
     dispatchedBy: req.user._id
-  });
+  }, req.companyId));
 
   await ItemTrack.updateMany(
-    { _id: { $in: tracks.map((item) => item._id) }, status: 'available' },
+    { _id: { $in: tracks.map((item) => item._id) }, status: 'available', ...tenant },
     {
       $set: {
         status: 'in-transit',
@@ -251,8 +259,11 @@ router.put('/transfer/dispatch', protect, vendorOrAdmin, asyncHandler(async (req
   });
 }));
 
-router.put('/transfer/receive/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
-  const transfer = await BranchTransfer.findById(req.params.id);
+router.put('/transfer/receive/:id', vendorOrAdmin, asyncHandler(async (req, res) => {
+  const transfer = await BranchTransfer.findOne({
+    _id: req.params.id,
+    ...companyFilter(req.companyId)
+  });
   if (!transfer) {
     return res.status(404).json({ success: false, message: 'Transfer not found.' });
   }
@@ -320,7 +331,7 @@ router.put('/transfer/receive/:id', protect, vendorOrAdmin, asyncHandler(async (
 // =========================================================
 // STEP 3: POS CHECKOUT (Concurrence & Transaction Secured)
 // =========================================================
-router.post('/pos/checkout', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+router.post('/pos/checkout', vendorOrAdmin, asyncHandler(async (req, res) => {
   const { userID, items, shippingAddress, paymentMethod, couponCode, orderTotal, branchId } = req.body;
 
   // 1. Validation & Pre-flight
@@ -335,11 +346,13 @@ router.post('/pos/checkout', protect, vendorOrAdmin, asyncHandler(async (req, re
   session.startTransaction();
 
   try {
+    const tenant = companyFilter(req.companyId);
     // 2. Availability Check: Ensure IMEIs are available in the current branch
     const targets = await ItemTrack.find({
       imei: { $in: orderImeis },
       status: 'available',
-      currentBranchId: branchId
+      currentBranchId: branchId,
+      ...tenant
     }).session(session);
 
     if (targets.length !== orderImeis.length) {
@@ -349,7 +362,7 @@ router.post('/pos/checkout', protect, vendorOrAdmin, asyncHandler(async (req, re
     }
 
     // 3. Create Order Document
-    const order = new Order({
+    const order = new Order(stampCompany({
       userID,
       items: items.map(item => ({
         productID: item.productID,
@@ -367,7 +380,7 @@ router.post('/pos/checkout', protect, vendorOrAdmin, asyncHandler(async (req, re
       orderTotal,
       orderStatus: 'delivered',
       branchId
-    });
+    }, req.companyId));
 
     const savedOrder = await order.save({ session });
 
@@ -375,7 +388,7 @@ router.post('/pos/checkout', protect, vendorOrAdmin, asyncHandler(async (req, re
     const Product = require('../model/product');
     const soldDate = new Date();
     for (const track of targets) {
-      const product = await Product.findById(track.productId)
+      const product = await Product.findOne({ _id: track.productId, ...tenant })
         .select('warrantyType warrantyPeriod')
         .session(session)
         .lean();
@@ -420,9 +433,9 @@ router.post('/pos/checkout', protect, vendorOrAdmin, asyncHandler(async (req, re
     });
 
     for (const [variantId, count] of variantDecrementMap) {
-      await ProductVariant.findByIdAndUpdate(
-        variantId, 
-        { $inc: { quantity: -count } }, 
+      await ProductVariant.findOneAndUpdate(
+        { _id: variantId, ...tenant },
+        { $inc: { quantity: -count } },
         { session }
       );
     }
@@ -449,15 +462,15 @@ router.post('/pos/checkout', protect, vendorOrAdmin, asyncHandler(async (req, re
 // =========================================================
 // UPDATE BRANCH
 // =========================================================
-router.put('/update-branch/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
+router.put('/update-branch/:id', vendorOrAdmin, asyncHandler(async (req, res) => {
   const { name, location, phone, isActive } = req.body; // <--- এখানে 'phone' রিসিভ করছেন কি?
   
-  const updatedBranch = await Branch.findByIdAndUpdate(
-    req.params.id,
+  const updatedBranch = await Branch.findOneAndUpdate(
+    { _id: req.params.id, ...companyFilter(req.companyId) },
     { 
       name, 
       location, 
-      phone: phone, // <--- এখানে ডাটাবেজে পাঠাচ্ছেন কি?
+      phone: phone,
       isActive 
     },
     { new: true }
@@ -471,8 +484,11 @@ router.put('/update-branch/:id', protect, vendorOrAdmin, asyncHandler(async (req
 // =========================================================
 // DELETE BRANCH
 // =========================================================
-router.delete('/delete-branch/:id', protect, vendorOrAdmin, asyncHandler(async (req, res) => {
-  const deletedBranch = await Branch.findByIdAndDelete(req.params.id);
+router.delete('/delete-branch/:id', vendorOrAdmin, asyncHandler(async (req, res) => {
+  const deletedBranch = await Branch.findOneAndDelete({
+    _id: req.params.id,
+    ...companyFilter(req.companyId)
+  });
 
   if (!deletedBranch) {
     return res.status(404).json({ success: false, message: "Branch not found." });
@@ -484,11 +500,12 @@ router.delete('/delete-branch/:id', protect, vendorOrAdmin, asyncHandler(async (
 // =========================================================
 // STEP 4: SERVICE LOOKUP & JOB CARD TICKET GENERATOR
 // =========================================================
-router.get('/search/:imei', protect, asyncHandler(async (req, res) => {
+router.get('/search/:imei', asyncHandler(async (req, res) => {
   const raw = String(req.params.imei || "").trim();
   const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const item = await ItemTrack.findOne({
-    imei: { $regex: `^${escaped}$`, $options: "i" }
+    imei: { $regex: `^${escaped}$`, $options: "i" },
+    ...companyFilter(req.companyId)
   })
     .populate('productId', 'name description warrantyType warrantyPeriod')
     .populate('variantId')
@@ -552,7 +569,7 @@ router.get('/search/:imei', protect, asyncHandler(async (req, res) => {
 }));
 
 // Optional: Service center updates item status to repairing
-router.put('/repair/issue-ticket', protect, asyncHandler(async (req, res) => {
+router.put('/repair/issue-ticket', asyncHandler(async (req, res) => {
   const { imei, notes } = req.body;
   
   const result = await ItemTrack.findOneAndUpdate(

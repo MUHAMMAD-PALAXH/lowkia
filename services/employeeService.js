@@ -9,6 +9,8 @@ const { generateEmployeeCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const shiftService = require("./shiftService");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -35,7 +37,8 @@ const PROTECTED = [
     "createdBy",
     "createdAt",
     "updatedAt",
-    "lastAttendance"
+    "lastAttendance",
+    "companyId"
 ];
 
 const escapeRegex = (value = "") =>
@@ -68,10 +71,12 @@ const populateEmployee = (q) =>
             "structureCode structureName salaryType basicSalaryMinor hourlyRateMinor dailyRateMinor currency status"
         );
 
-const assertRefs = async (data) => {
+const assertRefs = async (data, companyId) => {
+    const tenant = companyFilter(companyId);
     if (data.branchId) {
         const branch = await Branch.findOne({
             _id: data.branchId,
+            ...tenant,
             ...NOT_DELETED
         });
         if (!branch) throw new AppError("Branch not found.", 404);
@@ -80,6 +85,7 @@ const assertRefs = async (data) => {
         const shift = await Shift.findOne({
             _id: data.shiftId,
             status: "Active",
+            ...tenant,
             ...NOT_DELETED
         });
         if (!shift) throw new AppError("Active shift not found.", 404);
@@ -87,6 +93,7 @@ const assertRefs = async (data) => {
     if (data.userId) {
         const user = await AdminUser.findOne({
             _id: data.userId,
+            companyId,
             isDeleted: { $ne: true }
         });
         if (!user) throw new AppError("Admin user not found.", 404);
@@ -100,6 +107,7 @@ const assertRefs = async (data) => {
     if (data.departmentId) {
         const dep = await Department.findOne({
             _id: data.departmentId,
+            ...tenant,
             isDeleted: { $ne: true }
         });
         if (!dep) throw new AppError("Department not found.", 404);
@@ -107,13 +115,15 @@ const assertRefs = async (data) => {
     if (data.designationId) {
         const des = await Designation.findOne({
             _id: data.designationId,
+            ...tenant,
             isDeleted: { $ne: true }
         });
         if (!des) throw new AppError("Designation not found.", 404);
     }
 };
 
-const createEmployee = async (payload = {}, actorId = null) => {
+const createEmployee = async (payload = {}, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const data = pickFields(payload);
     const userId = toObjectId(data.userId);
     const branchId = toObjectId(data.branchId);
@@ -123,6 +133,7 @@ const createEmployee = async (payload = {}, actorId = null) => {
 
     const adminUser = await AdminUser.findOne({
         _id: userId,
+        companyId,
         isDeleted: { $ne: true },
     });
     if (!adminUser) throw new AppError("Admin user not found.", 404);
@@ -156,6 +167,7 @@ const createEmployee = async (payload = {}, actorId = null) => {
 
     const userTaken = await Employee.findOne({
         userId,
+        ...tenant,
         ...NOT_DELETED,
     });
     if (userTaken) {
@@ -171,34 +183,40 @@ const createEmployee = async (payload = {}, actorId = null) => {
         shiftId: toObjectId(data.shiftId),
         departmentId: toObjectId(data.departmentId),
         designationId: toObjectId(data.designationId),
-    });
+    }, companyId);
 
     const employeeCode = await generateEmployeeCode();
-    const doc = await Employee.create({
-        ...data,
-        firstName,
-        lastName,
-        fullName: `${firstName} ${lastName}`.trim(),
-        phone,
-        email: email || undefined,
-        joiningDate,
-        branchId,
-        userId,
-        shiftId: toObjectId(data.shiftId),
-        departmentId: toObjectId(data.departmentId),
-        designationId: toObjectId(data.designationId),
-        employeeCode,
-        createdBy: actorId || null,
-        isActive: data.isActive !== false,
-    });
+    const doc = await Employee.create(
+        stampCompany(
+            {
+                ...data,
+                firstName,
+                lastName,
+                fullName: `${firstName} ${lastName}`.trim(),
+                phone,
+                email: email || undefined,
+                joiningDate,
+                branchId,
+                userId,
+                shiftId: toObjectId(data.shiftId),
+                departmentId: toObjectId(data.departmentId),
+                designationId: toObjectId(data.designationId),
+                employeeCode,
+                createdBy: actorId || null,
+                isActive: data.isActive !== false,
+            },
+            companyId
+        )
+    );
 
-    if (doc.shiftId) await shiftService.syncEmployeeCount(doc.shiftId);
+    if (doc.shiftId) await shiftService.syncEmployeeCount(doc.shiftId, companyId);
 
     return populateEmployee(Employee.findById(doc._id));
 };
 
-const getAvailableUsers = async () => {
-    const linked = await Employee.find({ ...NOT_DELETED })
+const getAvailableUsers = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const linked = await Employee.find({ ...tenant, ...NOT_DELETED })
         .select("userId")
         .lean();
     const linkedIds = linked
@@ -207,6 +225,7 @@ const getAvailableUsers = async () => {
         .map((id) => String(id));
 
     const filter = {
+        companyId,
         isDeleted: { $ne: true },
         isVerified: true,
         isPhoneVerified: true,
@@ -229,12 +248,15 @@ const getAvailableUsers = async () => {
         .lean();
 };
 
-const getEmployees = async (query = {}) => {
+const getEmployees = async (query = {}, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
 
     if (query.branchId && toObjectId(query.branchId)) {
         filter.branchId = toObjectId(query.branchId);
@@ -284,16 +306,18 @@ const getEmployees = async (query = {}) => {
     };
 };
 
-const getEmployeeById = async (id) => {
+const getEmployeeById = async (id, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const doc = await populateEmployee(
-        Employee.findOne({ _id: id, ...NOT_DELETED })
+        Employee.findOne({ _id: id, ...tenant, ...NOT_DELETED })
     );
     if (!doc) throw new AppError("Employee not found.", 404);
     return doc;
 };
 
-const updateEmployee = async (id, payload = {}, actorId = null) => {
-    const doc = await Employee.findOne({ _id: id, ...NOT_DELETED });
+const updateEmployee = async (id, payload = {}, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const doc = await Employee.findOne({ _id: id, ...tenant, ...NOT_DELETED });
     if (!doc) throw new AppError("Employee not found.", 404);
 
     const data = pickFields(payload);
@@ -304,6 +328,7 @@ const updateEmployee = async (id, payload = {}, actorId = null) => {
         const taken = await Employee.findOne({
             userId,
             _id: { $ne: id },
+            ...tenant,
             ...NOT_DELETED
         });
         if (taken) {
@@ -336,7 +361,7 @@ const updateEmployee = async (id, payload = {}, actorId = null) => {
         shiftId: data.shiftId,
         departmentId: data.departmentId,
         designationId: data.designationId
-    });
+    }, companyId);
 
     if (data.firstName || data.lastName) {
         const firstName = String(data.firstName || doc.firstName).trim();
@@ -352,23 +377,36 @@ const updateEmployee = async (id, payload = {}, actorId = null) => {
 
     const nextShiftId = doc.shiftId ? String(doc.shiftId) : null;
     if (prevShiftId && prevShiftId !== nextShiftId) {
-        await shiftService.syncEmployeeCount(prevShiftId);
+        await shiftService.syncEmployeeCount(prevShiftId, companyId);
     }
-    if (nextShiftId) await shiftService.syncEmployeeCount(nextShiftId);
+    if (nextShiftId) await shiftService.syncEmployeeCount(nextShiftId, companyId);
 
-    return getEmployeeById(id);
+    return getEmployeeById(id, companyId);
 };
 
-const assignShift = async (id, shiftId, actorId = null) => {
+const assignShift = async (id, shiftId, actorId = null, companyId = null) => {
     if (!toObjectId(shiftId)) {
         throw new AppError("Valid shiftId is required.", 400);
     }
-    return updateEmployee(id, { shiftId }, actorId);
+    return updateEmployee(id, { shiftId }, actorId, companyId);
 };
 
-const deleteEmployee = (id, actorId) => trash.softDelete(id, actorId);
-const restoreEmployee = (id, actorId) => trash.restore(id, actorId);
-const permanentDeleteEmployee = (id) => trash.permanentDelete(id);
+const deleteEmployee = async (id, actorId, companyId = null) => {
+    await getEmployeeById(id, companyId);
+    return trash.softDelete(id, actorId);
+};
+const restoreEmployee = async (id, actorId, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await trash.restore(id, actorId);
+    assertDocumentCompany(doc, companyId, "Employee");
+    return doc;
+};
+const permanentDeleteEmployee = async (id, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await Employee.findOne({ _id: id, isDeleted: true });
+    assertDocumentCompany(doc, companyId, "Employee");
+    return trash.permanentDelete(id);
+};
 
 module.exports = {
     createEmployee,

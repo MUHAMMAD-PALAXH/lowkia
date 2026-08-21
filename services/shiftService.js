@@ -3,6 +3,8 @@ const Employee = require("../model/employee");
 const { generateShiftCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -16,6 +18,7 @@ const trash = createTrashOps(Shift, {
     beforeSoftDelete: async (doc) => {
         const linked = await Employee.countDocuments({
             shiftId: doc._id,
+            companyId: doc.companyId,
             isDeleted: { $ne: true }
         });
         if (linked > 0) {
@@ -35,7 +38,8 @@ const PROTECTED = [
     "deletedBy",
     "createdBy",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "companyId"
 ];
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -56,16 +60,18 @@ const assertTime = (value, field) => {
     }
 };
 
-const syncEmployeeCount = async (shiftId) => {
+const syncEmployeeCount = async (shiftId, companyId = null) => {
     if (!shiftId) return;
-    const count = await Employee.countDocuments({
-        shiftId,
-        isDeleted: { $ne: true }
-    });
-    await Shift.updateOne({ _id: shiftId }, { $set: { employeeCount: count } });
+    const filter = { shiftId, isDeleted: { $ne: true } };
+    if (companyId) Object.assign(filter, companyFilter(companyId));
+    const count = await Employee.countDocuments(filter);
+    const updateFilter = { _id: shiftId };
+    if (companyId) Object.assign(updateFilter, companyFilter(companyId));
+    await Shift.updateOne(updateFilter, { $set: { employeeCount: count } });
 };
 
-const createShift = async (payload = {}, actorId = null) => {
+const createShift = async (payload = {}, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const data = pickFields(payload);
     const shiftName = String(data.shiftName || "").trim();
     if (!shiftName) throw new AppError("Shift name is required.", 400);
@@ -79,11 +85,11 @@ const createShift = async (payload = {}, actorId = null) => {
 
     const exists = await Shift.findOne({
         shiftName: { $regex: `^${escapeRegex(shiftName)}$`, $options: "i" },
+        ...tenant,
         ...NOT_DELETED
     });
     if (exists) throw new AppError("Shift name already exists.", 409);
 
-    // Infer night shift when end <= start
     let shiftType = data.shiftType || "Regular";
     const [sh, sm] = String(data.startTime).split(":").map(Number);
     const [eh, em] = String(data.endTime).split(":").map(Number);
@@ -92,24 +98,31 @@ const createShift = async (payload = {}, actorId = null) => {
     }
 
     const shiftCode = await generateShiftCode();
-    const doc = await Shift.create({
-        ...data,
-        shiftName,
-        shiftCode,
-        shiftType,
-        weeklyOff: Array.isArray(data.weeklyOff) ? data.weeklyOff : [],
-        createdBy: actorId || null,
-        employeeCount: 0
-    });
-    return doc;
+    return Shift.create(
+        stampCompany(
+            {
+                ...data,
+                shiftName,
+                shiftCode,
+                shiftType,
+                weeklyOff: Array.isArray(data.weeklyOff) ? data.weeklyOff : [],
+                createdBy: actorId || null,
+                employeeCount: 0
+            },
+            companyId
+        )
+    );
 };
 
-const getShifts = async (query = {}) => {
+const getShifts = async (query = {}, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
 
     if (query.status) filter.status = query.status;
     if (query.shiftType) filter.shiftType = query.shiftType;
@@ -137,17 +150,26 @@ const getShifts = async (query = {}) => {
     };
 };
 
-const getActiveShifts = async () =>
-    Shift.find({ status: "Active", ...NOT_DELETED }).sort({ shiftName: 1 });
+const getActiveShifts = async (companyId = null) =>
+    Shift.find({
+        status: "Active",
+        ...companyFilter(companyId),
+        ...NOT_DELETED
+    }).sort({ shiftName: 1 });
 
-const getShiftById = async (id) => {
-    const doc = await Shift.findOne({ _id: id, ...NOT_DELETED });
+const getShiftById = async (id, companyId = null) => {
+    const doc = await Shift.findOne({
+        _id: id,
+        ...companyFilter(companyId),
+        ...NOT_DELETED
+    });
     if (!doc) throw new AppError("Shift not found.", 404);
     return doc;
 };
 
-const updateShift = async (id, payload = {}, actorId = null) => {
-    const doc = await getShiftById(id);
+const updateShift = async (id, payload = {}, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const doc = await getShiftById(id, companyId);
     const data = pickFields(payload);
 
     if (data.shiftName) {
@@ -158,6 +180,7 @@ const updateShift = async (id, payload = {}, actorId = null) => {
                 $regex: `^${escapeRegex(shiftName)}$`,
                 $options: "i"
             },
+            ...tenant,
             ...NOT_DELETED
         });
         if (exists) throw new AppError("Shift name already exists.", 409);
@@ -175,9 +198,22 @@ const updateShift = async (id, payload = {}, actorId = null) => {
     return doc;
 };
 
-const deleteShift = (id, actorId) => trash.softDelete(id, actorId);
-const restoreShift = (id, actorId) => trash.restore(id, actorId);
-const permanentDeleteShift = (id) => trash.permanentDelete(id);
+const deleteShift = async (id, actorId, companyId = null) => {
+    await getShiftById(id, companyId);
+    return trash.softDelete(id, actorId);
+};
+const restoreShift = async (id, actorId, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await trash.restore(id, actorId);
+    assertDocumentCompany(doc, companyId, "Shift");
+    return doc;
+};
+const permanentDeleteShift = async (id, companyId = null) => {
+    companyFilter(companyId);
+    const doc = await Shift.findOne({ _id: id, isDeleted: true });
+    assertDocumentCompany(doc, companyId, "Shift");
+    return trash.permanentDelete(id);
+};
 
 module.exports = {
     createShift,

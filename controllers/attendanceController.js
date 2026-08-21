@@ -70,7 +70,8 @@ exports.getMyMonthlySummary = asyncHandler(async (req, res) => {
 exports.listAttendance = asyncHandler(async (req, res) => {
     const data = await attendanceService.listAttendance(
         req.query,
-        req.managedBranchIds ?? null
+        req.managedBranchIds ?? null,
+        req.companyId
     );
     return success(res, "Attendance list retrieved.", data);
 });
@@ -78,7 +79,8 @@ exports.listAttendance = asyncHandler(async (req, res) => {
 exports.getAttendanceById = asyncHandler(async (req, res) => {
     const doc = await attendanceService.getAttendanceById(
         req.params.id,
-        req.managedBranchIds ?? null
+        req.managedBranchIds ?? null,
+        req.companyId
     );
     return success(res, "Attendance retrieved.", doc);
 });
@@ -87,7 +89,8 @@ exports.getDailyReport = asyncHandler(async (req, res) => {
     const reportService = require("../services/attendanceReportService");
     const data = await reportService.getDailyReport(
         req.query,
-        req.managedBranchIds ?? null
+        req.managedBranchIds ?? null,
+        req.companyId
     );
     return success(res, "Daily attendance report retrieved.", data);
 });
@@ -96,7 +99,8 @@ exports.getMonthlyReport = asyncHandler(async (req, res) => {
     const reportService = require("../services/attendanceReportService");
     const data = await reportService.getMonthlyReport(
         req.query,
-        req.managedBranchIds ?? null
+        req.managedBranchIds ?? null,
+        req.companyId
     );
     return success(res, "Monthly attendance report retrieved.", data);
 });
@@ -105,7 +109,8 @@ exports.getBranchReport = asyncHandler(async (req, res) => {
     const reportService = require("../services/attendanceReportService");
     const data = await reportService.getBranchReport(
         req.query,
-        req.managedBranchIds ?? null
+        req.managedBranchIds ?? null,
+        req.companyId
     );
     return success(res, "Branch attendance report retrieved.", data);
 });

@@ -6,6 +6,9 @@ const Leave = require("../model/leave");
 const Shift = require("../model/shift");
 const { generateAttendanceCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { ensureUserCompany, assertDocumentCompany } = require("./companyService");
+
 const settingsService = require("./settingsService");
 const attendancePolicyService = require("./attendancePolicyService");
 const holidayService = require("./holidayService");
@@ -133,8 +136,9 @@ const resolveEmployeeBranch = async (employee) => {
 
 const loadContext = async (user) => {
     const employee = await resolveEmployeeFromUser(user, { requireActive: true });
-    const timezone = await settingsService.getTimezone();
-    const policy = await attendancePolicyService.getActiveOrDefault();
+    const companyId = await ensureUserCompany(user);
+    const timezone = await settingsService.getTimezone(companyId);
+    const policy = await attendancePolicyService.getActiveOrDefault(companyId);
     const now = new Date();
     const workDate = formatWorkDate(now, timezone);
     const weekday = formatWeekday(now, timezone);
@@ -173,6 +177,7 @@ const loadContext = async (user) => {
 
     return {
         employee,
+        companyId,
         timezone,
         policy,
         now,
@@ -457,6 +462,7 @@ const getMyToday = async (user) => {
     const ctx = await loadContext(user);
     const {
         employee,
+        companyId,
         shift,
         policy,
         workDate,
@@ -487,7 +493,8 @@ const getMyToday = async (user) => {
     const holiday = await holidayService.findHolidayForWorkDate(
         workDate,
         branchId,
-        employee._id
+        employee._id,
+        companyId
     );
 
     return {
@@ -572,6 +579,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     const ctx = await loadContext(user);
     const {
         employee,
+        companyId,
         shift,
         policy,
         workDate,
@@ -611,7 +619,8 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     const holiday = await holidayService.findHolidayForWorkDate(
         workDate,
         branchId,
-        employee._id
+        employee._id,
+        companyId
     );
     if (holiday && !policy.allowCheckInOnHoliday) {
         throw new AppError(
@@ -638,6 +647,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
 
     const attendanceCode = await generateAttendanceCode();
     const doc = existing || new Attendance({});
+    doc.companyId = companyId;
 
     doc.branchId = branchId;
     doc.departmentId = employee.departmentId?._id || employee.departmentId || null;
@@ -955,7 +965,8 @@ const getMyMonthlySummary = async (user, query = {}) => {
     const employee = await resolveEmployeeFromUser(user, {
         requireActive: false
     });
-    const timezone = await settingsService.getTimezone();
+    const companyId = await ensureUserCompany(user);
+    const timezone = await settingsService.getTimezone(companyId);
     const now = new Date();
     const workDate = formatWorkDate(now, timezone);
     const year = Number(query.year) || Number(workDate.slice(0, 4));
@@ -969,6 +980,7 @@ const getMyMonthlySummary = async (user, query = {}) => {
 
     const rows = await Attendance.find({
         employeeId: employee._id,
+        ...companyFilter(companyId),
         ...NOT_DELETED,
         $or: [
             { year, month },
@@ -1035,11 +1047,12 @@ const getMyMonthlySummary = async (user, query = {}) => {
 };
 
 /** Owner/admin list with filters */
-const listAttendance = async (query = {}, managedBranchIds = null) => {
+const listAttendance = async (query = {}, managedBranchIds = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
-    const filter = { ...NOT_DELETED };
+    const filter = { ...NOT_DELETED, ...tenant };
 
     const { applyBranchScopeFilter } = require("../middleware/hrAccess");
     applyBranchScopeFilter(
@@ -1086,9 +1099,10 @@ const listAttendance = async (query = {}, managedBranchIds = null) => {
 };
 
 /** Owner/admin: get one attendance by id (scoped) */
-const getAttendanceById = async (id, managedBranchIds = null) => {
+const getAttendanceById = async (id, managedBranchIds = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const doc = await populateAttendance(
-        Attendance.findOne({ _id: id, ...NOT_DELETED })
+        Attendance.findOne({ _id: id, ...tenant, ...NOT_DELETED })
     );
     if (!doc) throw new AppError("Attendance not found.", 404);
     if (managedBranchIds !== null) {
