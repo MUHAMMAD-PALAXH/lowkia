@@ -59,8 +59,8 @@ exports.getPlatformCompany = asyncHandler(async (req, res) => {
 });
 
 exports.createPlatformCompany = asyncHandler(async (req, res) => {
-    const company = await createCompany(req.body || {}, req.user._id);
-    return success(res, "Company created", company, 201);
+    const result = await createCompany(req.body || {}, req.user._id);
+    return success(res, "Company created", result, 201);
 });
 
 exports.updatePlatformCompany = asyncHandler(async (req, res) => {

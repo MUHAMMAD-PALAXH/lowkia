@@ -5,6 +5,7 @@ const { generateCode } = require("./codeGenerator");
 const { DEFAULT_CURRENCY } = require("../config/finance");
 const { isGlobalSuperAdmin } = require("../utils/roleAccess");
 const { writeActivityLog } = require("./activityLogService");
+const { ROLES } = require("../constants/roles");
 
 /**
  * Ensure a default Company exists for current single-tenant → SaaS migration.
@@ -161,6 +162,37 @@ const createCompany = async (payload = {}, actorId = null) => {
         throw new AppError("legalName is required.", 400);
     }
 
+    const ownerEmail = String(payload.ownerEmail || payload.email || "")
+        .toLowerCase()
+        .trim();
+    const ownerPassword = String(payload.ownerPassword || payload.password || "");
+    const ownerUsername = String(
+        payload.ownerUsername || payload.username || ""
+    ).trim();
+
+    if (!ownerEmail) {
+        throw new AppError("Company super admin email is required.", 400);
+    }
+    if (!ownerPassword || ownerPassword.length < 8) {
+        throw new AppError(
+            "Company super admin password must be at least 8 characters.",
+            400
+        );
+    }
+
+    const emailTaken = await AdminUser.findOne({ email: ownerEmail });
+    if (emailTaken) {
+        throw new AppError("Email is already registered.", 409);
+    }
+    if (ownerUsername) {
+        const usernameTaken = await AdminUser.findOne({
+            username: ownerUsername,
+        });
+        if (usernameTaken) {
+            throw new AppError("Username is already taken.", 409);
+        }
+    }
+
     const companyCode = await generateCode("company");
     const company = await Company.create({
         companyCode,
@@ -214,11 +246,74 @@ const createCompany = async (payload = {}, actorId = null) => {
         }
     }
 
-    return Company.findById(company._id).populate({
+    const nameParts = String(payload.ownerName || ownerUsername || "Admin")
+        .trim()
+        .split(/\s+/);
+    const firstName = String(payload.ownerFirstName || nameParts[0] || "Admin").trim();
+    const lastName = String(
+        payload.ownerLastName ||
+            (nameParts.length > 1 ? nameParts.slice(1).join(" ") : "Owner")
+    ).trim();
+
+    let owner;
+    try {
+        owner = await AdminUser.create({
+            firstName,
+            lastName,
+            username: ownerUsername || undefined,
+            email: ownerEmail,
+            phone: String(payload.ownerPhone || "").trim() || undefined,
+            password: ownerPassword,
+            role: ROLES.COMPANY_SUPER_ADMIN,
+            companyId: company._id,
+            isVerified: true,
+            isPhoneVerified: true,
+            isApproved: true,
+            status: "Active",
+            createdBy: actorId || null,
+        });
+    } catch (err) {
+        await Company.deleteOne({ _id: company._id });
+        throw err;
+    }
+
+    await writeActivityLog({
+        user: { _id: actorId, role: "global_super_admin", email: "" },
+        companyId: company._id,
+        activityType: "Create",
+        module: "Platform",
+        subModule: "CreateCompany",
+        description: `Created company ${company.companyCode} with owner ${ownerEmail}`,
+        shortDescription: `Create company ${company.companyCode}`,
+        referenceType: "Company",
+        referenceId: company._id,
+        newData: {
+            companyId: String(company._id),
+            ownerUserId: String(owner._id),
+            ownerEmail,
+        },
+        securityLevel: "High",
+    });
+
+    const populated = await Company.findById(company._id).populate({
         path: "currentSubscriptionId",
         select:
             "subscriptionNumber planCode planName status paymentStatus billingInterval amountMinor currency trialEndsAt currentPeriodEnd",
     });
+
+    return {
+        company: populated,
+        owner: {
+            id: owner._id,
+            email: owner.email,
+            username: owner.username || null,
+            firstName: owner.firstName,
+            lastName: owner.lastName,
+            role: owner.role,
+        },
+        // Returned once so the platform admin can copy credentials.
+        temporaryPassword: ownerPassword,
+    };
 };
 
 const updateCompany = async (companyId, payload = {}, actorId = null) => {
