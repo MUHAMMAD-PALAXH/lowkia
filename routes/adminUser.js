@@ -258,6 +258,72 @@ router.get('/:id/stats', protect, resolveTenant, requireCompany, adminOnly, asyn
   });
 }));
 
+const ASSIGNABLE_ROLES = new Set([
+  'company_super_admin',
+  'admin',
+  'employee',
+  'branch_manager',
+  'vendor',
+]);
+
+// PATCH role + menu permissions (company admin / GSA preview blocked by middleware)
+router.patch(
+  '/:id/access',
+  protect,
+  resolveTenant,
+  requireCompany,
+  adminOnly,
+  asyncHandler(async (req, res) => {
+    const user = await AdminUser.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    assertUserInTenant(user, req);
+
+    if (String(user.role).toLowerCase() === 'global_super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Cannot modify Global Super Admin access.',
+      });
+    }
+
+    const nextRole = req.body?.role != null
+      ? String(req.body.role).trim().toLowerCase()
+      : null;
+    if (nextRole) {
+      if (!ASSIGNABLE_ROLES.has(nextRole)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid role.',
+        });
+      }
+      user.role = nextRole === 'branch_manager' ? 'employee' : nextRole;
+    }
+
+    if (Array.isArray(req.body?.menuPermissions)) {
+      user.menuPermissions = [
+        ...new Set(
+          req.body.menuPermissions
+            .map((v) => String(v || '').trim())
+            .filter(Boolean)
+        ),
+      ];
+    }
+
+    user.updatedBy = req.user._id;
+    await user.save();
+
+    const safe = user.toObject();
+    delete safe.password;
+    delete safe.__v;
+    res.json({
+      success: true,
+      message: 'Access updated successfully.',
+      data: safe,
+    });
+  })
+);
+
 // DELETE user (admin only)
 router.delete('/:id', protect, resolveTenant, requireCompany, adminOnly, asyncHandler(async (req, res) => {
   const user = await AdminUser.findById(req.params.id);

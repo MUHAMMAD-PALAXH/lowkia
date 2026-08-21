@@ -101,6 +101,12 @@ const adminUserSchema = new mongoose.Schema(
         default: ROLES.VENDOR
     },
 
+    /** Screen keys granted beyond / instead of pure role defaults (empty = role defaults). */
+    menuPermissions: {
+        type: [String],
+        default: [],
+    },
+
     // ==================================================
     // Account Status
     // ==================================================
