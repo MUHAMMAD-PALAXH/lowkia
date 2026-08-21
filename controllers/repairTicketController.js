@@ -15,17 +15,26 @@ exports.createRepairTicket = asyncHandler(async (req, res) => {
 });
 
 exports.getRepairTickets = asyncHandler(async (req, res) => {
-    const result = await repairTicketService.getRepairTickets(req.query);
+    const result = await repairTicketService.getRepairTickets(
+        req.query,
+        req.companyId
+    );
     return success(res, "Repair tickets retrieved.", result);
 });
 
 exports.getRepairTicketStats = asyncHandler(async (req, res) => {
-    const stats = await repairTicketService.getRepairTicketStats(req.query);
+    const stats = await repairTicketService.getRepairTicketStats(
+        req.query,
+        req.companyId
+    );
     return success(res, "Repair ticket stats retrieved.", stats);
 });
 
 exports.getRepairTicketById = asyncHandler(async (req, res) => {
-    const doc = await repairTicketService.getRepairTicketById(req.params.id);
+    const doc = await repairTicketService.getRepairTicketById(
+        req.params.id,
+        req.companyId
+    );
     return success(res, "Repair ticket retrieved.", doc);
 });
 

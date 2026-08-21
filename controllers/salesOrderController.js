@@ -26,16 +26,20 @@ exports.getSalesOrders = asyncHandler(async (req, res) => {
 });
 
 exports.getSalesOrderStats = asyncHandler(async (req, res) => {
-    const stats = await salesOrderService.getSalesOrderStats();
+    const stats = await salesOrderService.getSalesOrderStats(req.companyId);
     return success(res, "Sales order stats retrieved successfully.", stats);
 });
 
 exports.getSalesOrderById = asyncHandler(async (req, res) => {
     const includeDeleted =
         req.query.deleted === "true" || req.query.trash === "true";
-    const order = await salesOrderService.getSalesOrderById(req.params.id, {
-        includeDeleted
-    });
+    const order = await salesOrderService.getSalesOrderById(
+        req.params.id,
+        {
+            includeDeleted
+        },
+        req.companyId
+    );
     return success(res, "Sales order retrieved successfully.", order);
 });
 
@@ -176,7 +180,10 @@ exports.lookupByImei = asyncHandler(async (req, res) => {
 });
 
 exports.getBranchCatalog = asyncHandler(async (req, res) => {
-    const data = await salesOrderService.getBranchCatalog(req.query);
+    const data = await salesOrderService.getBranchCatalog(
+        req.query,
+        req.companyId
+    );
     return success(res, "Branch catalog retrieved.", data);
 });
 

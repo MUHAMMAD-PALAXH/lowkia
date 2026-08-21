@@ -12,6 +12,8 @@ const { generateProductCode } = require("./codeGenerator");
 const { generateProductBarcode } = require("./barcodeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -1003,7 +1005,8 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
 // Create
 // ==========================================================
 
-const createProduct = async (payload = {}, actorId = null) => {
+const createProduct = async (payload = {}, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const data = pickUpdatableFields(payload);
     const name = (data.name || "").toString().trim();
 
@@ -1013,7 +1016,8 @@ const createProduct = async (payload = {}, actorId = null) => {
 
     const duplicate = await Product.findOne({
         name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
-        ...NOT_DELETED
+        ...NOT_DELETED,
+        ...tenant
     });
 
     if (duplicate) {
@@ -1033,7 +1037,8 @@ const createProduct = async (payload = {}, actorId = null) => {
 
         const duplicateSource = await Product.findOne({
             sourcePurchaseOrderItemId: source.sourcePurchaseOrderItemId,
-            isDeleted: { $ne: true }
+            isDeleted: { $ne: true },
+            ...tenant
         }).select("name productCode");
         if (duplicateSource) {
             throw new AppError(
@@ -1045,7 +1050,8 @@ const createProduct = async (payload = {}, actorId = null) => {
         if (poSource.line.productId) {
             const existingProduct = await Product.findOne({
                 _id: poSource.line.productId,
-                isDeleted: { $ne: true }
+                isDeleted: { $ne: true },
+                ...tenant
             }).select("name productCode");
             if (existingProduct) {
                 throw new AppError(
@@ -1093,7 +1099,9 @@ const createProduct = async (payload = {}, actorId = null) => {
     const sourceProduct = poSource?.line?.productId || null;
     const sourceVariant = poSource?.line?.productVariantId || null;
 
-    const product = new Product({
+    const product = new Product(
+        stampCompany(
+            {
         ...data,
         name,
         productCode,
@@ -1175,7 +1183,10 @@ const createProduct = async (payload = {}, actorId = null) => {
         approvedAt: isOwnerUpload ? new Date() : null,
         submittedForApprovalAt: isOwnerUpload ? null : new Date(),
         createdBy: actorId || uploader.uploadedById || null
-    });
+            },
+            companyId
+        )
+    );
 
     pushApproval(
         product,
@@ -1332,13 +1343,16 @@ const attachSoldQty = async (items = []) => {
     }
 };
 
-const getProducts = async (query = {}) => {
+const getProducts = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
+    const tenant = companyFilter(companyId);
 
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
 
     if (query.status) filter.status = query.status;
     if (query.approvalStatus) filter.approvalStatus = query.approvalStatus;
@@ -1403,17 +1417,23 @@ const getProducts = async (query = {}) => {
     };
 };
 
-const getProductById = async (id, { includeDeleted = false } = {}) => {
+const getProductById = async (
+    id,
+    { includeDeleted = false } = {},
+    companyId = null
+) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
         throw new AppError("Invalid product id.", 400);
     }
 
-    const filter = { _id: id };
+    const tenant = companyFilter(companyId);
+    const filter = { _id: id, ...tenant };
     if (!includeDeleted) Object.assign(filter, NOT_DELETED);
 
     const product = await populateProduct(Product.findOne(filter));
 
     if (!product) throw new AppError("Product not found.", 404);
+    assertDocumentCompany(product, companyId, "Product");
 
     const variants = await ProductVariant.find({
         productId: id,
@@ -1988,32 +2008,62 @@ const hydrateListStockFromVariants = async (items = []) => {
     return items;
 };
 
-const getApprovedProducts = () => populateProduct(Product.getApprovedProducts());
-
-const getPendingApprovals = () => populateProduct(Product.getPendingApprovals());
-
-const getLowStockProducts = () => Product.getLowStockProducts();
-
-const getProductByBarcode = async (barcode) => {
-    const value = String(barcode || "").trim();
-    if (!value) throw new AppError("Barcode is required.", 400);
-
-    const product = await populateProduct(
-        Product.findOne({ barcode: value, ...NOT_DELETED })
+const getApprovedProducts = (companyId = null) =>
+    populateProduct(
+        Product.find({
+            approvalStatus: "Approved",
+            isDeleted: { $ne: true },
+            ...companyFilter(companyId)
+        }).sort({ name: 1 })
     );
 
-    if (product) return product;
+const getPendingApprovals = (companyId = null) =>
+    populateProduct(
+        Product.find({
+            approvalStatus: "Pending",
+            isDeleted: { $ne: true },
+            ...companyFilter(companyId)
+        }).sort({ submittedForApprovalAt: 1, createdAt: 1 })
+    );
+
+const getLowStockProducts = (companyId = null) =>
+    Product.find({
+        isLowStock: true,
+        approvalStatus: "Approved",
+        isDeleted: { $ne: true },
+        ...companyFilter(companyId)
+    })
+        .populate("primarySupplierId", "supplierCode name phone email")
+        .sort({ availableStock: 1 });
+
+const getProductByBarcode = async (barcode, companyId = null) => {
+    const value = String(barcode || "").trim();
+    if (!value) throw new AppError("Barcode is required.", 400);
+    const tenant = companyFilter(companyId);
+
+    const product = await populateProduct(
+        Product.findOne({ barcode: value, ...NOT_DELETED, ...tenant })
+    );
+
+    if (product) {
+        assertDocumentCompany(product, companyId, "Product");
+        return product;
+    }
 
     const variant = await ProductVariant.findOne({
         barcode: value,
-        isDeleted: { $ne: true }
+        isDeleted: { $ne: true },
+        ...tenant
     });
 
     if (!variant) throw new AppError("No product found for this barcode.", 404);
 
-    return populateProduct(
-        Product.findOne({ _id: variant.productId, ...NOT_DELETED })
+    const byVariant = await populateProduct(
+        Product.findOne({ _id: variant.productId, ...NOT_DELETED, ...tenant })
     );
+    if (!byVariant) throw new AppError("No product found for this barcode.", 404);
+    assertDocumentCompany(byVariant, companyId, "Product");
+    return byVariant;
 };
 
 // ==========================================================
@@ -2377,10 +2427,11 @@ const refreshStockSummary = async (id) => {
     return populateProduct(Product.findById(product._id));
 };
 
-const getProductStats = async () => {
+const getProductStats = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
     const [[rows], trashCount] = await Promise.all([
         Product.aggregate([
-        { $match: NOT_DELETED },
+        { $match: { ...NOT_DELETED, ...tenant } },
         {
             $group: {
                 _id: null,
@@ -2414,7 +2465,7 @@ const getProductStats = async () => {
             }
         }
         ]),
-        trash.trashCount()
+        Product.countDocuments({ isDeleted: true, ...tenant })
     ]);
 
     return {

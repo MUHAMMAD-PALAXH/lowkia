@@ -14,7 +14,8 @@ const getActorId = (req) => {
 exports.createSupplier = asyncHandler(async (req, res) => {
     const supplier = await supplierService.createSupplier(
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
 
     return success(res, "Supplier created successfully.", supplier, 201);
@@ -26,7 +27,7 @@ exports.createSupplier = asyncHandler(async (req, res) => {
 // ==========================================================
 
 exports.getSuppliers = asyncHandler(async (req, res) => {
-    const result = await supplierService.getSuppliers(req.query);
+    const result = await supplierService.getSuppliers(req.query, req.companyId);
     return success(res, "Suppliers retrieved successfully.", result);
 });
 
@@ -36,7 +37,7 @@ exports.getSuppliers = asyncHandler(async (req, res) => {
 // ==========================================================
 
 exports.getActiveSuppliers = asyncHandler(async (req, res) => {
-    const suppliers = await supplierService.getActiveSuppliers();
+    const suppliers = await supplierService.getActiveSuppliers(req.companyId);
     return success(res, "Active suppliers retrieved successfully.", suppliers);
 });
 
@@ -46,7 +47,7 @@ exports.getActiveSuppliers = asyncHandler(async (req, res) => {
 // ==========================================================
 
 exports.getSupplierStats = asyncHandler(async (req, res) => {
-    const stats = await supplierService.getSupplierStats();
+    const stats = await supplierService.getSupplierStats(req.companyId);
     return success(res, "Supplier stats retrieved successfully.", stats);
 });
 
@@ -70,14 +71,18 @@ exports.getDueReport = asyncHandler(async (req, res) => {
 // ==========================================================
 
 exports.getSupplierById = asyncHandler(async (req, res) => {
-    const supplier = await supplierService.getSupplierById(req.params.id);
+    const supplier = await supplierService.getSupplierById(
+        req.params.id,
+        req.companyId
+    );
     return success(res, "Supplier retrieved successfully.", supplier);
 });
 
 exports.getSupplierDetails = asyncHandler(async (req, res) => {
     const data = await supplierService.getSupplierDetails(
         req.params.id,
-        req.query
+        req.query,
+        req.companyId
     );
     return success(res, "Supplier details retrieved successfully.", data);
 });

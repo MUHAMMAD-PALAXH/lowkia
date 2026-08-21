@@ -3,6 +3,8 @@ const ItemTrack = require("../model/itemTrack");
 const Branch = require("../model/branch");
 const { generateRepairTicketCode } = require("./codeGenerator");
 const { generateProductBarcode } = require("./barcodeGenerator");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -133,6 +135,7 @@ const createRepairTicket = async (
     actorId = null,
     companyId = null
 ) => {
+    const tenant = companyFilter(companyId);
     const branchId = toObjectId(payload.branchId);
     if (!branchId) {
         const err = new Error("Branch is required.");
@@ -140,12 +143,17 @@ const createRepairTicket = async (
         throw err;
     }
 
-    const branch = await Branch.findOne({ _id: branchId, ...NOT_DELETED });
+    const branch = await Branch.findOne({
+        _id: branchId,
+        ...NOT_DELETED,
+        ...tenant
+    });
     if (!branch) {
         const err = new Error("Branch not found.");
         err.status = 404;
         throw err;
     }
+    assertDocumentCompany(branch, companyId, "Branch");
 
     const customerName = String(payload.customerName || "").trim();
     const phone = String(payload.phone || "").trim();
@@ -236,8 +244,9 @@ const createRepairTicket = async (
         throw err;
     }
 
-    const doc = await RepairTicket.create({
-        companyId: toObjectId(companyId),
+    const doc = await RepairTicket.create(
+        stampCompany(
+            {
         branchId,
         ticketNumber,
         repairCode,
@@ -272,13 +281,16 @@ const createRepairTicket = async (
         internalNote: String(payload.internalNote || "").trim(),
         ...amounts,
         createdBy
-    });
+            },
+            companyId
+        )
+    );
 
     return populateTicket(RepairTicket.findById(doc._id)).lean();
 };
 
-const getRepairTickets = async (query = {}) => {
-    const filter = { ...NOT_DELETED };
+const getRepairTickets = async (query = {}, companyId = null) => {
+    const filter = { ...NOT_DELETED, ...companyFilter(companyId) };
     if (query.branchId) filter.branchId = toObjectId(query.branchId);
     if (query.status) filter.status = String(query.status).trim();
     if (query.ticketSource) filter.ticketSource = resolveTicketSource(query.ticketSource);
@@ -317,15 +329,17 @@ const getRepairTickets = async (query = {}) => {
     return { items, total, page, limit };
 };
 
-const getRepairTicketById = async (id) => {
+const getRepairTicketById = async (id, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const doc = await populateTicket(
-        RepairTicket.findOne({ _id: id, ...NOT_DELETED })
+        RepairTicket.findOne({ _id: id, ...NOT_DELETED, ...tenant })
     ).lean();
     if (!doc) {
         const err = new Error("Repair ticket not found.");
         err.status = 404;
         throw err;
     }
+    assertDocumentCompany(doc, companyId, "Repair ticket");
     return doc;
 };
 
@@ -439,8 +453,8 @@ const deleteRepairTicket = async (id, actorId = null) => {
     return { id: String(doc._id) };
 };
 
-const getRepairTicketStats = async (query = {}) => {
-    const match = { ...NOT_DELETED };
+const getRepairTicketStats = async (query = {}, companyId = null) => {
+    const match = { ...NOT_DELETED, ...companyFilter(companyId) };
     if (query.branchId) match.branchId = toObjectId(query.branchId);
 
     const [rows] = await RepairTicket.aggregate([

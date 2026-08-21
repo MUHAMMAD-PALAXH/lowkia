@@ -13,17 +13,21 @@ const getActor = (req) => ({
 });
 
 exports.createProduct = asyncHandler(async (req, res) => {
-    const product = await productService.createProduct(req.body, getActorId(req));
+    const product = await productService.createProduct(
+        req.body,
+        getActorId(req),
+        req.companyId
+    );
     return success(res, "Product created successfully.", product, 201);
 });
 
 exports.getProducts = asyncHandler(async (req, res) => {
-    const result = await productService.getProducts(req.query);
+    const result = await productService.getProducts(req.query, req.companyId);
     return success(res, "Products retrieved successfully.", result);
 });
 
 exports.getProductStats = asyncHandler(async (req, res) => {
-    const stats = await productService.getProductStats();
+    const stats = await productService.getProductStats(req.companyId);
     return success(res, "Product stats retrieved successfully.", stats);
 });
 
@@ -35,31 +39,38 @@ exports.getCompletedPurchaseOrderSourceLines = asyncHandler(async (req, res) => 
 });
 
 exports.getApprovedProducts = asyncHandler(async (req, res) => {
-    const products = await productService.getApprovedProducts();
+    const products = await productService.getApprovedProducts(req.companyId);
     return success(res, "Approved products retrieved successfully.", products);
 });
 
 exports.getPendingApprovals = asyncHandler(async (req, res) => {
-    const products = await productService.getPendingApprovals();
+    const products = await productService.getPendingApprovals(req.companyId);
     return success(res, "Pending approvals retrieved successfully.", products);
 });
 
 exports.getLowStockProducts = asyncHandler(async (req, res) => {
-    const products = await productService.getLowStockProducts();
+    const products = await productService.getLowStockProducts(req.companyId);
     return success(res, "Low stock products retrieved successfully.", products);
 });
 
 exports.getProductByBarcode = asyncHandler(async (req, res) => {
-    const product = await productService.getProductByBarcode(req.params.barcode);
+    const product = await productService.getProductByBarcode(
+        req.params.barcode,
+        req.companyId
+    );
     return success(res, "Product retrieved successfully.", product);
 });
 
 exports.getProductById = asyncHandler(async (req, res) => {
     const includeDeleted =
         req.query.deleted === "true" || req.query.trash === "true";
-    const product = await productService.getProductById(req.params.id, {
-        includeDeleted
-    });
+    const product = await productService.getProductById(
+        req.params.id,
+        {
+            includeDeleted
+        },
+        req.companyId
+    );
     return success(res, "Product retrieved successfully.", product);
 });
 

@@ -11,6 +11,8 @@ const {
 const productService = require("./productService");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const STOCK_RESTORED_STATUSES = ["Received", "Refunded"];
@@ -100,15 +102,22 @@ const getPriorReturnUsage = async (salesOrderId, excludeReturnId = null) => {
     return { qtyByLine, returnedImeis };
 };
 
-const createFromSalesOrder = async (payload, actorId = null) => {
+const createFromSalesOrder = async (
+    payload,
+    actorId = null,
+    companyId = null
+) => {
+    const tenant = companyFilter(companyId);
     const salesOrderId = toObjectId(payload.salesOrderId);
     if (!salesOrderId) throw new AppError("salesOrderId is required.", 400);
 
     const order = await SalesOrder.findOne({
         _id: salesOrderId,
-        ...NOT_DELETED
+        ...NOT_DELETED,
+        ...tenant
     });
     if (!order) throw new AppError("Sales order not found.", 404);
+    assertDocumentCompany(order, companyId, "Sales order");
     if (!order.stockUpdated) {
         throw new AppError(
             "Cannot return an order that never deducted stock.",
@@ -233,7 +242,9 @@ const createFromSalesOrder = async (payload, actorId = null) => {
     }
 
     const returnNumber = await generateSalesReturnCode();
-    const doc = await SalesReturn.create({
+    const doc = await SalesReturn.create(
+        stampCompany(
+            {
         branchId: order.branchId,
         warehouseId: order.warehouseId,
         returnNumber,
@@ -248,7 +259,10 @@ const createFromSalesOrder = async (payload, actorId = null) => {
         returnReason: payload.returnReason || "Customer Changed Mind",
         status: "Draft",
         createdBy: actorId || null
-    });
+            },
+            companyId
+        )
+    );
 
     return populateReturn(SalesReturn.findById(doc._id));
 };
@@ -492,12 +506,15 @@ const receiveReturn = async (id, actorId = null) => {
     return populateReturn(SalesReturn.findById(ret._id));
 };
 
-const getReturns = async (query = {}) => {
+const getReturns = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const tenant = companyFilter(companyId);
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
     if (query.status) filter.status = query.status;
     if (query.salesOrderId && toObjectId(query.salesOrderId)) {
         filter.salesOrderId = toObjectId(query.salesOrderId);
@@ -518,23 +535,35 @@ const getReturns = async (query = {}) => {
     };
 };
 
-const getReturnById = async (id, { includeDeleted = false } = {}) => {
-    const filter = { _id: id };
+const getReturnById = async (
+    id,
+    { includeDeleted = false } = {},
+    companyId = null
+) => {
+    const tenant = companyFilter(companyId);
+    const filter = { _id: id, ...tenant };
     if (!includeDeleted) Object.assign(filter, NOT_DELETED);
     const doc = await populateReturn(SalesReturn.findOne(filter));
     if (!doc) throw new AppError("Sales return not found.", 404);
+    assertDocumentCompany(doc, companyId, "Sales return");
     return doc;
 };
 
 /**
  * Lines still returnable on a sales order (qty + IMEIs left).
  */
-const getReturnableFromOrder = async (salesOrderId) => {
+const getReturnableFromOrder = async (salesOrderId, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const id = toObjectId(salesOrderId);
     if (!id) throw new AppError("salesOrderId is required.", 400);
 
-    const order = await SalesOrder.findOne({ _id: id, ...NOT_DELETED }).lean();
+    const order = await SalesOrder.findOne({
+        _id: id,
+        ...NOT_DELETED,
+        ...tenant
+    }).lean();
     if (!order) throw new AppError("Sales order not found.", 404);
+    assertDocumentCompany(order, companyId, "Sales order");
     if (!order.stockUpdated) {
         throw new AppError(
             "Cannot return an order that never deducted stock.",
@@ -589,10 +618,11 @@ const getReturnableFromOrder = async (salesOrderId) => {
     };
 };
 
-const getReturnStats = async () => {
+const getReturnStats = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
     const [rows, trashCount] = await Promise.all([
         SalesReturn.aggregate([
-            { $match: { ...NOT_DELETED } },
+            { $match: { ...NOT_DELETED, ...tenant } },
             {
                 $group: {
                     _id: "$status",
@@ -601,7 +631,7 @@ const getReturnStats = async () => {
                 }
             }
         ]),
-        trash.trashCount()
+        SalesReturn.countDocuments({ isDeleted: true, ...tenant })
     ]);
 
     const stats = {

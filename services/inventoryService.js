@@ -11,6 +11,8 @@ const ItemTrack = require("../model/itemTrack");
 const Product = require("../model/product");
 const AppError = require("../utils/appError");
 const { generateStockMovementCode } = require("./codeGenerator");
+const { companyFilter } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -134,11 +136,11 @@ const getLiveWarehouseStock = async (productId) => {
     };
 };
 
-const getInventoryList = async (query = {}) => {
+const getInventoryList = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
-    const filter = { isDeleted: { $ne: true } };
+    const filter = { isDeleted: { $ne: true }, ...companyFilter(companyId) };
 
     if (query.warehouseId) filter.warehouseId = toObjectId(query.warehouseId);
     if (query.branchId) filter.branchId = toObjectId(query.branchId);
@@ -193,19 +195,22 @@ const getInventoryList = async (query = {}) => {
     };
 };
 
-const getInventoryById = async (id) => {
+const getInventoryById = async (id, companyId = null) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
         throw new AppError("Invalid inventory id.", 400);
     }
+    const tenant = companyFilter(companyId);
     const row = await populateInventory(
-        Inventory.findOne({ _id: id, isDeleted: { $ne: true } })
+        Inventory.findOne({ _id: id, isDeleted: { $ne: true }, ...tenant })
     ).lean();
     if (!row) throw new AppError("Inventory record not found.", 404);
+    assertDocumentCompany(row, companyId, "Inventory");
     return row;
 };
 
-const getInventoryStats = async (query = {}) => {
-    const match = { isDeleted: { $ne: true } };
+const getInventoryStats = async (query = {}, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const match = { isDeleted: { $ne: true }, ...tenant };
     if (query.warehouseId) match.warehouseId = toObjectId(query.warehouseId);
 
     const [agg] = await Inventory.aggregate([
@@ -261,13 +266,18 @@ const getInventoryStats = async (query = {}) => {
         }
     ]);
 
-    const imeiMatch = { status: { $ne: "deleted" } };
+    const imeiMatch = { status: { $ne: "deleted" }, ...tenant };
     const imeiAvailable = await ItemTrack.countDocuments({
-        status: "available"
+        status: "available",
+        ...tenant
     });
-    const imeiSold = await ItemTrack.countDocuments({ status: "sold" });
+    const imeiSold = await ItemTrack.countDocuments({
+        status: "sold",
+        ...tenant
+    });
     const imeiInTransit = await ItemTrack.countDocuments({
-        status: "in-transit"
+        status: "in-transit",
+        ...tenant
     });
     const imeiActive = await ItemTrack.countDocuments(imeiMatch);
 
@@ -286,10 +296,11 @@ const getInventoryStats = async (query = {}) => {
     };
 };
 
-const getLowStock = async (query = {}) => {
+const getLowStock = async (query = {}, companyId = null) => {
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 50, 1), 200);
     const filter = {
         isDeleted: { $ne: true },
+        ...companyFilter(companyId),
         $or: [
             { stockStatus: { $in: ["Low Stock", "Out Of Stock"] } },
             {
@@ -319,11 +330,11 @@ const getLowStock = async (query = {}) => {
     return { items: filtered, total: filtered.length };
 };
 
-const getStockMovements = async (query = {}) => {
+const getStockMovements = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
-    const filter = {};
+    const filter = { ...companyFilter(companyId) };
 
     if (query.warehouseId) filter.warehouseId = toObjectId(query.warehouseId);
     if (query.branchId) filter.branchId = toObjectId(query.branchId);
@@ -370,11 +381,11 @@ const getStockMovements = async (query = {}) => {
     };
 };
 
-const getImeiStock = async (query = {}) => {
+const getImeiStock = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
-    const filter = {};
+    const filter = { ...companyFilter(companyId) };
 
     if (query.status) {
         filter.status = query.status;

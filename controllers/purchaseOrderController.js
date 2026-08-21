@@ -34,7 +34,7 @@ exports.getPurchaseOrders = asyncHandler(async (req, res) => {
 });
 
 exports.getPurchaseOrderStats = asyncHandler(async (req, res) => {
-    const query = { ...req.query };
+    const query = { ...req.query, companyId: req.companyId };
     if (req.linkedSupplier) {
         query.supplierId = String(req.linkedSupplier._id);
     }
@@ -45,15 +45,20 @@ exports.getPurchaseOrderStats = asyncHandler(async (req, res) => {
 exports.getPurchaseOrderById = asyncHandler(async (req, res) => {
     const includeDeleted =
         req.query.deleted === "true" || req.query.trash === "true";
-    const po = await purchaseOrderService.getPurchaseOrderById(req.params.id, {
-        includeDeleted
-    });
+    const po = await purchaseOrderService.getPurchaseOrderById(
+        req.params.id,
+        {
+            includeDeleted
+        },
+        req.companyId
+    );
     return success(res, "Purchase order retrieved successfully.", po);
 });
 
 exports.getProductPurchaseContext = asyncHandler(async (req, res) => {
     const data = await purchaseOrderService.getProductPurchaseContext(
-        req.params.productId
+        req.params.productId,
+        req.companyId
     );
     return success(res, "Product purchase context retrieved.", data);
 });

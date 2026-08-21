@@ -8,22 +8,30 @@ const getActorId = (req) =>
 exports.createReturn = asyncHandler(async (req, res) => {
     const doc = await salesReturnService.createFromSalesOrder(
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales return created.", doc, 201);
 });
 
 exports.getReturns = asyncHandler(async (req, res) => {
-    const result = await salesReturnService.getReturns(req.query);
+    const result = await salesReturnService.getReturns(
+        req.query,
+        req.companyId
+    );
     return success(res, "Sales returns retrieved.", result);
 });
 
 exports.getReturnById = asyncHandler(async (req, res) => {
     const includeDeleted =
         req.query.deleted === "true" || req.query.trash === "true";
-    const doc = await salesReturnService.getReturnById(req.params.id, {
-        includeDeleted
-    });
+    const doc = await salesReturnService.getReturnById(
+        req.params.id,
+        {
+            includeDeleted
+        },
+        req.companyId
+    );
     return success(res, "Sales return retrieved.", doc);
 });
 
@@ -37,13 +45,14 @@ exports.receiveReturn = asyncHandler(async (req, res) => {
 
 exports.getReturnableFromOrder = asyncHandler(async (req, res) => {
     const data = await salesReturnService.getReturnableFromOrder(
-        req.params.salesOrderId
+        req.params.salesOrderId,
+        req.companyId
     );
     return success(res, "Returnable lines retrieved.", data);
 });
 
 exports.getReturnStats = asyncHandler(async (req, res) => {
-    const stats = await salesReturnService.getReturnStats();
+    const stats = await salesReturnService.getReturnStats(req.companyId);
     return success(res, "Sales return stats retrieved.", stats);
 });
 

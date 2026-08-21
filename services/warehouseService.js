@@ -443,10 +443,11 @@ const bulkRestoreWarehouses = (payload, actorId) =>
 const bulkPermanentDeleteWarehouses = (payload) =>
     trash.bulkPermanentDelete(payload);
 
-const getWarehouseStats = async () => {
+const getWarehouseStats = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
     const [[rows], trashCount] = await Promise.all([
         Warehouse.aggregate([
-            { $match: NOT_DELETED },
+            { $match: { ...NOT_DELETED, ...tenant } },
             {
                 $group: {
                     _id: null,
@@ -473,7 +474,7 @@ const getWarehouseStats = async () => {
                 }
             }
         ]),
-        trash.trashCount()
+        Warehouse.countDocuments({ isDeleted: true, ...tenant })
     ]);
 
     return {

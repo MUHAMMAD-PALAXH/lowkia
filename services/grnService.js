@@ -33,6 +33,8 @@ const productService = require("./productService");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const fulfillmentCycle = require("./fulfillmentCycleService");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const RECEIVABLE_PO = [
@@ -1555,10 +1557,12 @@ const applyPoReceiving = async (grn, session) => {
 // Public API
 // ==========================================================
 
-const listReceivablePurchaseOrders = async (query = {}) => {
+const listReceivablePurchaseOrders = async (query = {}, companyId = null) => {
+    const tenant = companyFilter(companyId);
     // Only POs with an OPEN GRN (not Completed) — one GRN per PO lifecycle.
     const openGrns = await GRN.find({
         ...NOT_DELETED,
+        ...tenant,
         purchaseOrderId: { $ne: null },
         status: { $in: EDITABLE_GRN },
         inventoryUpdated: { $ne: true }
@@ -1577,6 +1581,7 @@ const listReceivablePurchaseOrders = async (query = {}) => {
 
     const filter = {
         ...NOT_DELETED,
+        ...tenant,
         status: { $in: RECEIVABLE_PO },
         _id: { $in: openPoIds }
     };
@@ -1627,7 +1632,12 @@ const listReceivablePurchaseOrders = async (query = {}) => {
     };
 };
 
-const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
+const createGrnFromPurchaseOrder = async (
+    payload = {},
+    actorId = null,
+    companyId = null
+) => {
+    const tenant = companyFilter(companyId);
     const poId = toObjectId(payload.purchaseOrderId || payload.poId);
     if (!poId) throw new AppError("purchaseOrderId is required.", 400);
 
@@ -1636,8 +1646,9 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
         throw new AppError("Creator (createdBy / auth user) is required.", 400);
     }
 
-    const po = await PurchaseOrder.findOne({ _id: poId, ...NOT_DELETED });
+    const po = await PurchaseOrder.findOne({ _id: poId, ...NOT_DELETED, ...tenant });
     if (!po) throw new AppError("Purchase order not found.", 404);
+    assertDocumentCompany(po, companyId, "Purchase order");
 
     // With supplier: GRN only after goods are sent (not merely accepted).
     // Without supplier: Ordered / receive stages.
@@ -1667,6 +1678,7 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     const existingOpen = await GRN.findOne({
         purchaseOrderId: poId,
         ...NOT_DELETED,
+        ...tenant,
         status: { $in: EDITABLE_GRN },
         inventoryUpdated: { $ne: true }
     }).sort({ createdAt: -1 });
@@ -1756,6 +1768,7 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     const existingAny = await GRN.findOne({
         purchaseOrderId: poId,
         ...NOT_DELETED,
+        ...tenant,
         status: { $ne: "Cancelled" }
     }).sort({ createdAt: -1 });
 
@@ -1803,27 +1816,32 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     }
 
     const owner = isOwnerActor(payload);
-    const grn = new GRN({
-        grnNumber: await generateGRNCode(),
-        purchaseOrderId: po._id,
-        supplierId: po.supplierId || null,
-        warehouseId,
-        branchId: toObjectId(payload.branchId) || po.branchId || null,
-        referenceNumber: (payload.referenceNumber || "").toString().trim(),
-        supplierInvoiceNo: (payload.supplierInvoiceNo || "").toString().trim(),
-        receivedDate: payload.receivedDate
-            ? new Date(payload.receivedDate)
-            : new Date(),
-        invoiceDate: payload.invoiceDate ? new Date(payload.invoiceDate) : null,
-        items: lines,
-        supplierNote: (payload.supplierNote || "").toString().trim(),
-        internalNote: (payload.internalNote || "").toString().trim(),
-        createdBy,
-        status: "Draft",
-        requiresApproval: !owner,
-        qualityStatus: "Pending",
-        purchaseStatus: "Pending"
-    });
+    const grn = new GRN(
+        stampCompany(
+            {
+                grnNumber: await generateGRNCode(),
+                purchaseOrderId: po._id,
+                supplierId: po.supplierId || null,
+                warehouseId,
+                branchId: toObjectId(payload.branchId) || po.branchId || null,
+                referenceNumber: (payload.referenceNumber || "").toString().trim(),
+                supplierInvoiceNo: (payload.supplierInvoiceNo || "").toString().trim(),
+                receivedDate: payload.receivedDate
+                    ? new Date(payload.receivedDate)
+                    : new Date(),
+                invoiceDate: payload.invoiceDate ? new Date(payload.invoiceDate) : null,
+                items: lines,
+                supplierNote: (payload.supplierNote || "").toString().trim(),
+                internalNote: (payload.internalNote || "").toString().trim(),
+                createdBy,
+                status: "Draft",
+                requiresApproval: !owner,
+                qualityStatus: "Pending",
+                purchaseStatus: "Pending"
+            },
+            companyId
+        )
+    );
 
     recalculateGrn(grn);
     await grn.save();
@@ -1840,12 +1858,15 @@ const createGrnFromPurchaseOrder = async (payload = {}, actorId = null) => {
     return enrichGrnDoc(created, ctx);
 };
 
-const getGrns = async (query = {}) => {
+const getGrns = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const tenant = companyFilter(companyId);
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
 
     if (query.status) filter.status = query.status;
     if (query.purchaseOrderId) {
@@ -2050,13 +2071,15 @@ const syncOpenDraftGrnLinesForPo = async (purchaseOrderId) => {
     }
 };
 
-const getGrnById = async (id, query = {}) => {
+const getGrnById = async (id, query = {}, companyId = null) => {
     const trashMode = isTrashQuery(query);
+    const tenant = companyFilter(companyId);
     const filter = trashMode
-        ? { _id: id, isDeleted: true }
-        : { _id: id, ...NOT_DELETED };
+        ? { _id: id, isDeleted: true, ...tenant }
+        : { _id: id, ...NOT_DELETED, ...tenant };
     let grn = await populateGrn(GRN.findOne(filter));
     if (!grn) throw new AppError("GRN not found.", 404);
+    assertDocumentCompany(grn, companyId, "GRN");
     const poId = grn.purchaseOrderId?._id || grn.purchaseOrderId;
     if (!trashMode) {
         await syncDraftGrnLinesFromPo(grn);
@@ -2132,10 +2155,11 @@ const getGrnDeleteCheck = async (id) => {
     };
 };
 
-const getGrnStats = async () => {
+const getGrnStats = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
     const [rows, trashCount] = await Promise.all([
         GRN.aggregate([
-            { $match: { ...NOT_DELETED } },
+            { $match: { ...NOT_DELETED, ...tenant } },
             {
                 $group: {
                     _id: "$status",
@@ -2144,7 +2168,7 @@ const getGrnStats = async () => {
                 }
             }
         ]),
-        trash.trashCount()
+        GRN.countDocuments({ isDeleted: true, ...tenant })
     ]);
     const stats = {
         total: 0,

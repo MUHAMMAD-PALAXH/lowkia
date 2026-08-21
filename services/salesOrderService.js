@@ -15,6 +15,8 @@ const {
 } = require("./codeGenerator");
 const productService = require("./productService");
 const AppError = require("../utils/appError");
+const { companyFilter } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const EDITABLE_STATUSES = ["Draft", "Pending Approval"];
@@ -915,7 +917,7 @@ const getSalesOrders = async (query = {}, companyId = null) => {
         query.trash === "true" ||
         query.includeDeleted === "trash";
     const filter = trash ? { isDeleted: true } : { ...NOT_DELETED };
-    if (companyId) filter.companyId = companyId;
+    Object.assign(filter, companyFilter(companyId));
 
     if (query.status) filter.status = query.status;
     if (query.customerId && toObjectId(query.customerId)) {
@@ -984,11 +986,17 @@ const getSalesOrders = async (query = {}, companyId = null) => {
     };
 };
 
-const getSalesOrderById = async (id, { includeDeleted = false } = {}) => {
-    const filter = { _id: id };
+const getSalesOrderById = async (
+    id,
+    { includeDeleted = false } = {},
+    companyId = null
+) => {
+    const tenant = companyFilter(companyId);
+    const filter = { _id: id, ...tenant };
     if (!includeDeleted) Object.assign(filter, NOT_DELETED);
     const order = await populateSo(SalesOrder.findOne(filter));
     if (!order) throw new AppError("Sales order not found.", 404);
+    assertDocumentCompany(order, companyId, "Sales order");
     return order;
 };
 
@@ -2051,7 +2059,8 @@ const lookupByImei = async (imei, warehouseId = null) => {
  * Branch sales catalog: all Active/Approved products (optional preferred branchIds).
  * Branch stock is annotated (can be 0) so SO can sell products without prior stock.
  */
-const getBranchCatalog = async (query = {}) => {
+const getBranchCatalog = async (query = {}, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const branchId = toObjectId(query.branchId);
     if (!branchId) throw new AppError("Branch is required.", 400);
 
@@ -2063,6 +2072,7 @@ const getBranchCatalog = async (query = {}) => {
 
     const warehouses = await Warehouse.find({
         ...NOT_DELETED,
+        ...tenant,
         branchIds: branchId,
         ...(warehouseId ? { _id: warehouseId } : {})
     }).select("_id");
@@ -2075,7 +2085,7 @@ const getBranchCatalog = async (query = {}) => {
         warehouseIds.push(warehouseId);
     }
 
-    const invFilter = { isDeleted: { $ne: true } };
+    const invFilter = { isDeleted: { $ne: true }, ...tenant };
     if (warehouseId) {
         invFilter.warehouseId = warehouseId;
     } else if (warehouseIds.length) {
@@ -2086,6 +2096,7 @@ const getBranchCatalog = async (query = {}) => {
 
     const productFilter = {
         ...NOT_DELETED,
+        ...tenant,
         status: "Active",
         $or: [
             { approvalStatus: "Approved" },
@@ -2305,10 +2316,11 @@ const getBranchCatalog = async (query = {}) => {
     return { items, total: items.length };
 };
 
-const getSalesOrderStats = async () => {
+const getSalesOrderStats = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
     const [[rows], trashCount] = await Promise.all([
         SalesOrder.aggregate([
-            { $match: NOT_DELETED },
+            { $match: { ...NOT_DELETED, ...tenant } },
             {
                 $group: {
                     _id: null,
@@ -2350,7 +2362,7 @@ const getSalesOrderStats = async () => {
                 }
             }
         ]),
-        SalesOrder.countDocuments({ isDeleted: true })
+        SalesOrder.countDocuments({ isDeleted: true, ...tenant })
     ]);
 
     return {

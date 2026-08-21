@@ -12,22 +12,29 @@ const getActor = (req) => ({
 });
 
 exports.listReceivablePurchaseOrders = asyncHandler(async (req, res) => {
-    const data = await grnService.listReceivablePurchaseOrders(req.query);
+    const data = await grnService.listReceivablePurchaseOrders(
+        req.query,
+        req.companyId
+    );
     return success(res, "Receivable purchase orders retrieved.", data);
 });
 
 exports.getGrnStats = asyncHandler(async (req, res) => {
-    const stats = await grnService.getGrnStats();
+    const stats = await grnService.getGrnStats(req.companyId);
     return success(res, "GRN stats retrieved.", stats);
 });
 
 exports.getGrns = asyncHandler(async (req, res) => {
-    const result = await grnService.getGrns(req.query);
+    const result = await grnService.getGrns(req.query, req.companyId);
     return success(res, "GRNs retrieved successfully.", result);
 });
 
 exports.getGrnById = asyncHandler(async (req, res) => {
-    const grn = await grnService.getGrnById(req.params.id, req.query);
+    const grn = await grnService.getGrnById(
+        req.params.id,
+        req.query,
+        req.companyId
+    );
     return success(res, "GRN retrieved successfully.", grn);
 });
 
@@ -43,7 +50,8 @@ exports.createGrnFromPurchaseOrder = asyncHandler(async (req, res) => {
     };
     const grn = await grnService.createGrnFromPurchaseOrder(
         body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "GRN created from purchase order.", grn, 201);
 });

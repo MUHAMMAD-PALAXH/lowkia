@@ -3,6 +3,8 @@ const Customer = require("../model/customer");
 const { generateCustomerCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const trash = createTrashOps(Customer, {
     label: "Customer",
@@ -37,7 +39,8 @@ const PROTECTED_FIELDS = [
     "isApproved",
     "createdBy",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "companyId"
 ];
 
 const escapeRegex = (value = "") =>
@@ -52,9 +55,14 @@ const pickUpdatableFields = (payload = {}) => {
     return data;
 };
 
-const findActiveCustomerOrFail = trash.findActiveOrFail;
+const findActiveCustomerOrFail = async (id, companyId) => {
+    const customer = await trash.findActiveOrFail(id);
+    assertDocumentCompany(customer, companyId, "Customer");
+    return customer;
+};
 
-const createCustomer = async (payload, actorId = null) => {
+const createCustomer = async (payload, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const name = payload.name?.trim();
     if (!name) {
         throw new AppError("Customer name is required.", 400);
@@ -62,7 +70,8 @@ const createCustomer = async (payload, actorId = null) => {
 
     const duplicate = await Customer.findOne({
         name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
-        isDeleted: false
+        isDeleted: false,
+        ...tenant
     });
     if (duplicate) {
         throw new AppError("Customer with this name already exists.", 409);
@@ -71,7 +80,8 @@ const createCustomer = async (payload, actorId = null) => {
     if (payload.email) {
         const emailExists = await Customer.findOne({
             email: payload.email.toLowerCase().trim(),
-            isDeleted: false
+            isDeleted: false,
+            ...tenant
         });
         if (emailExists) {
             throw new AppError("Customer with this email already exists.", 409);
@@ -81,7 +91,8 @@ const createCustomer = async (payload, actorId = null) => {
     if (payload.phone) {
         const phoneExists = await Customer.findOne({
             phone: payload.phone.trim(),
-            isDeleted: false
+            isDeleted: false,
+            ...tenant
         });
         if (phoneExists) {
             throw new AppError("Customer with this phone already exists.", 409);
@@ -91,27 +102,33 @@ const createCustomer = async (payload, actorId = null) => {
     const customerCode = await generateCustomerCode();
     const data = pickUpdatableFields(payload);
 
-    return Customer.create({
-        ...data,
-        name,
-        customerCode,
-        customerId: customerCode,
-        openingBalance: data.openingBalance || 0,
-        currentBalance: data.openingBalance || 0,
-        isApproved: true,
-        approvedAt: new Date(),
-        createdBy: actorId || null
-    });
+    return Customer.create(
+        stampCompany(
+            {
+                ...data,
+                name,
+                customerCode,
+                customerId: customerCode,
+                openingBalance: data.openingBalance || 0,
+                currentBalance: data.openingBalance || 0,
+                isApproved: true,
+                approvedAt: new Date(),
+                createdBy: actorId || null
+            },
+            companyId
+        )
+    );
 };
 
-const getCustomers = async (query = {}) => {
+const getCustomers = async (query = {}, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
     const filter = trashMode
-        ? { isDeleted: true }
-        : { isDeleted: { $ne: true } };
+        ? { isDeleted: true, ...tenant }
+        : { isDeleted: { $ne: true }, ...tenant };
 
     if (query.status) filter.status = query.status;
     if (query.customerType) filter.customerType = query.customerType;
@@ -145,29 +162,44 @@ const getCustomers = async (query = {}) => {
     };
 };
 
-const getActiveCustomers = () => Customer.getActiveCustomers().sort({ name: 1 });
+const getActiveCustomers = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
+    return Customer.find({
+        status: "Active",
+        isDeleted: { $ne: true },
+        ...tenant
+    }).sort({ name: 1 });
+};
 
-const getCustomerById = async (id, { includeDeleted = false } = {}) => {
+const getCustomerById = async (
+    id,
+    companyId = null,
+    { includeDeleted = false } = {}
+) => {
+    companyFilter(companyId);
     if (includeDeleted) {
         if (!mongoose.Types.ObjectId.isValid(id)) {
             throw new AppError("Invalid customer id.", 400);
         }
         const customer = await Customer.findById(id);
         if (!customer) throw new AppError("Customer not found.", 404);
+        assertDocumentCompany(customer, companyId, "Customer");
         return customer;
     }
-    return findActiveCustomerOrFail(id);
+    return findActiveCustomerOrFail(id, companyId);
 };
 
-const updateCustomer = async (id, payload, actorId = null) => {
-    const customer = await findActiveCustomerOrFail(id);
+const updateCustomer = async (id, payload, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const customer = await findActiveCustomerOrFail(id, companyId);
     const data = pickUpdatableFields(payload);
 
     if (data.name) {
         const duplicate = await Customer.findOne({
             _id: { $ne: customer._id },
             name: { $regex: `^${escapeRegex(data.name.trim())}$`, $options: "i" },
-            isDeleted: false
+            isDeleted: false,
+            ...tenant
         });
         if (duplicate) {
             throw new AppError("Customer with this name already exists.", 409);
@@ -181,20 +213,45 @@ const updateCustomer = async (id, payload, actorId = null) => {
     return customer;
 };
 
-const deleteCustomer = (id, actorId = null) => trash.softDelete(id, actorId);
-const restoreCustomer = (id, actorId = null) => trash.restore(id, actorId);
-const permanentDeleteCustomer = (id) => trash.permanentDelete(id);
-const bulkDeleteCustomers = (payload, actorId) =>
-    trash.bulkSoftDelete(payload, actorId);
-const bulkRestoreCustomers = (payload, actorId) =>
-    trash.bulkRestore(payload, actorId);
-const bulkPermanentDeleteCustomers = (payload) =>
-    trash.bulkPermanentDelete(payload);
+const deleteCustomer = async (id, actorId = null, companyId = null) => {
+    await findActiveCustomerOrFail(id, companyId);
+    return trash.softDelete(id, actorId);
+};
 
-const getCustomerStats = async () => {
+const restoreCustomer = async (id, actorId = null, companyId = null) => {
+    companyFilter(companyId);
+    const customer = await trash.findTrashOrFail(id);
+    assertDocumentCompany(customer, companyId, "Customer");
+    return trash.restore(id, actorId);
+};
+
+const permanentDeleteCustomer = async (id, companyId = null) => {
+    companyFilter(companyId);
+    const customer = await trash.findTrashOrFail(id);
+    assertDocumentCompany(customer, companyId, "Customer");
+    return trash.permanentDelete(id);
+};
+
+const bulkDeleteCustomers = async (payload, actorId, companyId = null) => {
+    companyFilter(companyId);
+    return trash.bulkSoftDelete(payload, actorId);
+};
+
+const bulkRestoreCustomers = async (payload, actorId, companyId = null) => {
+    companyFilter(companyId);
+    return trash.bulkRestore(payload, actorId);
+};
+
+const bulkPermanentDeleteCustomers = async (payload, companyId = null) => {
+    companyFilter(companyId);
+    return trash.bulkPermanentDelete(payload);
+};
+
+const getCustomerStats = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
     const [[rows], trashCount] = await Promise.all([
         Customer.aggregate([
-            { $match: { isDeleted: { $ne: true } } },
+            { $match: { isDeleted: { $ne: true }, ...tenant } },
             {
                 $group: {
                     _id: null,
@@ -214,7 +271,7 @@ const getCustomerStats = async () => {
                 }
             }
         ]),
-        trash.trashCount()
+        Customer.countDocuments({ isDeleted: true, ...tenant })
     ]);
 
     return {
@@ -229,17 +286,24 @@ const getCustomerStats = async () => {
     };
 };
 
-const blockCustomer = async (id) => {
-    const customer = await findActiveCustomerOrFail(id);
+const blockCustomer = async (id, companyId = null) => {
+    const customer = await findActiveCustomerOrFail(id, companyId);
     return customer.block();
 };
 
-const activateCustomer = async (id) => {
-    const customer = await findActiveCustomerOrFail(id);
+const activateCustomer = async (id, companyId = null) => {
+    const customer = await findActiveCustomerOrFail(id, companyId);
     return customer.activate();
 };
 
-const getDueReport = () => Customer.getDueReport();
+const getDueReport = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
+    return Customer.find({
+        isDeleted: { $ne: true },
+        totalDueAmount: { $gt: 0 },
+        ...tenant
+    }).sort({ totalDueAmount: -1 });
+};
 
 module.exports = {
     createCustomer,

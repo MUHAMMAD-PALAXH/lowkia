@@ -4,6 +4,8 @@ const PurchaseOrder = require("../model/purchaseOrder");
 const { generateSupplierCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const trash = createTrashOps(Supplier, {
     label: "Supplier",
@@ -68,7 +70,8 @@ const findActiveSupplierOrFail = trash.findActiveOrFail;
 // Create Supplier
 // ==========================================================
 
-const createSupplier = async (payload, actorId = null) => {
+const createSupplier = async (payload, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const name = payload.name?.trim();
 
     if (!name) {
@@ -77,7 +80,8 @@ const createSupplier = async (payload, actorId = null) => {
 
     const duplicate = await Supplier.findOne({
         name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
-        isDeleted: false
+        isDeleted: false,
+        ...tenant
     });
 
     if (duplicate) {
@@ -87,7 +91,8 @@ const createSupplier = async (payload, actorId = null) => {
     if (payload.email) {
         const emailExists = await Supplier.findOne({
             email: payload.email.toLowerCase().trim(),
-            isDeleted: false
+            isDeleted: false,
+            ...tenant
         });
 
         if (emailExists) {
@@ -98,7 +103,8 @@ const createSupplier = async (payload, actorId = null) => {
     if (payload.phone) {
         const phoneExists = await Supplier.findOne({
             phone: payload.phone.trim(),
-            isDeleted: false
+            isDeleted: false,
+            ...tenant
         });
 
         if (phoneExists) {
@@ -109,14 +115,19 @@ const createSupplier = async (payload, actorId = null) => {
     const supplierCode = await generateSupplierCode();
     const data = pickUpdatableFields(payload);
 
-    const supplier = await Supplier.create({
-        ...data,
-        name,
-        supplierCode,
-        openingBalance: data.openingBalance || 0,
-        currentBalance: data.openingBalance || 0,
-        createdBy: actorId || null
-    });
+    const supplier = await Supplier.create(
+        stampCompany(
+            {
+                ...data,
+                name,
+                supplierCode,
+                openingBalance: data.openingBalance || 0,
+                currentBalance: data.openingBalance || 0,
+                createdBy: actorId || null
+            },
+            companyId
+        )
+    );
 
     return supplier;
 };
@@ -125,13 +136,16 @@ const createSupplier = async (payload, actorId = null) => {
 // List Suppliers (pagination + filters)
 // ==========================================================
 
-const getSuppliers = async (query = {}) => {
+const getSuppliers = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
+    const tenant = companyFilter(companyId);
 
-    const filter = trashMode ? { isDeleted: true } : { isDeleted: false };
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { isDeleted: false, ...tenant };
 
     if (query.status) {
         filter.status = query.status;
@@ -422,8 +436,9 @@ const recomputeSupplierFinancials = async (supplierId, { session = null } = {}) 
 // Get Single Supplier
 // ==========================================================
 
-const getSupplierById = async (id) => {
+const getSupplierById = async (id, companyId = null) => {
     const supplier = await findActiveSupplierOrFail(id);
+    assertDocumentCompany(supplier, companyId, "Supplier");
 
     await supplier.populate([
         { path: "createdBy", select: "firstName lastName email" },
@@ -503,7 +518,8 @@ const bulkRestoreSuppliers = (payload, actorId) =>
 const bulkPermanentDeleteSuppliers = (payload) =>
     trash.bulkPermanentDelete(payload);
 
-const getSupplierStats = async () => {
+const getSupplierStats = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
     const [
         [rows],
         trashCount,
@@ -514,7 +530,7 @@ const getSupplierStats = async () => {
         openAgreedBySupplierRows
     ] = await Promise.all([
         Supplier.aggregate([
-            { $match: { isDeleted: false } },
+            { $match: { isDeleted: false, ...tenant } },
             {
                 $group: {
                     _id: null,
@@ -540,13 +556,15 @@ const getSupplierStats = async () => {
                 }
             }
         ]),
-        trash.trashCount(),
+        Supplier.countDocuments({ isDeleted: true, ...tenant }),
         PurchaseOrder.countDocuments({
             isDeleted: { $ne: true },
+            ...tenant,
             status: { $in: ["Awaiting Supplier", "New Demand Sent"] }
         }),
         PurchaseOrder.countDocuments({
             isDeleted: { $ne: true },
+            ...tenant,
             status: {
                 $in: [
                     "Agreed",
@@ -558,6 +576,7 @@ const getSupplierStats = async () => {
         }),
         PurchaseOrder.countDocuments({
             isDeleted: { $ne: true },
+            ...tenant,
             $or: [
                 { status: "Supplier Rejected" },
                 {
@@ -570,6 +589,7 @@ const getSupplierStats = async () => {
             {
                 $match: {
                     isDeleted: { $ne: true },
+                    ...tenant,
                     status: { $in: ["Awaiting Supplier", "New Demand Sent"] },
                     supplierId: { $ne: null }
                 }
@@ -586,6 +606,7 @@ const getSupplierStats = async () => {
             {
                 $match: {
                     isDeleted: { $ne: true },
+                    ...tenant,
                     supplierId: { $ne: null },
                     isFullyReceived: { $ne: true },
                     status: {
@@ -777,8 +798,12 @@ const rateSupplier = async (id, score, actorId = null) => {
 // Reports / helpers
 // ==========================================================
 
-const getActiveSuppliers = async () => {
-    return Supplier.getActiveSuppliers();
+const getActiveSuppliers = async (companyId = null) => {
+    return Supplier.find({
+        status: "Active",
+        isDeleted: false,
+        ...companyFilter(companyId)
+    }).sort({ name: 1 });
 };
 
 const getPurchaseReport = async () => {
@@ -823,11 +848,12 @@ const getDueReport = async () => {
 // Rich supplier profile (products / POs / GRNs / spend)
 // ==========================================================
 
-const getSupplierDetails = async (id, query = {}) => {
+const getSupplierDetails = async (id, query = {}, companyId = null) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
         throw new AppError("Invalid supplier id.", 400);
     }
 
+    const tenant = companyFilter(companyId);
     const supplierId = new mongoose.Types.ObjectId(id);
     const poLimit = Math.min(Math.max(parseInt(query.poLimit, 10) || 30, 1), 100);
     const grnLimit = Math.min(Math.max(parseInt(query.grnLimit, 10) || 30, 1), 100);
@@ -846,13 +872,15 @@ const getSupplierDetails = async (id, query = {}) => {
 
     const supplier = await Supplier.findOne({
         _id: supplierId,
-        isDeleted: { $ne: true }
+        isDeleted: { $ne: true },
+        ...tenant
     })
         .populate("createdBy", "firstName lastName email name")
         .populate("updatedBy", "firstName lastName email name")
         .populate("approvedBy", "firstName lastName email name");
 
     if (!supplier) throw new AppError("Supplier not found.", 404);
+    assertDocumentCompany(supplier, companyId, "Supplier");
 
     const [
         linkedProducts,
@@ -864,6 +892,7 @@ const getSupplierDetails = async (id, query = {}) => {
     ] = await Promise.all([
         Product.find({
             isDeleted: { $ne: true },
+            ...tenant,
             $or: [
                 { "suppliers.supplierId": supplierId },
                 { primarySupplierId: supplierId },
@@ -879,6 +908,7 @@ const getSupplierDetails = async (id, query = {}) => {
 
         PurchaseOrder.find({
             supplierId,
+            ...tenant,
             $or: [
                 // Visible only after "Send to Supplier" (Awaiting+) — not Draft/Approved drafts
                 {
@@ -926,7 +956,8 @@ const getSupplierDetails = async (id, query = {}) => {
 
         GRN.find({
             supplierId,
-            isDeleted: { $ne: true }
+            isDeleted: { $ne: true },
+            ...tenant
         })
             .select(
                 "grnNumber receivedDate status grandTotal totalAcceptedQuantity supplierInvoiceNo purchaseOrderId inventoryUpdated"

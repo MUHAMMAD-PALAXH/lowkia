@@ -34,7 +34,7 @@ exports.getActiveWarehouses = asyncHandler(async (req, res) => {
 });
 
 exports.getWarehouseStats = asyncHandler(async (req, res) => {
-    const stats = await warehouseService.getWarehouseStats();
+    const stats = await warehouseService.getWarehouseStats(req.companyId);
     return success(res, "Warehouse stats retrieved successfully.", stats);
 });
 

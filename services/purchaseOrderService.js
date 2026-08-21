@@ -10,6 +10,8 @@ const { generatePurchaseOrderCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const fulfillmentCycle = require("./fulfillmentCycleService");
+const { companyFilter } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const OPEN_GRN_STATUSES = ["Draft", "Pending Approval"];
@@ -797,6 +799,7 @@ const getPurchaseOrders = async (query = {}) => {
 
     const trashMode = isTrashQuery(query);
     const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    Object.assign(filter, companyFilter(query.companyId));
 
     if (query.status) {
         if (query.status === "Completed") {
@@ -805,7 +808,6 @@ const getPurchaseOrders = async (query = {}) => {
             filter.status = query.status;
         }
     }
-    if (query.companyId) filter.companyId = query.companyId;
     if (query.purchaseType) filter.purchaseType = query.purchaseType;
 
     const supplierId = toObjectId(query.supplierId || query.supplier);
@@ -864,16 +866,23 @@ const getPurchaseOrders = async (query = {}) => {
     };
 };
 
-const getPurchaseOrderById = async (id, { includeDeleted = false } = {}) => {
-    const filter = { _id: id };
+const getPurchaseOrderById = async (
+    id,
+    { includeDeleted = false } = {},
+    companyId = null
+) => {
+    const tenant = companyFilter(companyId);
+    const filter = { _id: id, ...tenant };
     if (!includeDeleted) Object.assign(filter, NOT_DELETED);
     const po = await populatePo(PurchaseOrder.findOne(filter));
     if (!po) throw new AppError("Purchase order not found.", 404);
+    assertDocumentCompany(po, companyId, "Purchase order");
     return enrichPosWithGrnMeta(po);
 };
 
 const getPurchaseOrderStats = async (query = {}) => {
-    const match = { ...NOT_DELETED };
+    const tenant = companyFilter(query.companyId);
+    const match = { ...NOT_DELETED, ...tenant };
     const supplierId = toObjectId(query.supplierId);
     if (supplierId) match.supplierId = supplierId;
 
@@ -888,7 +897,9 @@ const getPurchaseOrderStats = async (query = {}) => {
                 }
             }
         ]),
-        supplierId ? Promise.resolve(0) : trash.trashCount()
+        supplierId
+            ? Promise.resolve(0)
+            : PurchaseOrder.countDocuments({ isDeleted: true, ...tenant })
     ]);
 
     const stats = {
@@ -3745,11 +3756,16 @@ const getPurchaseOrderDeleteCheck = async (id) => {
 };
 
 /** Product helper for Existing PO form: stock + linked suppliers + last prices */
-const getProductPurchaseContext = async (productId) => {
+const getProductPurchaseContext = async (productId, companyId = null) => {
+    const tenant = companyFilter(companyId);
     const id = toObjectId(productId);
     if (!id) throw new AppError("Invalid product id.", 400);
 
-    const product = await Product.findOne({ _id: id, ...NOT_DELETED })
+    const product = await Product.findOne({
+        _id: id,
+        ...NOT_DELETED,
+        ...tenant
+    })
         .populate(
             "suppliers.supplierId",
             "supplierCode name companyName phone email status paymentTerms currentBalance totalPurchaseAmount totalPaidAmount totalDueAmount openingBalance lastPurchaseDate lastPaymentDate address city country bankAccounts contactPersons"
@@ -3761,10 +3777,12 @@ const getProductPurchaseContext = async (productId) => {
         .lean();
 
     if (!product) throw new AppError("Product not found.", 404);
+    assertDocumentCompany(product, companyId, "Product");
 
     const variants = await ProductVariant.find({
         productId: id,
-        isDeleted: { $ne: true }
+        isDeleted: { $ne: true },
+        ...tenant
     })
         .select(
             "sku barcode combinationString purchasePrice costPrice sellingPrice wholesalePrice quantity attributes status isDefaultVariant"
@@ -3775,6 +3793,7 @@ const getProductPurchaseContext = async (productId) => {
 
     const history = await PurchaseOrder.find({
         ...NOT_DELETED,
+        ...tenant,
         "items.productId": id,
         status: {
             $in: [
