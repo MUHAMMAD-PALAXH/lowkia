@@ -6,27 +6,34 @@ const getActorId = (req) =>
     req.user?._id || req.body?.createdBy || req.body?.updatedBy || null;
 
 exports.createBranch = asyncHandler(async (req, res) => {
-    const branch = await branchService.createBranch(req.body, getActorId(req));
+    const branch = await branchService.createBranch(
+        req.body,
+        getActorId(req),
+        req.companyId
+    );
     return success(res, "Branch created successfully.", branch, 201);
 });
 
 exports.getBranches = asyncHandler(async (req, res) => {
-    const result = await branchService.getBranches(req.query);
+    const result = await branchService.getBranches(req.query, req.companyId);
     return success(res, "Branches retrieved successfully.", result);
 });
 
 exports.getActiveBranches = asyncHandler(async (req, res) => {
-    const branches = await branchService.getActiveBranches();
+    const branches = await branchService.getActiveBranches(req.companyId);
     return success(res, "Active branches retrieved successfully.", branches);
 });
 
 exports.getBranchStats = asyncHandler(async (req, res) => {
-    const stats = await branchService.getBranchStats();
+    const stats = await branchService.getBranchStats(req.companyId);
     return success(res, "Branch stats retrieved successfully.", stats);
 });
 
 exports.getBranchById = asyncHandler(async (req, res) => {
-    const branch = await branchService.getBranchById(req.params.id);
+    const branch = await branchService.getBranchById(
+        req.params.id,
+        req.companyId
+    );
     return success(res, "Branch retrieved successfully.", branch);
 });
 
@@ -34,7 +41,8 @@ exports.updateBranch = asyncHandler(async (req, res) => {
     const branch = await branchService.updateBranch(
         req.params.id,
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Branch updated successfully.", branch);
 });

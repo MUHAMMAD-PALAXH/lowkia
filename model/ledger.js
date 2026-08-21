@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Ledger Schema
@@ -576,4 +577,6 @@ ledgerSchema.set("toJSON", {
 // ==========================================================
 // EXPORT
 // ==========================================================
+ledgerSchema.plugin(tenantPlugin);
+
 module.exports = mongoose.model("Ledger", ledgerSchema);

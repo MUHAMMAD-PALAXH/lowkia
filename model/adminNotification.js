@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 
 // ==========================================================
@@ -843,6 +844,8 @@ notificationSchema.set(
 // EXPORT
 // ==========================================================
 
+
+notificationSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "Notification",

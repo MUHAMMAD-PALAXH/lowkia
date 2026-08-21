@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 
 // ==========================================================
@@ -1062,6 +1063,8 @@ stockTransferSchema.set(
 // EXPORT
 // ==========================================================
 
+
+stockTransferSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "StockTransfer",

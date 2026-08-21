@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 
 // ==========================================================
@@ -866,6 +867,8 @@ grnSchema.set(
 // ==========================================================
 // EXPORT
 // ==========================================================
+
+grnSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "GRN",

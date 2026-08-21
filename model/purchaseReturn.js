@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Purchase Return Item Sub-Schema
@@ -672,4 +673,6 @@ purchaseReturnSchema.set("toJSON", {
 // ==========================================================
 // EXPORT
 // ==========================================================
+purchaseReturnSchema.plugin(tenantPlugin);
+
 module.exports = mongoose.model("PurchaseReturn", purchaseReturnSchema);

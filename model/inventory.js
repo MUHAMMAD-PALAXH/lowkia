@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Inventory Schema
@@ -560,5 +561,7 @@ inventorySchema.set("toJSON", {
 // ==========================================================
 // Export
 // ==========================================================
+
+inventorySchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("Inventory", inventorySchema);

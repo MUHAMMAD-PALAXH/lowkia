@@ -160,6 +160,7 @@ app.use('/api/overtime-requests', require('./routes/overtime'));
 
 // Finance foundation (Phase 1 — company / tenant)
 app.use('/api/company', require('./routes/company'));
+app.use('/api/platform', require('./routes/platform'));
 // Finance Phase 2 — supplier payable
 app.use('/api/supplier-payables', require('./routes/supplierPayable'));
 // Finance Phase 3 — supplier payments

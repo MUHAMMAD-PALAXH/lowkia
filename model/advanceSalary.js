@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 
 // ==========================================================
@@ -778,6 +779,8 @@ advanceSalarySchema.set(
 // EXPORT
 // ==========================================================
 
+
+advanceSalarySchema.plugin(tenantPlugin);
 
 module.exports =
 

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Product Variant Attribute Schema
@@ -492,5 +493,7 @@ productVariantSchema.set("toJSON", {
 // ==========================================================
 // Export
 // ==========================================================
+
+productVariantSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("ProductVariant", productVariantSchema);

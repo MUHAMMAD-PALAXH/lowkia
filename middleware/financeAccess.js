@@ -1,13 +1,18 @@
 const asyncHandler = require("express-async-handler");
+const {
+    isCompanyOwner,
+    hasManagerPower,
+    isVendor,
+    isSupplierLogin,
+} = require("../utils/roleAccess");
 
 /**
- * Finance access gates (Owner=admin, Employee=branch_manager, Vendor blocked).
+ * Finance access gates (Owner / Employee / Vendor blocked).
  * Complements hrAccess; used by payment/payroll routes.
  */
 
 const blockVendorFromFinance = (req, res, next) => {
-    const role = (req.user?.role || "").toLowerCase();
-    if (role === "vendor" || role === "supplier") {
+    if (isVendor(req.user?.role) || isSupplierLogin(req.user?.role)) {
         return res.status(403).json({
             success: false,
             message: "Vendors and suppliers cannot access finance or payroll.",
@@ -20,8 +25,7 @@ const blockVendorFromFinance = (req, res, next) => {
 
 /** Owner/admin only — approve, complete, reverse, payroll lock. */
 const financeOwnerOnly = (req, res, next) => {
-    const role = (req.user?.role || "").toLowerCase();
-    if (role !== "admin") {
+    if (!isCompanyOwner(req.user?.role)) {
         return res.status(403).json({
             success: false,
             message: "Only the owner can perform this financial action.",
@@ -32,10 +36,9 @@ const financeOwnerOnly = (req, res, next) => {
     next();
 };
 
-/** Owner or branch manager may initiate requests / view scoped data. */
+/** Owner or employee may initiate requests / view scoped data. */
 const financeStaffOnly = (req, res, next) => {
-    const role = (req.user?.role || "").toLowerCase();
-    if (role !== "admin" && role !== "branch_manager") {
+    if (!hasManagerPower(req.user?.role)) {
         return res.status(403).json({
             success: false,
             message: "Access denied.",

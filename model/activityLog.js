@@ -176,7 +176,9 @@ module:{
 
         "User",
 
-        "System"
+        "System",
+
+        "Platform"
 
 
     ],
@@ -256,7 +258,11 @@ referenceType:{
 
         "Holiday",
 
-        "System"
+        "System",
+
+        "Company",
+
+        "CompanySubscription"
 
 
     ],
@@ -370,7 +376,9 @@ securityLevel:{
 
         "Sensitive",
 
-        "Critical"
+        "Critical",
+
+        "High"
 
     ],
 

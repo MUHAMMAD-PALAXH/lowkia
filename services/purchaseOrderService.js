@@ -805,6 +805,7 @@ const getPurchaseOrders = async (query = {}) => {
             filter.status = query.status;
         }
     }
+    if (query.companyId) filter.companyId = query.companyId;
     if (query.purchaseType) filter.purchaseType = query.purchaseType;
 
     const supplierId = toObjectId(query.supplierId || query.supplier);

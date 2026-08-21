@@ -4,6 +4,8 @@ const Warehouse = require("../model/warehouse");
 const { generateBranchCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 // Matches false / null / missing — safe for legacy IMEI-created branches
 const NOT_DELETED = { isDeleted: { $ne: true } };
@@ -169,10 +171,11 @@ const syncWarehouseBranchLinks = async (branchId, nextWarehouseIds = []) => {
     }
 };
 
-const ensureSingleHeadOffice = async (branchId = null) => {
+const ensureSingleHeadOffice = async (branchId = null, companyId = null) => {
     const filter = {
         isHeadOffice: true,
-        ...NOT_DELETED
+        ...NOT_DELETED,
+        ...companyFilter(companyId),
     };
 
     if (branchId) {
@@ -200,9 +203,10 @@ const populateBranch = (query) =>
 // Create
 // ==========================================================
 
-const createBranch = async (payload, actorId = null) => {
+const createBranch = async (payload, actorId = null, companyId = null) => {
     const data = pickUpdatableFields(payload);
     const name = data.name?.trim();
+    const tenant = companyFilter(companyId);
 
     if (!name) {
         throw new AppError("Branch name is required.", 400);
@@ -225,6 +229,7 @@ const createBranch = async (payload, actorId = null) => {
 
     const duplicate = await Branch.findOne({
         name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
+        ...tenant,
         ...NOT_DELETED
     });
 
@@ -238,19 +243,24 @@ const createBranch = async (payload, actorId = null) => {
     await validateWarehousesExist(warehouseIds);
 
     if (data.isHeadOffice === true) {
-        await ensureSingleHeadOffice();
+        await ensureSingleHeadOffice(null, companyId);
     }
 
     const branchCode = await generateBranchCode();
 
-    const branch = await Branch.create({
-        ...data,
-        name,
-        city: data.city.trim(),
-        warehouseIds,
-        branchCode,
-        createdBy: actorId || null
-    });
+    const branch = await Branch.create(
+        stampCompany(
+            {
+                ...data,
+                name,
+                city: data.city.trim(),
+                warehouseIds,
+                branchCode,
+                createdBy: actorId || null,
+            },
+            companyId
+        )
+    );
 
     await syncWarehouseBranchLinks(branch._id, warehouseIds);
 
@@ -261,13 +271,16 @@ const createBranch = async (payload, actorId = null) => {
 // List
 // ==========================================================
 
-const getBranches = async (query = {}) => {
+const getBranches = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
 
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const filter = {
+        ...companyFilter(companyId),
+        ...(trashMode ? { isDeleted: true } : { ...NOT_DELETED }),
+    };
 
     if (query.status) filter.status = query.status;
     if (query.isHeadOffice !== undefined) {
@@ -310,7 +323,7 @@ const getBranches = async (query = {}) => {
     };
 };
 
-const getBranchById = async (id) => {
+const getBranchById = async (id, companyId = null) => {
     const branch = await populateBranch(
         Branch.findOne({ _id: id, ...NOT_DELETED })
     );
@@ -319,19 +332,27 @@ const getBranchById = async (id) => {
         throw new AppError("Branch not found.", 404);
     }
 
+    assertDocumentCompany(branch, companyId, "Branch");
     return branch;
 };
 
-const getActiveBranches = async () => {
-    return populateBranch(Branch.getActiveBranches());
+const getActiveBranches = async (companyId = null) => {
+    return populateBranch(
+        Branch.find({
+            status: "Active",
+            ...NOT_DELETED,
+            ...companyFilter(companyId),
+        }).sort({ name: 1 })
+    );
 };
 
 // ==========================================================
 // Update
 // ==========================================================
 
-const updateBranch = async (id, payload, actorId = null) => {
+const updateBranch = async (id, payload, actorId = null, companyId = null) => {
     const branch = await findActiveBranchOrFail(id);
+    assertDocumentCompany(branch, companyId, "Branch");
     const data = pickUpdatableFields(payload);
 
     if (data.name) {
@@ -339,6 +360,7 @@ const updateBranch = async (id, payload, actorId = null) => {
         const duplicate = await Branch.findOne({
             _id: { $ne: id },
             name: { $regex: `^${escapeRegex(name)}$`, $options: "i" },
+            ...companyFilter(companyId),
             ...NOT_DELETED
         });
 
@@ -359,7 +381,7 @@ const updateBranch = async (id, payload, actorId = null) => {
     }
 
     if (data.isHeadOffice === true) {
-        await ensureSingleHeadOffice(id);
+        await ensureSingleHeadOffice(id, companyId);
     }
 
     Object.assign(branch, data);
@@ -403,10 +425,11 @@ const bulkRestoreBranches = (payload, actorId) =>
 const bulkPermanentDeleteBranches = (payload) =>
     trash.bulkPermanentDelete(payload);
 
-const getBranchStats = async () => {
+const getBranchStats = async (companyId = null) => {
+    const tenant = companyFilter(companyId);
     const [[rows], trashCount] = await Promise.all([
         Branch.aggregate([
-            { $match: NOT_DELETED },
+            { $match: { ...NOT_DELETED, ...tenant } },
             {
                 $group: {
                     _id: null,
@@ -433,7 +456,7 @@ const getBranchStats = async () => {
                 }
             }
         ]),
-        trash.trashCount()
+        Branch.countDocuments({ isDeleted: true, ...tenant })
     ]);
 
     return {

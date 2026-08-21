@@ -15,6 +15,13 @@ const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 const otpStore = {}; // Use Redis in production
 const AppError = require('../utils/appError');
+const { PUBLIC_SIGNUP_ROLES } = require('../constants/roles');
+const {
+  normalizeSignupRole,
+  loginDestinationForRole,
+  isSupplierLogin,
+  hasAdminPower,
+} = require('../utils/roleAccess');
 
 const normalizePhone = (value = "") =>
   String(value)
@@ -95,6 +102,8 @@ const protect = asyncHandler(async (req, res, next) => {
   const decoded = jwt.verify(token, process.env.JWT_SECRET);
   req.user = await AdminUser.findById(decoded.id);
   if (!req.user) return res.status(401).json({ success: false, message: 'Invalid token' });
+  req.authClaims = decoded;
+  req.activeCompanyId = decoded.activeCompanyId || null;
   if (req.user.status === 'Blocked') {
     return res.status(403).json({
       success: false,
@@ -105,7 +114,9 @@ const protect = asyncHandler(async (req, res, next) => {
 });
 
 const adminOnly = (req, res, next) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Admin only' });
+  if (!hasAdminPower(req.user.role)) {
+    return res.status(403).json({ success: false, message: 'Admin only' });
+  }
   next();
 };
 
@@ -234,9 +245,13 @@ router.post('/register', asyncHandler(async (req, res) => {
     });
   }
 
-  if (!['admin', 'vendor', 'branch_manager', 'supplier'].includes(role)) {
-    return res.status(400).json({ success: false, message: 'Invalid role' });
+  if (!PUBLIC_SIGNUP_ROLES.includes(role)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid role. Supplier is not a login role.',
+    });
   }
+  const signupRole = normalizeSignupRole(role);
 
   const emailKey = String(email).toLowerCase().trim();
   const normalizedPhone = normalizePhone(phone);
@@ -286,7 +301,7 @@ router.post('/register', asyncHandler(async (req, res) => {
       user.lastName = String(lastName).trim();
       user.phone = normalizedPhone;
       user.password = password;
-      user.role = role;
+      user.role = signupRole;
       user.isVerified = false;
       user.isPhoneVerified = false;
       user.isApproved = false;
@@ -299,7 +314,7 @@ router.post('/register', asyncHandler(async (req, res) => {
         email: emailKey,
         phone: normalizedPhone,
         password,
-        role,
+        role: signupRole,
         isVerified: false,
         isPhoneVerified: false,
         isApproved: false,
@@ -477,7 +492,7 @@ router.post('/verify-phone', asyncHandler(async (req, res) => {
   await user.save();
   delete otpStore[key];
 
-  if (user.role === 'supplier') {
+  if (isSupplierLogin(user.role)) {
     await ensureSupplierLoginProfile(user);
   }
 
@@ -501,6 +516,13 @@ router.post('/login', asyncHandler(async (req, res) => {
       message: 'This account has been blocked. Contact an administrator.',
     });
   }
+  if (isSupplierLogin(user.role)) {
+    return res.status(403).json({
+      success: false,
+      message:
+        'Supplier login is disabled. Contact your company administrator.',
+    });
+  }
   if (!user.isVerified) {
     return res.status(401).json({
       success: false,
@@ -522,12 +544,20 @@ router.post('/login', asyncHandler(async (req, res) => {
     });
   }
 
-  if (user.role === 'supplier') {
-    await ensureSupplierLoginProfile(user);
-  }
+  user.lastLogin = new Date();
+  await user.save({ validateBeforeSave: false });
 
   const token = user.generateToken();
-  res.json({ success: true, data: { user, token } });
+  const destination = loginDestinationForRole(user.role);
+  res.json({
+    success: true,
+    data: {
+      user,
+      token,
+      destination,
+      activeCompanyId: null,
+    },
+  });
 }));
 // Forgot password
 router.post('/forgot-password', asyncHandler(async (req, res) => {

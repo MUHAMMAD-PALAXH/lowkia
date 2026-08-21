@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Variant Type Schema
@@ -252,6 +253,8 @@ variantTypeSchema.set("toJSON", {
 // ==========================================================
 // Export
 // ==========================================================
+
+variantTypeSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "VariantType",

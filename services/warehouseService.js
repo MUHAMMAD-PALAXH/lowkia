@@ -4,6 +4,8 @@ const Branch = require("../model/branch");
 const { generateWarehouseCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
+const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -168,10 +170,11 @@ const syncBranchWarehouseLinks = async (warehouseId, nextBranchIds = []) => {
     }
 };
 
-const ensureSingleDefault = async (warehouseId = null) => {
+const ensureSingleDefault = async (warehouseId = null, companyId = null) => {
     const filter = {
         isDefault: true,
-        ...NOT_DELETED
+        ...NOT_DELETED,
+        ...companyFilter(companyId),
     };
 
     if (warehouseId) {
@@ -204,9 +207,10 @@ const recomputeAvailable = (warehouse) => {
 // Create
 // ==========================================================
 
-const createWarehouse = async (payload, actorId = null) => {
+const createWarehouse = async (payload, actorId = null, companyId = null) => {
     const data = pickUpdatableFields(payload);
     const warehouseName = data.warehouseName?.trim();
+    const tenant = companyFilter(companyId);
 
     if (!warehouseName) {
         throw new AppError("Warehouse name is required.", 400);
@@ -225,6 +229,7 @@ const createWarehouse = async (payload, actorId = null) => {
             $regex: `^${escapeRegex(warehouseName)}$`,
             $options: "i"
         },
+        ...tenant,
         ...NOT_DELETED
     });
 
@@ -237,23 +242,28 @@ const createWarehouse = async (payload, actorId = null) => {
     await validateParentWarehouse(data.parentWarehouseId || null);
 
     if (data.isDefault === true) {
-        await ensureSingleDefault();
+        await ensureSingleDefault(null, companyId);
     }
 
     const warehouseCode = await generateWarehouseCode();
 
-    const warehouse = new Warehouse({
-        ...data,
-        warehouseName,
-        city: data.city.trim(),
-        fullAddress: data.fullAddress.trim(),
-        branchIds,
-        branchId: branchIds[0] || data.branchId || null,
-        warehouseCode,
-        contactPhone: data.managerPhone || data.contactPhone || "",
-        contactEmail: data.managerEmail || data.contactEmail || "",
-        createdBy: actorId || null
-    });
+    const stamped = stampCompany(
+        {
+            ...data,
+            warehouseName,
+            city: data.city.trim(),
+            fullAddress: data.fullAddress.trim(),
+            branchIds,
+            branchId: branchIds[0] || data.branchId || null,
+            warehouseCode,
+            contactPhone: data.managerPhone || data.contactPhone || "",
+            contactEmail: data.managerEmail || data.contactEmail || "",
+            createdBy: actorId || null,
+        },
+        companyId
+    );
+
+    const warehouse = new Warehouse(stamped);
 
     recomputeAvailable(warehouse);
     await warehouse.save();
@@ -267,13 +277,16 @@ const createWarehouse = async (payload, actorId = null) => {
 // List / Get
 // ==========================================================
 
-const getWarehouses = async (query = {}) => {
+const getWarehouses = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
 
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    const filter = {
+        ...companyFilter(companyId),
+        ...(trashMode ? { isDeleted: true } : { ...NOT_DELETED }),
+    };
 
     if (query.status) filter.status = query.status;
     if (query.warehouseType) filter.warehouseType = query.warehouseType;
@@ -316,7 +329,7 @@ const getWarehouses = async (query = {}) => {
     };
 };
 
-const getWarehouseById = async (id) => {
+const getWarehouseById = async (id, companyId = null) => {
     const warehouse = await populateWarehouse(
         Warehouse.findOne({ _id: id, ...NOT_DELETED })
     );
@@ -325,11 +338,18 @@ const getWarehouseById = async (id) => {
         throw new AppError("Warehouse not found.", 404);
     }
 
+    assertDocumentCompany(warehouse, companyId, "Warehouse");
     return warehouse;
 };
 
-const getActiveWarehouses = async () => {
-    return populateWarehouse(Warehouse.getActiveWarehouses());
+const getActiveWarehouses = async (companyId = null) => {
+    return populateWarehouse(
+        Warehouse.find({
+            status: "Active",
+            ...NOT_DELETED,
+            ...companyFilter(companyId),
+        }).sort({ warehouseName: 1 })
+    );
 };
 
 // ==========================================================

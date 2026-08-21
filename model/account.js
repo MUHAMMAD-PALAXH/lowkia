@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Account Schema
@@ -573,4 +574,6 @@ accountSchema.set("toJSON", {
 // ==========================================================
 // EXPORT
 // ==========================================================
+accountSchema.plugin(tenantPlugin);
+
 module.exports = mongoose.model("Account", accountSchema);

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const branchTransferSchema = new mongoose.Schema(
   {
@@ -64,5 +65,7 @@ const branchTransferSchema = new mongoose.Schema(
 );
 
 branchTransferSchema.index({ status: 1, dispatchedAt: -1 });
+
+branchTransferSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model('BranchTransfer', branchTransferSchema);

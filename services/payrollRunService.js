@@ -30,7 +30,8 @@ const toObjectId = (id) => {
     return null;
 };
 
-const isOwner = (user) => (user?.role || "").toLowerCase() === "admin";
+const { isCompanyOwner } = require("../utils/roleAccess");
+const isOwner = (user) => isCompanyOwner(user?.role);
 
 const auditRun = async ({
     user,

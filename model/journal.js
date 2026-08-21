@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Journal Line Sub-Schema
@@ -616,4 +617,6 @@ journalSchema.set("toJSON", {
 // ==========================================================
 // EXPORT
 // ==========================================================
+journalSchema.plugin(tenantPlugin);
+
 module.exports = mongoose.model("Journal", journalSchema);

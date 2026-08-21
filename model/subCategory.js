@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Sub Category Schema
@@ -280,6 +281,8 @@ subCategorySchema.set("toJSON", {
 // ==========================================================
 // Export
 // ==========================================================
+
+subCategorySchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "SubCategory",

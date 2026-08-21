@@ -1,12 +1,19 @@
 const Branch = require("../model/branch");
 const Employee = require("../model/employee");
 const AppError = require("../utils/appError");
+const {
+    isCompanyOwner,
+    hasManagerPower,
+    isVendor,
+    isSupplierLogin,
+    isCompanyEmployee,
+} = require("../utils/roleAccess");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
 /**
  * Owner / HR admin for attendance configuration.
- * Maps product "Owner" → AdminUser.role === "admin".
+ * Owner → company_super_admin (or legacy admin).
  */
 const attendanceAdminOnly = (req, res, next) => {
     if (!req.user) {
@@ -17,7 +24,7 @@ const attendanceAdminOnly = (req, res, next) => {
             errors: null
         });
     }
-    if (req.user.role === "vendor" || req.user.role === "supplier") {
+    if (isVendor(req.user.role) || isSupplierLogin(req.user.role)) {
         return res.status(403).json({
             success: false,
             message: "Vendors and suppliers cannot access employee attendance.",
@@ -25,11 +32,11 @@ const attendanceAdminOnly = (req, res, next) => {
             errors: null
         });
     }
-    if (!["admin", "branch_manager"].includes(req.user.role)) {
+    if (!hasManagerPower(req.user.role)) {
         return res.status(403).json({
             success: false,
             message:
-                "Only admin or branch manager can manage attendance settings.",
+                "Only admin or employee can manage attendance settings.",
             data: null,
             errors: null
         });
@@ -39,7 +46,7 @@ const attendanceAdminOnly = (req, res, next) => {
 
 /** Strict owner (admin) for global policy / timezone. */
 const ownerOnly = (req, res, next) => {
-    if (!req.user || req.user.role !== "admin") {
+    if (!req.user || !isCompanyOwner(req.user.role)) {
         return res.status(403).json({
             success: false,
             message: "Only owner/admin can perform this action.",
@@ -52,7 +59,7 @@ const ownerOnly = (req, res, next) => {
 
 /** Block pure vendors from any HR attendance route. */
 const blockVendor = (req, res, next) => {
-    if (req.user?.role === "vendor" || req.user?.role === "supplier") {
+    if (isVendor(req.user?.role) || isSupplierLogin(req.user?.role)) {
         return res.status(403).json({
             success: false,
             message: "Vendors and suppliers cannot access employee attendance.",
@@ -64,13 +71,13 @@ const blockVendor = (req, res, next) => {
 };
 
 /**
- * Branches managed by a branch_manager (Branch.managerId).
- * Admin → null (no restriction).
+ * Branches managed by an employee / branch_manager (Branch.managerId).
+ * Company owner → null (no restriction).
  */
 const getManagedBranchIds = async (user) => {
     if (!user) return [];
-    if (user.role === "admin") return null;
-    if (user.role !== "branch_manager") return [];
+    if (isCompanyOwner(user.role)) return null;
+    if (!isCompanyEmployee(user.role)) return [];
     const branches = await Branch.find({
         managerId: user._id,
         ...NOT_DELETED

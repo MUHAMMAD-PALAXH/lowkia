@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 /**
  * Potential overtime is calculated on attendance.overtimeMinutes.
@@ -143,5 +144,7 @@ overtimeRequestSchema.index(
         }
     }
 );
+
+overtimeRequestSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("OvertimeRequest", overtimeRequestSchema);

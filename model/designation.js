@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const designationSchema = new mongoose.Schema(
 {
@@ -120,6 +121,8 @@ designationSchema.index({
     designationName:"text",
     description:"text"
 });
+
+designationSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "Designation",

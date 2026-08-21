@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const couponSchema = new mongoose.Schema({
   couponCode: {
@@ -47,6 +48,8 @@ const couponSchema = new mongoose.Schema({
     index: true
   }
 }, { timestamps: true });
+
+couponSchema.plugin(tenantPlugin);
 
 const Coupon = mongoose.model('Coupon', couponSchema);
 module.exports = Coupon;

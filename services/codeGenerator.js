@@ -53,6 +53,7 @@ const MODULE_CONFIG = {
     repair_ticket: { prefix: "T", padding: 5 },
 
     company: { prefix: "CO", padding: 6 },
+    company_subscription: { prefix: "SUB", padding: 6 },
     payment: { prefix: "PAY", padding: 6, yearScoped: true },
     supplier_payable: { prefix: "SPAY", padding: 6 },
     payroll_run: { prefix: "PRUN", padding: 6 },

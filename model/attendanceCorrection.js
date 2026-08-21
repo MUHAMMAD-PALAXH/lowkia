@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const attendanceCorrectionSchema = new mongoose.Schema(
     {
@@ -174,6 +175,8 @@ const attendanceCorrectionSchema = new mongoose.Schema(
 attendanceCorrectionSchema.index({ correctionCode: 1 }, { unique: true });
 attendanceCorrectionSchema.index({ employeeId: 1, status: 1, createdAt: -1 });
 attendanceCorrectionSchema.index({ attendanceId: 1, status: 1 });
+
+attendanceCorrectionSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "AttendanceCorrection",

@@ -2,6 +2,12 @@ const asyncHandler = require("express-async-handler");
 const jwt = require("jsonwebtoken");
 
 const AdminUser = require("../model/adminUser");
+const {
+    hasAdminPower,
+    hasManagerPower,
+    isVendor,
+    isGlobalSuperAdmin,
+} = require("../utils/roleAccess");
 
 
 
@@ -66,6 +72,9 @@ const protect = asyncHandler(async (req, res, next) => {
         }
 
         req.user = user;
+        req.authClaims = decoded;
+        // Global SA Enter Company scope (JWT only; never from body)
+        req.activeCompanyId = decoded.activeCompanyId || null;
 
         next();
 
@@ -101,12 +110,12 @@ const protect = asyncHandler(async (req, res, next) => {
 
 
 // ==========================================
-// Admin Only
+// Admin Only (company owner + global SA)
 // ==========================================
 
 const adminOnly = (req, res, next) => {
 
-    if (req.user.role !== "admin") {
+    if (!hasAdminPower(req.user?.role)) {
 
         return res.status(403).json({
 
@@ -130,11 +139,9 @@ const adminOnly = (req, res, next) => {
 
 const vendorOrAdmin = (req, res, next) => {
 
-    if (
+    const role = req.user?.role;
 
-        !["admin", "vendor"].includes(req.user.role)
-
-    ) {
+    if (!(hasAdminPower(role) || isVendor(role))) {
 
         return res.status(403).json({
 
@@ -153,16 +160,12 @@ const vendorOrAdmin = (req, res, next) => {
 
 
 // ==========================================
-// Branch Manager / Admin
+// Branch Manager / Employee / Admin
 // ==========================================
 
 const branchManagerOrAdmin = (req, res, next) => {
 
-    if (
-
-        !["admin", "branch_manager"].includes(req.user.role)
-
-    ) {
+    if (!hasManagerPower(req.user?.role)) {
 
         return res.status(403).json({
 
@@ -170,6 +173,27 @@ const branchManagerOrAdmin = (req, res, next) => {
 
             message: "Access denied."
 
+        });
+
+    }
+
+    next();
+
+};
+
+
+
+// ==========================================
+// Platform Global Super Admin only
+// ==========================================
+
+const globalSuperAdminOnly = (req, res, next) => {
+
+    if (!isGlobalSuperAdmin(req.user?.role)) {
+
+        return res.status(403).json({
+            success: false,
+            message: "Global Super Admin access required.",
         });
 
     }
@@ -248,6 +272,8 @@ module.exports = {
     vendorOrAdmin,
 
     branchManagerOrAdmin,
+
+    globalSuperAdminOnly,
 
     authorize,
 

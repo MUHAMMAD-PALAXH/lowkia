@@ -25,7 +25,8 @@ const toObjectId = (id) => {
     return null;
 };
 
-const isOwner = (user) => (user?.role || "").toLowerCase() === "admin";
+const { isCompanyOwner } = require("../utils/roleAccess");
+const isOwner = (user) => isCompanyOwner(user?.role);
 
 const syncMajors = (doc, currency = DEFAULT_CURRENCY) => {
     doc.requestedAmount = toMajor(doc.requestedAmountMinor || 0, currency);

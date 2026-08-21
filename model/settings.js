@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const settingsSchema = new mongoose.Schema({
     key: {
@@ -37,5 +38,7 @@ const settingsSchema = new mongoose.Schema({
 
     updatedAt: { type: Date, default: Date.now }
 });
+
+settingsSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("Settings", settingsSchema);

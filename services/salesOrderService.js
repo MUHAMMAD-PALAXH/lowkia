@@ -906,7 +906,7 @@ const createSalesOrder = async (payload, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const getSalesOrders = async (query = {}) => {
+const getSalesOrders = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
     const skip = (page - 1) * limit;
@@ -915,6 +915,7 @@ const getSalesOrders = async (query = {}) => {
         query.trash === "true" ||
         query.includeDeleted === "trash";
     const filter = trash ? { isDeleted: true } : { ...NOT_DELETED };
+    if (companyId) filter.companyId = companyId;
 
     if (query.status) filter.status = query.status;
     if (query.customerId && toObjectId(query.customerId)) {

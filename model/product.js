@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Product Image Schema
@@ -1254,5 +1255,7 @@ productSchema.set("toJSON", {
 // ==========================================================
 // Export
 // ==========================================================
+
+productSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("Product", productSchema);

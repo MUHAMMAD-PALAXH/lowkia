@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Purchase Invoice Item Sub-Schema
@@ -729,4 +730,6 @@ purchaseInvoiceSchema.set("toJSON", {
 // ==========================================================
 // EXPORT
 // ==========================================================
+purchaseInvoiceSchema.plugin(tenantPlugin);
+
 module.exports = mongoose.model("PurchaseInvoice", purchaseInvoiceSchema);

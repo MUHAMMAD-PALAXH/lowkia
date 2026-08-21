@@ -8,18 +8,24 @@ const getActorId = (req) =>
 exports.createWarehouse = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.createWarehouse(
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Warehouse created successfully.", warehouse, 201);
 });
 
 exports.getWarehouses = asyncHandler(async (req, res) => {
-    const result = await warehouseService.getWarehouses(req.query);
+    const result = await warehouseService.getWarehouses(
+        req.query,
+        req.companyId
+    );
     return success(res, "Warehouses retrieved successfully.", result);
 });
 
 exports.getActiveWarehouses = asyncHandler(async (req, res) => {
-    const warehouses = await warehouseService.getActiveWarehouses();
+    const warehouses = await warehouseService.getActiveWarehouses(
+        req.companyId
+    );
     return success(
         res,
         "Active warehouses retrieved successfully.",
@@ -33,7 +39,10 @@ exports.getWarehouseStats = asyncHandler(async (req, res) => {
 });
 
 exports.getWarehouseById = asyncHandler(async (req, res) => {
-    const warehouse = await warehouseService.getWarehouseById(req.params.id);
+    const warehouse = await warehouseService.getWarehouseById(
+        req.params.id,
+        req.companyId
+    );
     return success(res, "Warehouse retrieved successfully.", warehouse);
 });
 

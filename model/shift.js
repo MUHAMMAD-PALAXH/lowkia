@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const shiftSchema = new mongoose.Schema(
 {
@@ -192,6 +193,8 @@ shiftSchema.index({
     shiftName:"text",
     description:"text"
 });
+
+shiftSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "Shift",

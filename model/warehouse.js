@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const WAREHOUSE_TYPES = [
     "Main Warehouse",
@@ -261,6 +262,8 @@ warehouseSchema.set("toJSON", {
         return ret;
     }
 });
+
+warehouseSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("Warehouse", warehouseSchema);
 module.exports.WAREHOUSE_TYPES = WAREHOUSE_TYPES;

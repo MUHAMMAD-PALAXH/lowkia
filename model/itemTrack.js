@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const itemTrackSchema = new mongoose.Schema({
   imei: { 
@@ -76,5 +77,7 @@ const itemTrackSchema = new mongoose.Schema({
 
 // Optimize compound index for fast dashboard stock calculation
 itemTrackSchema.index({ variantId: 1, currentBranchId: 1, status: 1 });
+
+itemTrackSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model('ItemTrack', itemTrackSchema);

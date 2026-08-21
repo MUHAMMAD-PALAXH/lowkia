@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 /**
  * Company-level attendance rules.
@@ -180,5 +181,7 @@ attendancePolicySchema.index(
     { policyName: 1 },
     { unique: true, partialFilterExpression: { isDeleted: { $ne: true } } }
 );
+
+attendancePolicySchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("AttendancePolicy", attendancePolicySchema);

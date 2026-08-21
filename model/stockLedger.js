@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const stockLedgerSchema = new mongoose.Schema({
 
@@ -74,5 +75,7 @@ const stockLedgerSchema = new mongoose.Schema({
 }, {
     timestamps: true
 });
+
+stockLedgerSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("StockLedger", stockLedgerSchema);

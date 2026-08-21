@@ -11,14 +11,17 @@ const getActorId = (req) =>
 
 exports.createSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.createSalesOrder(
-        { ...(req.body || {}), companyId: req.companyId || req.body?.companyId },
+        { ...(req.body || {}), companyId: req.companyId },
         getActorId(req)
     );
     return success(res, "Sales order created successfully.", order, 201);
 });
 
 exports.getSalesOrders = asyncHandler(async (req, res) => {
-    const result = await salesOrderService.getSalesOrders(req.query);
+    const result = await salesOrderService.getSalesOrders(
+        req.query,
+        req.companyId
+    );
     return success(res, "Sales orders retrieved successfully.", result);
 });
 

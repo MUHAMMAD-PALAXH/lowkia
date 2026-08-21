@@ -15,7 +15,7 @@ exports.createPurchaseOrder = asyncHandler(async (req, res) => {
     const body = {
         ...req.body,
         actorType: getActor(req).type,
-        companyId: req.companyId || req.body?.companyId || null,
+        companyId: req.companyId || null,
     };
     const po = await purchaseOrderService.createPurchaseOrder(
         body,
@@ -25,7 +25,7 @@ exports.createPurchaseOrder = asyncHandler(async (req, res) => {
 });
 
 exports.getPurchaseOrders = asyncHandler(async (req, res) => {
-    const query = { ...req.query };
+    const query = { ...req.query, companyId: req.companyId };
     if (req.linkedSupplier) {
         query.supplierId = String(req.linkedSupplier._id);
     }

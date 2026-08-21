@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 
 // ==========================================================
@@ -813,6 +814,8 @@ salesQuotationSchema.set(
 // EXPORT
 // ==========================================================
 
+
+salesQuotationSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "SalesQuotation",

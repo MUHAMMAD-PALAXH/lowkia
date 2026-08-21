@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { ADMIN_USER_ROLE_ENUM, ROLES } = require("../constants/roles");
 
 // ======================================================
 // Admin User Schema
@@ -96,13 +97,8 @@ const adminUserSchema = new mongoose.Schema(
     role: {
 
         type: String,
-        enum: [
-            "admin",
-            "vendor",
-            "branch_manager",
-            "supplier"
-        ],
-        default: "vendor"
+        enum: ADMIN_USER_ROLE_ENUM,
+        default: ROLES.VENDOR
     },
 
     // ==================================================
@@ -226,27 +222,27 @@ adminUserSchema.methods.comparePassword = async function(password){
 // Generate JWT
 // ======================================================
 
-adminUserSchema.methods.generateToken = function(){
+/**
+ * @param {{ activeCompanyId?: string|null }} [opts]
+ * activeCompanyId: Global Super Admin "Enter Company" session scope.
+ */
+adminUserSchema.methods.generateToken = function (opts = {}) {
+    const payload = {
+        id: this._id,
+        role: this.role,
+    };
 
+    if (this.companyId) {
+        payload.companyId = this.companyId;
+    }
 
-    return jwt.sign(
+    if (opts.activeCompanyId) {
+        payload.activeCompanyId = opts.activeCompanyId;
+    }
 
-        {
-
-            id: this._id,
-            role: this.role,
-            ...(this.companyId ? { companyId: this.companyId } : {})
-        },
-
-        process.env.JWT_SECRET,
-
-        {
-
-            expiresIn: "7d"
-        }
-
-    );
-
+    return jwt.sign(payload, process.env.JWT_SECRET, {
+        expiresIn: "7d",
+    });
 };
 
 module.exports = mongoose.model(

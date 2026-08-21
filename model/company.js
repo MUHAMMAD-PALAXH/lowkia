@@ -26,6 +26,12 @@ const companySchema = new mongoose.Schema(
             trim: true,
         },
 
+        logoUrl: {
+            type: String,
+            default: "",
+            trim: true,
+        },
+
         /** ISO 4217. V1 actively supports USD; field remains for multi-currency later. */
         defaultCurrency: {
             type: String,
@@ -49,8 +55,29 @@ const companySchema = new mongoose.Schema(
 
         status: {
             type: String,
-            enum: ["Active", "Suspended", "Closed"],
+            enum: ["Trial", "Active", "Suspended", "Cancelled", "Closed"],
             default: "Active",
+        },
+
+        /**
+         * Lightweight company settings (branding, locale extras).
+         * Keep small; heavy config belongs in dedicated collections later.
+         */
+        settings: {
+            type: mongoose.Schema.Types.Mixed,
+            default: {},
+        },
+
+        /** Populated when subscription module is wired (Phase 4). */
+        currentSubscriptionId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "CompanySubscription",
+            default: null,
+        },
+
+        trialEndsAt: {
+            type: Date,
+            default: null,
         },
 
         isDefault: {

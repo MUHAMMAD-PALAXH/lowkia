@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 /**
  * Company holiday calendar.
@@ -115,5 +116,7 @@ const holidaySchema = new mongoose.Schema(
 holidaySchema.index({ holidayCode: 1 }, { unique: true });
 holidaySchema.index({ startDate: 1, endDate: 1 });
 holidaySchema.index({ workDates: 1, status: 1 });
+
+holidaySchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("Holiday", holidaySchema);

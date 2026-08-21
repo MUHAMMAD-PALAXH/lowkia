@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Brand Schema
@@ -362,6 +363,8 @@ brandSchema.set("toJSON", {
 // ==========================================================
 // Export
 // ==========================================================
+
+brandSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "Brand",

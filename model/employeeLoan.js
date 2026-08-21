@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 
 // ==========================================================
@@ -935,6 +936,8 @@ employeeLoanSchema.set(
 // EXPORT
 // ==========================================================
 
+
+employeeLoanSchema.plugin(tenantPlugin);
 
 module.exports =
 

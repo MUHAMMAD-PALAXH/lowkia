@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const branchSchema = new mongoose.Schema(
     {
@@ -181,5 +182,7 @@ branchSchema.set("toJSON", {
         return ret;
     }
 });
+
+branchSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model("Branch", branchSchema);

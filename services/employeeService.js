@@ -210,7 +210,14 @@ const getAvailableUsers = async () => {
         isDeleted: { $ne: true },
         isVerified: true,
         isPhoneVerified: true,
-        role: { $in: ["admin", "branch_manager"] },
+        role: {
+            $in: [
+                "company_super_admin",
+                "admin",
+                "employee",
+                "branch_manager",
+            ],
+        },
         ...(linkedIds.length ? { _id: { $nin: linkedIds } } : {}),
     };
 

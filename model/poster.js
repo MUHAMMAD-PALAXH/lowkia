@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const posterSchema = new mongoose.Schema({
   posterName: {
@@ -25,6 +26,7 @@ const posterSchema = new mongoose.Schema({
   timestamps: true 
 });
 
-const Poster = mongoose.model('Poster', posterSchema);
+posterSchema.plugin(tenantPlugin);
 
+const Poster = mongoose.model('Poster', posterSchema);
 module.exports = Poster;

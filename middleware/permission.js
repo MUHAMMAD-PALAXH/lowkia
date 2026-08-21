@@ -1,4 +1,5 @@
 const asyncHandler = require("express-async-handler");
+const { isCompanyOwner } = require("../utils/roleAccess");
 
 // =======================================================
 // Permission Middleware
@@ -16,8 +17,8 @@ const permit = (...roles) => {
             });
         }
 
-        // System admin can do everything
-        if (req.user.role === "admin" || req.user.role === "Owner") {
+        // Company owner (or legacy admin) can do everything in company ERP
+        if (isCompanyOwner(req.user.role) || req.user.role === "Owner") {
             return next();
         }
 

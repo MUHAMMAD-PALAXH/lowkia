@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 // ==========================================================
 // Unit Schema
@@ -344,6 +345,8 @@ unitSchema.set("toJSON", {
 // ==========================================================
 // Export
 // ==========================================================
+
+unitSchema.plugin(tenantPlugin);
 
 module.exports = mongoose.model(
     "Unit",

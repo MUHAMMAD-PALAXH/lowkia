@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 
 // ==========================================================
@@ -857,6 +858,8 @@ leaveSchema.set(
 // EXPORT
 // ==========================================================
 
+
+leaveSchema.plugin(tenantPlugin);
 
 module.exports =
 mongoose.model(

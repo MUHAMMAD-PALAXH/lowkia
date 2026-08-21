@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const attendanceSchema = new mongoose.Schema(
 {
@@ -830,6 +831,8 @@ attendanceSchema.set(
 // EXPORT
 // ==========================================================
 
+
+attendanceSchema.plugin(tenantPlugin);
 
 module.exports =
 mongoose.model(

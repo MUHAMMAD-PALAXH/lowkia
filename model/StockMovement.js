@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const tenantPlugin = require("./plugins/tenant.plugin");
 
 const stockMovementSchema = new mongoose.Schema(
 {
@@ -630,4 +631,6 @@ stockMovementSchema.set("toJSON", {
 // ==========================================================
 // EXPORT
 // ==========================================================
+stockMovementSchema.plugin(tenantPlugin);
+
 module.exports = mongoose.model("StockMovement", stockMovementSchema);
