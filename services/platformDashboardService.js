@@ -1,6 +1,7 @@
 const Company = require("../model/company");
 const CompanySubscription = require("../model/companySubscription");
 const AdminUser = require("../model/adminUser");
+const SubscriptionPlan = require("../model/subscriptionPlan");
 const { ROLES } = require("../constants/roles");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
@@ -16,40 +17,6 @@ const monthWindow = (ref = new Date()) => {
     const start = new Date(ref.getFullYear(), ref.getMonth(), 1, 0, 0, 0, 0);
     const end = new Date(ref.getFullYear(), ref.getMonth() + 1, 1, 0, 0, 0, 0);
     return { start, end };
-};
-
-/**
- * Paid collections in [start, end). Prefer paidAt; fall back to updatedAt when
- * legacy rows were marked paid without paidAt.
- */
-const paidCollectionsInRange = async (start, end) => {
-    return CompanySubscription.aggregate([
-        {
-            $match: {
-                ...NOT_DELETED,
-                paymentStatus: "paid",
-                amountMinor: { $gt: 0 },
-            },
-        },
-        {
-            $addFields: {
-                _collectedAt: { $ifNull: ["$paidAt", "$updatedAt"] },
-            },
-        },
-        {
-            $match: {
-                _collectedAt: { $gte: start, $lt: end },
-            },
-        },
-        {
-            $group: {
-                _id: { $ifNull: ["$currency", "USD"] },
-                totalMinor: { $sum: { $ifNull: ["$amountMinor", 0] } },
-                count: { $sum: 1 },
-            },
-        },
-        { $sort: { totalMinor: -1 } },
-    ]);
 };
 
 /**
@@ -118,18 +85,15 @@ const getPlatformDashboard = async () => {
     const now = new Date();
     const in7 = daysFromNow(7);
     const { start: monthStart, end: monthEnd } = monthWindow(now);
-    const { start: prevMonthStart, end: prevMonthEnd } = monthWindow(
-        new Date(now.getFullYear(), now.getMonth() - 1, 15)
-    );
 
     const [
         totalCompanies,
         byStatus,
         newThisMonth,
         current,
-        paidThisMonthByCurrency,
-        paidPrevMonthByCurrency,
         companyUsers,
+        activePlans,
+        totalPlans,
     ] = await Promise.all([
         Company.countDocuments(NOT_DELETED),
         Company.aggregate([
@@ -141,9 +105,15 @@ const getPlatformDashboard = async () => {
             createdAt: { $gte: monthStart, $lt: monthEnd },
         }),
         loadCurrentSubscriptions(),
-        paidCollectionsInRange(monthStart, monthEnd),
-        paidCollectionsInRange(prevMonthStart, prevMonthEnd),
         countActiveCompanyUsers(),
+        SubscriptionPlan.countDocuments({
+            ...NOT_DELETED,
+            $or: [
+                { status: "Active" },
+                { status: { $exists: false }, isActive: true },
+            ],
+        }),
+        SubscriptionPlan.countDocuments(NOT_DELETED),
     ]);
 
     const statusMap = Object.fromEntries(
@@ -261,32 +231,6 @@ const getPlatformDashboard = async () => {
                     : 0,
         }));
 
-    const sumBuckets = (rows) =>
-        (rows || []).reduce(
-            (acc, row) => {
-                acc.totalMinor += Number(row.totalMinor || 0);
-                acc.count += Number(row.count || 0);
-                return acc;
-            },
-            { totalMinor: 0, count: 0 }
-        );
-
-    const thisMonth = sumBuckets(paidThisMonthByCurrency);
-    const prevMonth = sumBuckets(paidPrevMonthByCurrency);
-    const primaryCurrency =
-        paidThisMonthByCurrency[0]?._id ||
-        paidPrevMonthByCurrency[0]?._id ||
-        mrrCurrency ||
-        "USD";
-
-    let collectedChangePct = null;
-    if (prevMonth.totalMinor > 0) {
-        collectedChangePct =
-            ((thisMonth.totalMinor - prevMonth.totalMinor) /
-                prevMonth.totalMinor) *
-            100;
-    }
-
     return {
         generatedAt: now.toISOString(),
         companies: {
@@ -307,20 +251,12 @@ const getPlatformDashboard = async () => {
         },
         billing: {
             mrrMinor,
-            currency: String(primaryCurrency || "USD").toUpperCase(),
-            collectedThisMonthMinor: thisMonth.totalMinor,
-            collectedPrevMonthMinor: prevMonth.totalMinor,
-            collectedChangePct:
-                collectedChangePct === null
-                    ? null
-                    : Math.round(collectedChangePct * 10) / 10,
+            currency: String(mrrCurrency || "USD").toUpperCase(),
             unpaidSubscriptions: unpaidCount,
-            paidThisMonthCount: thisMonth.count,
-            collectedByCurrency: (paidThisMonthByCurrency || []).map((r) => ({
-                currency: String(r._id || "USD").toUpperCase(),
-                totalMinor: Number(r.totalMinor || 0),
-                count: Number(r.count || 0),
-            })),
+        },
+        plans: {
+            active: activePlans,
+            total: totalPlans,
         },
         users: {
             activeCompanyUsers: companyUsers,
