@@ -41,6 +41,8 @@ const DEFAULT_PLANS = [
         },
         features: ["sales", "purchase", "inventory", "attendance"],
         sortOrder: 10,
+        productFamily: "STARTER",
+        status: "Active",
     },
     {
         planCode: "STARTER_YEARLY",
@@ -58,6 +60,8 @@ const DEFAULT_PLANS = [
         },
         features: ["sales", "purchase", "inventory", "attendance"],
         sortOrder: 11,
+        productFamily: "STARTER",
+        status: "Active",
     },
     {
         planCode: "PRO_MONTHLY",
@@ -83,6 +87,8 @@ const DEFAULT_PLANS = [
             "reports",
         ],
         sortOrder: 20,
+        productFamily: "PRO",
+        status: "Active",
     },
     {
         planCode: "PRO_YEARLY",
@@ -108,6 +114,8 @@ const DEFAULT_PLANS = [
             "reports",
         ],
         sortOrder: 21,
+        productFamily: "PRO",
+        status: "Active",
     },
 ];
 

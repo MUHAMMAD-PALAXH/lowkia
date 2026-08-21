@@ -29,7 +29,16 @@ router.post("/enter-company", companyController.enterCompany);
 router.post("/exit-company", companyController.exitCompany);
 
 router.get("/plans", subscriptionController.listPlans);
+router.get("/plans/summary", subscriptionController.getPlansSummary);
+router.post("/plans", subscriptionController.createPlan);
 router.post("/plans/ensure", subscriptionController.ensurePlans);
+router.get("/plans/:id", subscriptionController.getPlan);
+router.patch("/plans/:id", subscriptionController.updatePlan);
+router.post("/plans/:id/activate", subscriptionController.activatePlan);
+router.post("/plans/:id/deactivate", subscriptionController.deactivatePlan);
+router.post("/plans/:id/archive", subscriptionController.archivePlan);
+router.post("/plans/:id/duplicate", subscriptionController.duplicatePlan);
+router.get("/plans/:id/subscribers", subscriptionController.listPlanSubscribers);
 
 router.get(
     "/companies/:companyId/subscription",

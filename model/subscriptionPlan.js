@@ -52,7 +52,7 @@ const subscriptionPlanSchema = new mongoose.Schema(
             min: 0,
         },
 
-        /** Soft limits for future enforcement. */
+        /** Soft limits — null = Unlimited. */
         limits: {
             maxUsers: { type: Number, default: 10 },
             maxBranches: { type: Number, default: 5 },
@@ -66,10 +66,40 @@ const subscriptionPlanSchema = new mongoose.Schema(
             default: [],
         },
 
+        /**
+         * Catalog status. isActive is kept in sync for legacy filters.
+         * Active = available for new subs; Inactive = not sold; Archived = historical only.
+         */
+        status: {
+            type: String,
+            enum: ["Active", "Inactive", "Archived"],
+            default: "Active",
+            index: true,
+        },
+
         isActive: {
             type: Boolean,
             default: true,
             index: true,
+        },
+
+        visibility: {
+            type: String,
+            enum: ["Public", "Private"],
+            default: "Public",
+        },
+
+        isRecommended: {
+            type: Boolean,
+            default: false,
+        },
+
+        /** Optional product-family key for UI grouping (e.g. STARTER, PRO). */
+        productFamily: {
+            type: String,
+            default: "",
+            trim: true,
+            uppercase: true,
         },
 
         sortOrder: {
