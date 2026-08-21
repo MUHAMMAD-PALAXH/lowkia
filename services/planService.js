@@ -75,6 +75,8 @@ const planStatsForIds = async (planIds = []) => {
     const oids = planIds.map(toObjectId).filter(Boolean);
     if (!oids.length) return {};
 
+    // Count only each company's *current* subscription — historical assign/
+    // renew rows must not inflate subscriber or MRR totals.
     const rows = await CompanySubscription.aggregate([
         {
             $match: {
@@ -82,6 +84,33 @@ const planStatsForIds = async (planIds = []) => {
                 planId: { $in: oids },
             },
         },
+        {
+            $lookup: {
+                from: "companies",
+                let: { subId: "$_id", companyId: "$companyId" },
+                pipeline: [
+                    {
+                        $match: {
+                            $expr: {
+                                $and: [
+                                    { $eq: ["$_id", "$$companyId"] },
+                                    {
+                                        $eq: [
+                                            "$currentSubscriptionId",
+                                            "$$subId",
+                                        ],
+                                    },
+                                    { $ne: ["$isDeleted", true] },
+                                ],
+                            },
+                        },
+                    },
+                    { $project: { _id: 1 } },
+                ],
+                as: "asCurrent",
+            },
+        },
+        { $match: { "asCurrent.0": { $exists: true } } },
         {
             $group: {
                 _id: "$planId",
@@ -439,29 +468,66 @@ const duplicatePlan = async (planId, actor = null) => {
 
 const listPlanSubscribers = async (planId) => {
     await getPlanById(planId);
-    const items = await CompanySubscription.find({
-        planId,
-        ...NOT_DELETED,
-    })
-        .populate(
-            "companyId",
-            "companyCode legalName tradeName status logoUrl"
-        )
-        .sort({ createdAt: -1 })
-        .limit(200)
-        .lean();
+    const items = await CompanySubscription.aggregate([
+        {
+            $match: {
+                planId: toObjectId(planId),
+                ...NOT_DELETED,
+            },
+        },
+        {
+            $lookup: {
+                from: "companies",
+                let: { subId: "$_id", companyId: "$companyId" },
+                pipeline: [
+                    {
+                        $match: {
+                            $expr: {
+                                $and: [
+                                    { $eq: ["$_id", "$$companyId"] },
+                                    {
+                                        $eq: [
+                                            "$currentSubscriptionId",
+                                            "$$subId",
+                                        ],
+                                    },
+                                    { $ne: ["$isDeleted", true] },
+                                ],
+                            },
+                        },
+                    },
+                    {
+                        $project: {
+                            companyCode: 1,
+                            legalName: 1,
+                            tradeName: 1,
+                            status: 1,
+                            logoUrl: 1,
+                        },
+                    },
+                ],
+                as: "company",
+            },
+        },
+        { $match: { "company.0": { $exists: true } } },
+        { $sort: { createdAt: -1 } },
+        { $limit: 200 },
+    ]);
 
-    return items.map((s) => ({
-        ...s,
-        id: String(s._id),
-        company: s.companyId,
-        mrrMinor:
-            s.status === "active" && s.paymentStatus === "paid"
-                ? s.billingInterval === "yearly"
-                    ? Math.round((s.amountMinor || 0) / 12)
-                    : s.amountMinor || 0
-                : 0,
-    }));
+    return items.map((s) => {
+        const company = Array.isArray(s.company) ? s.company[0] : null;
+        return {
+            ...s,
+            id: String(s._id),
+            company,
+            mrrMinor:
+                s.status === "active" && s.paymentStatus === "paid"
+                    ? s.billingInterval === "yearly"
+                        ? Math.round((s.amountMinor || 0) / 12)
+                        : s.amountMinor || 0
+                    : 0,
+        };
+    });
 };
 
 module.exports = {

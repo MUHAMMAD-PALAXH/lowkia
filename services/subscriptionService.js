@@ -185,6 +185,24 @@ const assignSubscription = async (
 
     const subscriptionNumber = await generateCode("company_subscription");
 
+    // Retire previous current subscription so plan stats stay accurate.
+    if (company.currentSubscriptionId) {
+        await CompanySubscription.updateOne(
+            {
+                _id: company.currentSubscriptionId,
+                status: { $in: ["trialing", "active", "past_due"] },
+            },
+            {
+                $set: {
+                    status: "cancelled",
+                    cancelledAt: now,
+                    cancelReason: "Superseded by new plan assignment",
+                    updatedBy: actorId || null,
+                },
+            }
+        );
+    }
+
     const sub = await CompanySubscription.create({
         subscriptionNumber,
         companyId: company._id,
