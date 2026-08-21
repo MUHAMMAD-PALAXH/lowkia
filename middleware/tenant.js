@@ -2,6 +2,7 @@ const asyncHandler = require("express-async-handler");
 const {
     ensureUserCompany,
     getCompanyById,
+    getCompanyRaw,
     assertDocumentCompany,
 } = require("../services/companyService");
 const { isGlobalSuperAdmin } = require("../utils/roleAccess");
@@ -12,7 +13,7 @@ const { isGlobalSuperAdmin } = require("../utils/roleAccess");
  *
  * Global Super Admin:
  * - No activeCompanyId → platform mode (req.companyId = null)
- * - With JWT activeCompanyId → Enter Company session for that tenant
+ * - With JWT activeCompanyId → Enter Company session for that tenant (preview only)
  */
 const resolveTenant = asyncHandler(async (req, res, next) => {
     if (!req.user) {
@@ -32,6 +33,8 @@ const resolveTenant = asyncHandler(async (req, res, next) => {
         delete req.query.companyId;
     }
 
+    req.isGlobalAdminPreview = false;
+
     if (isGlobalSuperAdmin(req.user.role)) {
         const activeId = req.activeCompanyId || null;
         if (!activeId) {
@@ -42,13 +45,26 @@ const resolveTenant = asyncHandler(async (req, res, next) => {
         }
 
         try {
-            req.company = await getCompanyById(activeId);
+            // Preview may include Suspended/Expired tenants
+            req.company = await getCompanyRaw(activeId);
             req.companyId = req.company._id;
             req.isPlatformMode = false;
+            req.isGlobalAdminPreview = true;
         } catch (err) {
             return res.status(err.statusCode || 403).json({
                 success: false,
                 message: err.message || "Invalid company context.",
+                data: null,
+                errors: null,
+            });
+        }
+
+        const method = String(req.method || "").toUpperCase();
+        if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    "Preview only. Global Super Admin cannot modify company data.",
                 data: null,
                 errors: null,
             });
