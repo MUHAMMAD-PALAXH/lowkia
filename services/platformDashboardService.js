@@ -170,17 +170,39 @@ const getCloudinaryStorage = async () => {
         const usage = await cloudinary.api.usage();
         const storage = usage?.storage || {};
         const usedBytes = Number(storage.usage || 0);
-        const limitBytes = Number(storage.limit || 0);
-        const remainingBytes =
-            limitBytes > 0 ? Math.max(0, limitBytes - usedBytes) : 0;
-        const usedPct =
-            limitBytes > 0
-                ? Math.min(100, Math.round((usedBytes / limitBytes) * 1000) / 10)
-                : 0;
-        const remainingPct =
-            limitBytes > 0
-                ? Math.max(0, Math.round((100 - usedPct) * 10) / 10)
-                : 100;
+
+        // Cloudinary Admin /usage often returns storage.usage only (no storage.limit).
+        // Newer accounts are credit-based; Free historically ≈ 25 GB media storage.
+        let limitSource = "api";
+        let limitBytes = Number(storage.limit || 0);
+        if (!limitBytes) {
+            if (process.env.CLOUDINARY_STORAGE_LIMIT_BYTES) {
+                limitBytes = Number(process.env.CLOUDINARY_STORAGE_LIMIT_BYTES);
+                limitSource = "env_bytes";
+            } else if (process.env.CLOUDINARY_STORAGE_LIMIT_GB) {
+                limitBytes = bytesFromGb(process.env.CLOUDINARY_STORAGE_LIMIT_GB);
+                limitSource = "env_gb";
+            } else {
+                const plan = String(usage?.plan || "").toLowerCase();
+                // Sensible Free-plan default when API omits byte quota.
+                if (!plan || plan.includes("free")) {
+                    limitBytes = bytesFromGb(25);
+                    limitSource = "free_plan_default_25gb";
+                }
+            }
+        }
+
+        const limitKnown = limitBytes > 0;
+        const remainingBytes = limitKnown
+            ? Math.max(0, limitBytes - usedBytes)
+            : 0;
+        const usedPct = limitKnown
+            ? Math.min(100, Math.round((usedBytes / limitBytes) * 1000) / 10)
+            : 0;
+        const remainingPct = limitKnown
+            ? Math.max(0, Math.round((100 - usedPct) * 10) / 10)
+            : 100;
+
         return {
             provider: "cloudinary",
             available: true,
@@ -189,11 +211,22 @@ const getCloudinaryStorage = async () => {
             remainingBytes,
             usedPct,
             remainingPct,
+            limitKnown,
+            limitSource,
             plan: usage?.plan || null,
+            storageCreditsUsage: storage.credits_usage ?? null,
             creditsUsed: usage?.credits?.usage ?? null,
             creditsLimit: usage?.credits?.limit ?? null,
+            creditsUsedPercent: usage?.credits?.used_percent ?? null,
             bandwidthUsed: usage?.bandwidth?.usage ?? null,
             bandwidthLimit: usage?.bandwidth?.limit ?? null,
+            note: limitKnown
+                ? limitSource === "api"
+                    ? "Quota from Cloudinary usage API"
+                    : limitSource.startsWith("env")
+                      ? "Quota from CLOUDINARY_STORAGE_LIMIT_* env"
+                      : "API omitted storage.limit — using Free-plan default 25 GB. Set CLOUDINARY_STORAGE_LIMIT_GB to match your plan."
+                : "Cloudinary did not report a storage byte limit for this account.",
         };
     } catch (err) {
         return {
@@ -204,6 +237,7 @@ const getCloudinaryStorage = async () => {
             remainingBytes: 0,
             usedPct: 0,
             remainingPct: 100,
+            limitKnown: false,
             error: err.message || "Failed to read Cloudinary usage",
         };
     }
