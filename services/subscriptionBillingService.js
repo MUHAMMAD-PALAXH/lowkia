@@ -284,9 +284,14 @@ const submitSubscriptionPayment = async ({
         ...NOT_DELETED,
     });
     if (!invoice) throw new AppError("Invoice not found.", 404);
-    if (!["unpaid", "pending", "overdue", "draft"].includes(invoice.status)) {
+    // Do not allow a second pending submission (prevents double-approve activation).
+    if (!["unpaid", "overdue", "draft"].includes(invoice.status)) {
         throw new AppError(
-            `Cannot submit payment for invoice status "${invoice.status}".`,
+            `Cannot submit payment for invoice status "${invoice.status}".${
+                invoice.status === "pending"
+                    ? " Wait for verification, or ask Global Console to reject the current submission."
+                    : ""
+            }`,
             400
         );
     }
@@ -310,8 +315,17 @@ const submitSubscriptionPayment = async ({
     }
 
     const amount =
-        amountMinor != null ? Number(amountMinor) : invoice.amountMinor;
-    if (!Number.isFinite(amount) || amount <= 0) {
+        amountMinor != null ? Number(amountMinor) : Number(invoice.amountMinor);
+    if (!Number.isFinite(amount) || amount < 0) {
+        throw new AppError("amountMinor must be a non-negative number.", 400);
+    }
+    if (amount !== Number(invoice.amountMinor)) {
+        throw new AppError(
+            `Amount mismatch. Invoice expects ${invoice.amountMinor} minor units.`,
+            400
+        );
+    }
+    if (invoice.amountMinor > 0 && amount <= 0) {
         throw new AppError("amountMinor must be a positive number.", 400);
     }
 
@@ -510,15 +524,27 @@ const approveSubscriptionPayment = async (paymentId, actor) => {
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-        const payment = await SubscriptionPayment.findOne({
-            _id: paymentId,
-            ...NOT_DELETED,
-        }).session(session);
-        if (!payment) throw new AppError("Payment not found.", 404);
-        if (payment.status !== "pending_verification") {
+        // Atomic claim — prevents concurrent double-approve of the same payment.
+        const payment = await SubscriptionPayment.findOneAndUpdate(
+            {
+                _id: paymentId,
+                status: "pending_verification",
+                ...NOT_DELETED,
+            },
+            {
+                $set: {
+                    status: "verified",
+                    verifiedAt: new Date(),
+                    verifiedBy: actor?._id || null,
+                    updatedBy: actor?._id || null,
+                },
+            },
+            { new: true, session }
+        );
+        if (!payment) {
             throw new AppError(
-                `Payment is "${payment.status}", not pending verification.`,
-                400
+                "Payment not found or already processed.",
+                404
             );
         }
 
@@ -527,6 +553,18 @@ const approveSubscriptionPayment = async (paymentId, actor) => {
             ...NOT_DELETED,
         }).session(session);
         if (!invoice) throw new AppError("Invoice not found.", 404);
+        if (!["pending", "unpaid", "overdue"].includes(invoice.status)) {
+            throw new AppError(
+                `Invoice is "${invoice.status}" and cannot be approved.`,
+                400
+            );
+        }
+        if (Number(payment.amountMinor) !== Number(invoice.amountMinor)) {
+            throw new AppError(
+                "Payment amount does not match invoice amount.",
+                400
+            );
+        }
 
         const sub = await CompanySubscription.findOne({
             _id: payment.subscriptionId,
@@ -541,17 +579,39 @@ const approveSubscriptionPayment = async (paymentId, actor) => {
             throw new AppError("Company not found.", 404);
         }
 
-        const plan = await getActivePlanOrFail(invoice.planId, session);
+        // Cancel sibling pending submissions on this invoice (safety net).
+        await SubscriptionPayment.updateMany(
+            {
+                invoiceId: invoice._id,
+                _id: { $ne: payment._id },
+                status: "pending_verification",
+                ...NOT_DELETED,
+            },
+            {
+                $set: {
+                    status: "cancelled",
+                    rejectionReason: "Superseded by approved payment",
+                    updatedBy: actor?._id || null,
+                },
+            },
+            { session }
+        );
+
+        // Downgrade takes effect on next renew: prefer scheduled plan when renewing.
+        let planIdToApply = invoice.planId;
+        if (
+            invoice.intent === "renew" &&
+            sub.scheduledPlanId &&
+            String(sub.scheduledPlanId) !== String(invoice.planId)
+        ) {
+            planIdToApply = sub.scheduledPlanId;
+        }
+        const plan = await getActivePlanOrFail(planIdToApply, session);
 
         const now = new Date();
-        payment.status = "verified";
-        payment.verifiedAt = now;
-        payment.verifiedBy = actor?._id || null;
-        payment.updatedBy = actor?._id || null;
-        await payment.save({ session });
-
         invoice.status = "paid";
         invoice.paidAt = now;
+        invoice.currentPaymentId = payment._id;
         invoice.updatedBy = actor?._id || null;
         await invoice.save({ session });
 
@@ -631,6 +691,12 @@ const rejectSubscriptionPayment = async (
     const invoice = await SubscriptionInvoice.findById(payment.invoiceId);
     if (invoice && invoice.status === "pending") {
         invoice.status = "unpaid";
+        if (
+            invoice.currentPaymentId &&
+            String(invoice.currentPaymentId) === String(payment._id)
+        ) {
+            invoice.currentPaymentId = null;
+        }
         invoice.updatedBy = actor?._id || invoice.updatedBy;
         await invoice.save();
     }

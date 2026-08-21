@@ -125,6 +125,18 @@ subscriptionPaymentSchema.index({
     invoiceId: 1,
     status: 1,
 });
+// Prevent reuse of the same TrxID + method across pending/verified payments.
+subscriptionPaymentSchema.index(
+    { paymentMethod: 1, transactionId: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            transactionId: { $type: "string", $gt: "" },
+            status: { $in: ["pending_verification", "verified"] },
+            isDeleted: { $ne: true },
+        },
+    }
+);
 
 module.exports = mongoose.model(
     "SubscriptionPayment",

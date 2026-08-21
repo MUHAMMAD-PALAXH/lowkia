@@ -496,21 +496,31 @@ const renewSubscription = async (
 
 const getCompanySubscription = async (companyId) => {
     const company = await getCompanyRaw(companyId);
+    let sub = null;
     if (company.currentSubscriptionId) {
-        const current = await populateSub(
+        sub = await populateSub(
             CompanySubscription.findOne({
                 _id: company.currentSubscriptionId,
                 ...NOT_DELETED,
             })
         );
-        if (current) return current;
     }
-    return populateSub(
-        CompanySubscription.findOne({
-            companyId,
-            ...NOT_DELETED,
-        }).sort({ createdAt: -1 })
-    );
+    if (!sub) {
+        sub = await populateSub(
+            CompanySubscription.findOne({
+                companyId,
+                ...NOT_DELETED,
+            }).sort({ createdAt: -1 })
+        );
+    }
+    if (!sub) return null;
+
+    // Trial must never present as Paid (guards against inconsistent legacy/test data).
+    const plain = sub.toObject ? sub.toObject() : { ...sub };
+    if (plain.status === "trialing" && plain.paymentStatus === "paid") {
+        plain.paymentStatus = "unpaid";
+    }
+    return plain;
 };
 
 const listCompanySubscriptions = async (companyId) => {

@@ -112,7 +112,8 @@ exports.listPlatformTransactions = asyncHandler(async (req, res) => {
 // ─── Company billing (owner/admin) ───────────────────────────────────────────
 
 exports.listCompanyBillingPlans = asyncHandler(async (req, res) => {
-    const plans = await listPlansEnriched({ status: "Active" });
+    // Include Active plans and legacy rows with isActive:true but no status.
+    const plans = await listPlansEnriched({ activeOnly: true });
     return success(res, "Plans retrieved", plans);
 });
 
