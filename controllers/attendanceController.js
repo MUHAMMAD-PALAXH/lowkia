@@ -13,7 +13,7 @@ const clientMeta = (req) => ({
 });
 
 exports.getMyToday = asyncHandler(async (req, res) => {
-    const data = await attendanceService.getMyToday(req.user);
+    const data = await attendanceService.getMyToday(req.user, req.companyId);
     return success(res, "Today's attendance retrieved.", data);
 });
 
@@ -119,7 +119,8 @@ exports.getAttendanceAudit = asyncHandler(async (req, res) => {
     const { listAttendanceAudit } = require("../services/activityLogService");
     const data = await listAttendanceAudit(
         req.query,
-        req.managedBranchIds ?? null
+        req.managedBranchIds ?? null,
+        req.companyId
     );
     return success(res, "Attendance audit log retrieved.", data);
 });

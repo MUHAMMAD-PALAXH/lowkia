@@ -22,6 +22,21 @@ const {
   isSupplierLogin,
   hasAdminPower,
 } = require('../utils/roleAccess');
+const { resolveTenant, requireCompany } = require('../middleware/tenant');
+const { companyFilter } = require('../utils/tenantScope');
+
+/** Tenant check that also claims legacy null-companyId users on the default company. */
+const assertUserInTenant = (user, req) => {
+  if (!user) throw new AppError('User not found', 404);
+  const uid = user.companyId?.toString?.() || String(user.companyId || '');
+  const tid = req.companyId?.toString?.() || String(req.companyId || '');
+  if (uid && tid && uid === tid) return user;
+  if (!uid && req.company?.isDefault) {
+    user.companyId = req.companyId;
+    return user;
+  }
+  throw new AppError('User not found', 404);
+};
 
 const normalizePhone = (value = "") =>
   String(value)
@@ -121,9 +136,10 @@ const adminOnly = (req, res, next) => {
 };
 
 // NEW: Approve user (admin only)
-router.post('/:id/approve', protect, adminOnly, asyncHandler(async (req, res) => {
+router.post('/:id/approve', protect, resolveTenant, requireCompany, adminOnly, asyncHandler(async (req, res) => {
   const user = await AdminUser.findById(req.params.id);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  assertUserInTenant(user, req);
   if (!user.isVerified || !user.isPhoneVerified) {
     return res.status(400).json({
       success: false,
@@ -134,12 +150,13 @@ router.post('/:id/approve', protect, adminOnly, asyncHandler(async (req, res) =>
 
   user.isApproved = true;
   user.status = 'Active';
+  if (!user.companyId) user.companyId = req.companyId;
   await user.save();
   res.json({ success: true, message: 'User approved successfully' });
 }));
 
 // Block access without deleting the directory or its related business data.
-router.post('/:id/block', protect, adminOnly, asyncHandler(async (req, res) => {
+router.post('/:id/block', protect, resolveTenant, requireCompany, adminOnly, asyncHandler(async (req, res) => {
   if (String(req.user._id) === String(req.params.id)) {
     return res.status(400).json({
       success: false,
@@ -149,6 +166,7 @@ router.post('/:id/block', protect, adminOnly, asyncHandler(async (req, res) => {
 
   const user = await AdminUser.findById(req.params.id);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  assertUserInTenant(user, req);
   if (user.status === 'Blocked') {
     return res.status(400).json({ success: false, message: 'Account is already blocked' });
   }
@@ -159,9 +177,10 @@ router.post('/:id/block', protect, adminOnly, asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Account blocked successfully', data: user });
 }));
 
-router.post('/:id/unblock', protect, adminOnly, asyncHandler(async (req, res) => {
+router.post('/:id/unblock', protect, resolveTenant, requireCompany, adminOnly, asyncHandler(async (req, res) => {
   const user = await AdminUser.findById(req.params.id);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  assertUserInTenant(user, req);
   if (user.status !== 'Blocked') {
     return res.status(400).json({ success: false, message: 'Account is not blocked' });
   }
@@ -172,26 +191,48 @@ router.post('/:id/unblock', protect, adminOnly, asyncHandler(async (req, res) =>
   res.json({ success: true, message: 'Account unblocked successfully', data: user });
 }));
 
-// GET all login accounts (admin, vendor, employee, supplier)
-router.get('/', protect, adminOnly, asyncHandler(async (req, res) => {
-  const users = await AdminUser.find()
+// GET all login accounts (admin, vendor, employee, supplier) — tenant scoped
+router.get('/', protect, resolveTenant, requireCompany, adminOnly, asyncHandler(async (req, res) => {
+  const tenantId = req.companyId;
+  // Default company also surfaces legacy rows that never got companyId stamped.
+  const companyClause = req.company?.isDefault
+    ? {
+        $or: [
+          { companyId: tenantId },
+          { companyId: null },
+          { companyId: { $exists: false } },
+        ],
+      }
+    : { companyId: tenantId };
+
+  const users = await AdminUser.find({
+    ...companyClause,
+    role: { $ne: 'global_super_admin' },
+  })
     .select('-password -__v')
     .sort({ createdAt: -1 });
   res.json({ success: true, data: users });
 }));
 
 // GET stats (works for admin, vendor, branch_manager)
-router.get('/:id/stats', protect, adminOnly, asyncHandler(async (req, res) => {
+router.get('/:id/stats', protect, resolveTenant, requireCompany, adminOnly, asyncHandler(async (req, res) => {
   const userId = req.params.id;
   const user = await AdminUser.findById(userId);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  assertUserInTenant(user, req);
 
-  const productCount = await Product.countDocuments({ vendorId: user._id });
+  const productCount = await Product.countDocuments({
+    vendorId: user._id,
+    ...companyFilter(req.companyId),
+  });
 
-  const vendorProductIds = await Product.find({ vendorId: user._id }).distinct('_id');
+  const vendorProductIds = await Product.find({
+    vendorId: user._id,
+    ...companyFilter(req.companyId),
+  }).distinct('_id');
 
   const salesAgg = await Order.aggregate([
-    { $match: { orderStatus: 'delivered' } },
+    { $match: { orderStatus: 'delivered', ...companyFilter(req.companyId) } },
     { $unwind: '$items' },
     { $match: { 'items.productID': { $in: vendorProductIds } } },
     { $group: { _id: null, totalSales: { $sum: { $multiply: ['$items.price', '$items.quantity'] } } } }
@@ -199,7 +240,7 @@ router.get('/:id/stats', protect, adminOnly, asyncHandler(async (req, res) => {
   const totalSales = salesAgg.length > 0 ? salesAgg[0].totalSales : 0;
 
   const topProducts = await Order.aggregate([
-    { $match: { orderStatus: 'delivered' } },
+    { $match: { orderStatus: 'delivered', ...companyFilter(req.companyId) } },
     { $unwind: '$items' },
     { $match: { 'items.productID': { $in: vendorProductIds } } },
     { $group: { _id: '$items.productID', name: { $first: '$items.productName' }, totalSold: { $sum: '$items.quantity' } } },
@@ -218,15 +259,25 @@ router.get('/:id/stats', protect, adminOnly, asyncHandler(async (req, res) => {
 }));
 
 // DELETE user (admin only)
-router.delete('/:id', protect, adminOnly, asyncHandler(async (req, res) => {
+router.delete('/:id', protect, resolveTenant, requireCompany, adminOnly, asyncHandler(async (req, res) => {
   const user = await AdminUser.findById(req.params.id);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+  assertUserInTenant(user, req);
 
-  const products = await Product.find({ vendorId: user._id }).select('_id');
+  const products = await Product.find({
+    vendorId: user._id,
+    ...companyFilter(req.companyId),
+  }).select('_id');
   const productIds = products.map(p => p._id);
   await ProductVariant.deleteMany({ productId: { $in: productIds } });
-  await Product.deleteMany({ vendorId: user._id });
-  await Coupon.deleteMany({ vendorId: user._id });
+  await Product.deleteMany({
+    vendorId: user._id,
+    ...companyFilter(req.companyId),
+  });
+  await Coupon.deleteMany({
+    vendorId: user._id,
+    ...companyFilter(req.companyId),
+  });
   await Supplier.updateMany({ userId: user._id }, { $unset: { userId: 1 } });
 
   await user.deleteOne();
@@ -631,7 +682,7 @@ router.post('/update-profile', protect, asyncHandler(async (req, res) => {
 }));
 
 // GET /admin/top-vendors?period=month
-router.get('/top-vendors', protect, adminOnly, asyncHandler(async (req, res) => {
+router.get('/top-vendors', protect, resolveTenant, requireCompany, adminOnly, asyncHandler(async (req, res) => {
   const { period = 'month' } = req.query;
 
   let startDate = new Date();
@@ -645,7 +696,8 @@ router.get('/top-vendors', protect, adminOnly, asyncHandler(async (req, res) => 
 
   const match = {
     createdAt: { $gte: startDate },
-    orderStatus: 'delivered'
+    orderStatus: 'delivered',
+    ...companyFilter(req.companyId),
   };
 
   const topVendors = await Order.aggregate([
@@ -660,6 +712,7 @@ router.get('/top-vendors', protect, adminOnly, asyncHandler(async (req, res) => 
       }
     },
     { $unwind: '$product' },
+    { $match: { 'product.companyId': req.companyId } },
     {
       $group: {
         _id: '$product.vendorId',

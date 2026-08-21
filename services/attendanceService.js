@@ -134,9 +134,21 @@ const resolveEmployeeBranch = async (employee) => {
     return { branchId, branch };
 };
 
-const loadContext = async (user) => {
+const loadContext = async (user, companyIdOverride = null) => {
     const employee = await resolveEmployeeFromUser(user, { requireActive: true });
-    const companyId = await ensureUserCompany(user);
+    let companyId = companyIdOverride || null;
+    if (!companyId) {
+        companyId = await ensureUserCompany(user);
+    }
+    if (!companyId && employee?.companyId) {
+        companyId = employee.companyId;
+    }
+    if (!companyId) {
+        throw new AppError("Company context is required for attendance.", 403);
+    }
+    if (employee?.companyId) {
+        assertDocumentCompany(employee, companyId, "Employee");
+    }
     const timezone = await settingsService.getTimezone(companyId);
     const policy = await attendancePolicyService.getActiveOrDefault(companyId);
     const now = new Date();
@@ -458,8 +470,8 @@ const getMyEmployee = async (user) => {
 /**
  * Today's attendance card for Flutter (employee self).
  */
-const getMyToday = async (user) => {
-    const ctx = await loadContext(user);
+const getMyToday = async (user, companyIdOverride = null) => {
+    const ctx = await loadContext(user, companyIdOverride);
     const {
         employee,
         companyId,

@@ -71,14 +71,19 @@ const writeActivityLog = async ({
     }
 };
 
-const listAttendanceAudit = async (query = {}, managedBranchIds = null) => {
+const listAttendanceAudit = async (
+    query = {},
+    managedBranchIds = null,
+    companyId = null
+) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 50, 1), 100);
     const skip = (page - 1) * limit;
 
     const filter = {
         module: "Attendance",
-        ...NOT_DELETED
+        ...NOT_DELETED,
+        ...(companyId ? { companyId } : {}),
     };
 
     if (query.activityType) filter.activityType = query.activityType;
