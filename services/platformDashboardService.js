@@ -12,7 +12,47 @@ const daysFromNow = (n) => {
 };
 
 /**
- * Real SaaS metrics from Company + CompanySubscription.
+ * Load only each company's *current* subscription (not historical rows).
+ */
+const loadCurrentSubscriptions = async () => {
+    const companies = await Company.find({
+        ...NOT_DELETED,
+        currentSubscriptionId: { $ne: null },
+    })
+        .select("_id companyCode legalName tradeName status logoUrl currentSubscriptionId")
+        .lean();
+
+    if (!companies.length) return { companies: [], subscriptions: [] };
+
+    const subIds = companies
+        .map((c) => c.currentSubscriptionId)
+        .filter(Boolean);
+
+    const subscriptions = await CompanySubscription.find({
+        _id: { $in: subIds },
+        ...NOT_DELETED,
+    })
+        .select(
+            "companyId planId planCode planName status paymentStatus billingInterval amountMinor currency currentPeriodEnd trialEndsAt paidAt"
+        )
+        .lean();
+
+    const byId = Object.fromEntries(
+        subscriptions.map((s) => [String(s._id), s])
+    );
+
+    const paired = [];
+    for (const company of companies) {
+        const sub = byId[String(company.currentSubscriptionId)];
+        if (!sub) continue;
+        paired.push({ company, sub });
+    }
+
+    return { companies, subscriptions: paired.map((p) => p.sub), paired };
+};
+
+/**
+ * Real SaaS metrics from Company + current CompanySubscription only.
  * Never fabricates revenue — only sums paid subscription amounts.
  */
 const getPlatformDashboard = async () => {
@@ -25,11 +65,9 @@ const getPlatformDashboard = async () => {
         totalCompanies,
         byStatus,
         newThisMonth,
-        subs,
+        current,
         paidThisMonth,
         paidPrevMonth,
-        expiringSoon,
-        unpaidCount,
         companyUsers,
     ] = await Promise.all([
         Company.countDocuments(NOT_DELETED),
@@ -41,14 +79,8 @@ const getPlatformDashboard = async () => {
             ...NOT_DELETED,
             createdAt: { $gte: monthStart },
         }),
-        CompanySubscription.find({
-            ...NOT_DELETED,
-            status: { $in: ["trialing", "active", "past_due", "cancelled", "expired"] },
-        })
-            .select(
-                "companyId planCode planName status paymentStatus billingInterval amountMinor currency currentPeriodEnd trialEndsAt"
-            )
-            .lean(),
+        loadCurrentSubscriptions(),
+        // Collected this month = payments marked paid this month (all rows OK)
         CompanySubscription.aggregate([
             {
                 $match: {
@@ -81,27 +113,6 @@ const getPlatformDashboard = async () => {
                 },
             },
         ]),
-        CompanySubscription.find({
-            ...NOT_DELETED,
-            status: { $in: ["active", "trialing"] },
-            $or: [
-                {
-                    currentPeriodEnd: { $gte: now, $lte: in7 },
-                },
-                {
-                    trialEndsAt: { $gte: now, $lte: in7 },
-                },
-            ],
-        })
-            .populate("companyId", "companyCode legalName tradeName status logoUrl")
-            .sort({ currentPeriodEnd: 1, trialEndsAt: 1 })
-            .limit(20)
-            .lean(),
-        CompanySubscription.countDocuments({
-            ...NOT_DELETED,
-            paymentStatus: { $in: ["unpaid"] },
-            status: { $in: ["trialing", "active", "past_due"] },
-        }),
         AdminUser.countDocuments({
             isDeleted: { $ne: true },
             role: { $ne: ROLES.GLOBAL_SUPER_ADMIN },
@@ -121,29 +132,105 @@ const getPlatformDashboard = async () => {
     const closedCompanies = statusMap.Closed || 0;
     const blockedCompanies = statusMap.Blocked || 0;
 
-    // Derived expired: company Active/Trial but sub expired, OR company Closed after expiry
-    const expiredSubs = subs.filter((s) => s.status === "expired").length;
+    const currentSubs = current.paired || [];
+    const liveSubs = currentSubs.filter(
+        (p) =>
+            p.sub.status === "active" ||
+            p.sub.status === "trialing" ||
+            p.sub.status === "past_due"
+    );
 
-    // MRR from active paid monthly + yearly/12
+    const expiredSubs = currentSubs.filter(
+        (p) => p.sub.status === "expired"
+    ).length;
+
     let mrrMinor = 0;
     const planDist = {};
-    for (const s of subs) {
-        const key = s.planCode || s.planName || "Unknown";
+    let unpaidCount = 0;
+    const expiringSoon = [];
+
+    for (const { company, sub } of currentSubs) {
+        const key = sub.planCode || sub.planName || "Unknown";
         if (!planDist[key]) {
-            planDist[key] = { planCode: key, planName: s.planName || key, count: 0 };
+            planDist[key] = {
+                planCode: key,
+                planName: sub.planName || key,
+                count: 0,
+            };
         }
-        if (s.status === "active" || s.status === "trialing") {
+
+        if (
+            sub.status === "active" ||
+            sub.status === "trialing" ||
+            sub.status === "past_due"
+        ) {
             planDist[key].count += 1;
         }
-        if (s.status === "active" && s.paymentStatus === "paid") {
-            const amt = Number(s.amountMinor || 0);
-            if (s.billingInterval === "yearly") mrrMinor += Math.round(amt / 12);
-            else mrrMinor += amt;
+
+        if (sub.status === "active" && sub.paymentStatus === "paid") {
+            const amt = Number(sub.amountMinor || 0);
+            if (sub.billingInterval === "yearly") {
+                mrrMinor += Math.round(amt / 12);
+            } else {
+                mrrMinor += amt;
+            }
+        }
+
+        if (
+            sub.paymentStatus === "unpaid" &&
+            ["trialing", "active", "past_due"].includes(sub.status)
+        ) {
+            unpaidCount += 1;
+        }
+
+        if (["active", "trialing"].includes(sub.status)) {
+            const ends = sub.trialEndsAt || sub.currentPeriodEnd;
+            if (ends) {
+                const end = new Date(ends);
+                if (end >= now && end <= in7) {
+                    expiringSoon.push({
+                        subscriptionId: sub._id,
+                        company: {
+                            _id: company._id,
+                            companyCode: company.companyCode,
+                            legalName: company.legalName,
+                            tradeName: company.tradeName,
+                            status: company.status,
+                            logoUrl: company.logoUrl,
+                        },
+                        planCode: sub.planCode,
+                        planName: sub.planName,
+                        status: sub.status,
+                        paymentStatus: sub.paymentStatus,
+                        amountMinor: sub.amountMinor,
+                        currency: sub.currency,
+                        expiresAt: ends,
+                        billingInterval: sub.billingInterval,
+                    });
+                }
+            }
         }
     }
 
-    const collectedThisMonth =
-        paidThisMonth[0]?.totalMinor || 0;
+    expiringSoon.sort((a, b) => {
+        const da = new Date(a.expiresAt).getTime();
+        const db = new Date(b.expiresAt).getTime();
+        return da - db;
+    });
+
+    const subscribedCurrent = liveSubs.length;
+    const planDistribution = Object.values(planDist)
+        .filter((p) => p.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .map((p) => ({
+            ...p,
+            pct:
+                subscribedCurrent > 0
+                    ? Math.round((p.count / subscribedCurrent) * 1000) / 10
+                    : 0,
+        }));
+
+    const collectedThisMonth = paidThisMonth[0]?.totalMinor || 0;
     const collectedPrevMonth = paidPrevMonth[0]?.totalMinor || 0;
     let mrrChangePct = null;
     if (collectedPrevMonth > 0) {
@@ -163,6 +250,7 @@ const getPlatformDashboard = async () => {
             closed: closedCompanies,
             blocked: blockedCompanies,
             expiredSubscriptions: expiredSubs,
+            subscribedCurrent,
             newThisMonth,
             activePct:
                 totalCompanies > 0
@@ -184,21 +272,8 @@ const getPlatformDashboard = async () => {
         users: {
             activeCompanyUsers: companyUsers,
         },
-        planDistribution: Object.values(planDist).sort(
-            (a, b) => b.count - a.count
-        ),
-        expiringSoon: expiringSoon.map((s) => ({
-            subscriptionId: s._id,
-            company: s.companyId,
-            planCode: s.planCode,
-            planName: s.planName,
-            status: s.status,
-            paymentStatus: s.paymentStatus,
-            amountMinor: s.amountMinor,
-            currency: s.currency,
-            expiresAt: s.trialEndsAt || s.currentPeriodEnd,
-            billingInterval: s.billingInterval,
-        })),
+        planDistribution,
+        expiringSoon: expiringSoon.slice(0, 20),
     };
 };
 
