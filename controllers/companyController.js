@@ -10,8 +10,10 @@ const {
     ensureDefaultCompany,
     ensureUserCompany,
     getCompanyById,
+    setCompanyLifecycle,
 } = require("../services/companyService");
 const { isGlobalSuperAdmin } = require("../utils/roleAccess");
+const { getPlatformDashboard } = require("../services/platformDashboardService");
 
 const clientIp = (req) =>
     req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ||
@@ -74,6 +76,7 @@ exports.enterCompany = asyncHandler(async (req, res) => {
     const companyId = req.body?.companyId || req.params.id;
     const result = await enterCompany(req.user, companyId, {
         ipAddress: clientIp(req),
+        reason: req.body?.reason || "",
     });
     return success(res, "Entered company", result);
 });
@@ -100,4 +103,46 @@ exports.getPlatformSession = asyncHandler(async (req, res) => {
         activeCompanyId: req.activeCompanyId || null,
         company,
     });
+});
+
+exports.getPlatformDashboard = asyncHandler(async (req, res) => {
+    const data = await getPlatformDashboard();
+    return success(res, "Platform dashboard", data);
+});
+
+exports.suspendCompany = asyncHandler(async (req, res) => {
+    const company = await setCompanyLifecycle(
+        req.params.id,
+        "Suspended",
+        req.user,
+        { reason: req.body?.reason || "" }
+    );
+    return success(res, "Company suspended", company);
+});
+
+exports.reactivateCompany = asyncHandler(async (req, res) => {
+    const company = await setCompanyLifecycle(
+        req.params.id,
+        "Active",
+        req.user,
+        { reason: req.body?.reason || "Reactivated" }
+    );
+    return success(res, "Company reactivated", company);
+});
+
+exports.blockCompany = asyncHandler(async (req, res) => {
+    const company = await setCompanyLifecycle(req.params.id, "Blocked", req.user, {
+        reason: req.body?.reason || "",
+    });
+    return success(res, "Company blocked", company);
+});
+
+exports.cancelCompany = asyncHandler(async (req, res) => {
+    const company = await setCompanyLifecycle(
+        req.params.id,
+        "Cancelled",
+        req.user,
+        { reason: req.body?.reason || "" }
+    );
+    return success(res, "Company cancelled", company);
 });

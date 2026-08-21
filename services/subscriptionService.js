@@ -303,6 +303,126 @@ const cancelSubscription = async (
     return populateSub(CompanySubscription.findById(sub._id));
 };
 
+/**
+ * Extend trial by N days (audit reason required for platform ops).
+ */
+const extendTrial = async (
+    subscriptionId,
+    actor,
+    { days = 7, reason = "" } = {}
+) => {
+    const n = Math.min(Math.max(parseInt(days, 10) || 7, 1), 90);
+    const sub = await CompanySubscription.findOne({
+        _id: subscriptionId,
+        ...NOT_DELETED,
+    });
+    if (!sub) throw new AppError("Subscription not found.", 404);
+
+    const base =
+        sub.trialEndsAt && new Date(sub.trialEndsAt) > new Date()
+            ? new Date(sub.trialEndsAt)
+            : new Date();
+    const nextEnd = addDays(base, n);
+
+    sub.status = "trialing";
+    sub.trialEndsAt = nextEnd;
+    if (!sub.trialStartsAt) sub.trialStartsAt = new Date();
+    sub.currentPeriodEnd = nextEnd;
+    sub.updatedBy = actor?._id || sub.updatedBy;
+    await sub.save();
+
+    const company = await getCompanyRaw(sub.companyId);
+    company.status = "Trial";
+    company.trialEndsAt = nextEnd;
+    company.updatedBy = actor?._id || company.updatedBy;
+    await company.save();
+
+    await writeActivityLog({
+        user: actor,
+        companyId: company._id,
+        activityType: "Update",
+        module: "Platform",
+        subModule: "ExtendTrial",
+        description: `Extended trial for ${company.companyCode} by ${n} days${reason ? `: ${reason}` : ""}`,
+        shortDescription: `Extend trial +${n}d`,
+        referenceType: "CompanySubscription",
+        referenceId: sub._id,
+        newData: { trialEndsAt: nextEnd, days: n, reason },
+        securityLevel: "High",
+    });
+
+    return populateSub(CompanySubscription.findById(sub._id));
+};
+
+/**
+ * Renew: extend period from currentPeriodEnd (early renewal preserves remaining time).
+ * Leaves payment unpaid until mark-paid unless markPaidNow.
+ */
+const renewSubscription = async (
+    subscriptionId,
+    actor,
+    { markPaidNow = false, paymentNote = "", paymentMethod = "manual" } = {}
+) => {
+    const sub = await CompanySubscription.findOne({
+        _id: subscriptionId,
+        ...NOT_DELETED,
+    });
+    if (!sub) throw new AppError("Subscription not found.", 404);
+
+    const now = new Date();
+    const baseEnd =
+        sub.currentPeriodEnd && new Date(sub.currentPeriodEnd) > now
+            ? new Date(sub.currentPeriodEnd)
+            : now;
+    const periodStart = baseEnd;
+    const periodEnd = addInterval(periodStart, sub.billingInterval);
+
+    sub.currentPeriodStart = periodStart;
+    sub.currentPeriodEnd = periodEnd;
+    sub.status = markPaidNow ? "active" : sub.status === "expired" ? "active" : sub.status;
+    if (markPaidNow) {
+        sub.paymentStatus = "paid";
+        sub.paidAt = now;
+        sub.paidBy = actor?._id || null;
+        sub.paymentMethod = paymentMethod || "manual";
+        if (paymentNote) sub.paymentNote = String(paymentNote).trim();
+    } else {
+        sub.paymentStatus = "unpaid";
+    }
+    sub.updatedBy = actor?._id || sub.updatedBy;
+    await sub.save();
+
+    const company = await getCompanyRaw(sub.companyId);
+    company.currentSubscriptionId = sub._id;
+    if (markPaidNow) {
+        company.status = "Active";
+        company.trialEndsAt = null;
+    }
+    company.updatedBy = actor?._id || company.updatedBy;
+    await company.save();
+
+    await writeActivityLog({
+        user: actor,
+        companyId: company._id,
+        activityType: "Update",
+        module: "Platform",
+        subModule: "Renew",
+        description: `Renewed subscription ${sub.subscriptionNumber} for ${company.companyCode}`,
+        shortDescription: `Renew ${sub.subscriptionNumber}`,
+        referenceType: "CompanySubscription",
+        referenceId: sub._id,
+        newData: {
+            periodStart,
+            periodEnd,
+            paymentStatus: sub.paymentStatus,
+            markPaidNow,
+        },
+        securityLevel: "High",
+    });
+
+    return populateSub(CompanySubscription.findById(sub._id));
+};
+
 const getCompanySubscription = async (companyId) => {
     const company = await getCompanyRaw(companyId);
     if (company.currentSubscriptionId) {
@@ -378,6 +498,8 @@ module.exports = {
     assignSubscription,
     markSubscriptionPaid,
     cancelSubscription,
+    extendTrial,
+    renewSubscription,
     getCompanySubscription,
     listCompanySubscriptions,
     assertSubscriptionAllowsAccess,

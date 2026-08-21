@@ -8,6 +8,8 @@ const {
     cancelSubscription,
     getCompanySubscription,
     listCompanySubscriptions,
+    extendTrial,
+    renewSubscription,
 } = require("../services/subscriptionService");
 
 exports.ensurePlans = asyncHandler(async (req, res) => {
@@ -58,6 +60,27 @@ exports.cancelSubscription = asyncHandler(async (req, res) => {
         req.body?.reason || ""
     );
     return success(res, "Subscription cancelled", sub);
+});
+
+exports.extendTrial = asyncHandler(async (req, res) => {
+    const sub = await extendTrial(
+        req.params.subscriptionId,
+        req.user,
+        {
+            days: req.body?.days ?? 7,
+            reason: req.body?.reason || "",
+        }
+    );
+    return success(res, "Trial extended", sub);
+});
+
+exports.renewSubscription = asyncHandler(async (req, res) => {
+    const sub = await renewSubscription(req.params.subscriptionId, req.user, {
+        markPaidNow: req.body?.markPaidNow === true,
+        paymentNote: req.body?.paymentNote || "",
+        paymentMethod: req.body?.paymentMethod || "manual",
+    });
+    return success(res, "Subscription renewed", sub);
 });
 
 exports.getCompanySubscription = asyncHandler(async (req, res) => {

@@ -176,7 +176,7 @@ const createCompany = async (payload = {}, actorId = null) => {
             .trim()
             .toUpperCase(),
         timezone: String(payload.timezone || "America/New_York").trim(),
-        status: ["Trial", "Active", "Suspended", "Cancelled", "Closed"].includes(
+        status: ["Trial", "Active", "Suspended", "Blocked", "Cancelled", "Closed"].includes(
             payload.status
         )
             ? payload.status
@@ -244,6 +244,7 @@ const updateCompany = async (companyId, payload = {}, actorId = null) => {
                     "Trial",
                     "Active",
                     "Suspended",
+                    "Blocked",
                     "Cancelled",
                     "Closed",
                 ].includes(payload.status)
@@ -280,23 +281,18 @@ const updateCompany = async (companyId, payload = {}, actorId = null) => {
 
 /**
  * Issue JWT with activeCompanyId for Global SA Enter Company.
+ * Global SA may enter even expired/suspended companies for support (audited).
  */
-const enterCompany = async (user, companyId, { ipAddress = "" } = {}) => {
+const enterCompany = async (
+    user,
+    companyId,
+    { ipAddress = "", reason = "" } = {}
+) => {
     if (!isGlobalSuperAdmin(user.role)) {
         throw new AppError("Only Global Super Admin can enter a company.", 403);
     }
 
-    const company = await getCompanyById(companyId); // Active/Trial only
-
-    // Soft subscription gate (trial/expired)
-    try {
-        const {
-            assertSubscriptionAllowsAccess,
-        } = require("./subscriptionService");
-        await assertSubscriptionAllowsAccess(company);
-    } catch (err) {
-        if (err.statusCode) throw err;
-    }
+    const company = await getCompanyRaw(companyId);
 
     const token = user.generateToken({ activeCompanyId: company._id });
 
@@ -306,11 +302,15 @@ const enterCompany = async (user, companyId, { ipAddress = "" } = {}) => {
         activityType: "Login",
         module: "Platform",
         subModule: "EnterCompany",
-        description: `Global Super Admin entered company ${company.companyCode} (${company.legalName})`,
+        description: `Global Super Admin entered company ${company.companyCode} (${company.legalName})${reason ? ` — ${reason}` : ""}`,
         shortDescription: `Enter company ${company.companyCode}`,
         referenceType: "Company",
         referenceId: company._id,
-        newData: { activeCompanyId: String(company._id) },
+        newData: {
+            activeCompanyId: String(company._id),
+            companyStatus: company.status,
+            reason: reason || "",
+        },
         ipAddress,
         securityLevel: "High",
     });
@@ -320,6 +320,10 @@ const enterCompany = async (user, companyId, { ipAddress = "" } = {}) => {
         company,
         destination: "company_erp",
         activeCompanyId: company._id,
+        bypassNote:
+            ["Active", "Trial"].includes(company.status)
+                ? null
+                : `Company is ${company.status} — Global Admin support access`,
     };
 };
 
@@ -358,6 +362,44 @@ const exitCompany = async (user, previousCompanyId = null, { ipAddress = "" } = 
     };
 };
 
+/**
+ * Administrative company lifecycle (suspend / reactivate / block / cancel).
+ */
+const setCompanyLifecycle = async (
+    companyId,
+    nextStatus,
+    actor,
+    { reason = "" } = {}
+) => {
+    const allowed = ["Active", "Suspended", "Blocked", "Cancelled", "Trial"];
+    if (!allowed.includes(nextStatus)) {
+        throw new AppError("Invalid lifecycle status.", 400);
+    }
+    const company = await getCompanyRaw(companyId);
+    const prev = company.status;
+    company.status = nextStatus;
+    company.statusReason = String(reason || "").trim();
+    company.updatedBy = actor?._id || company.updatedBy;
+    await company.save();
+
+    await writeActivityLog({
+        user: actor,
+        companyId: company._id,
+        activityType: "Update",
+        module: "Platform",
+        subModule: "CompanyLifecycle",
+        description: `Company ${company.companyCode} status ${prev} → ${nextStatus}${reason ? `: ${reason}` : ""}`,
+        shortDescription: `${company.companyCode} → ${nextStatus}`,
+        referenceType: "Company",
+        referenceId: company._id,
+        oldData: { status: prev },
+        newData: { status: nextStatus, reason },
+        securityLevel: "High",
+    });
+
+    return company;
+};
+
 module.exports = {
     ensureDefaultCompany,
     ensureUserCompany,
@@ -369,4 +411,5 @@ module.exports = {
     updateCompany,
     enterCompany,
     exitCompany,
+    setCompanyLifecycle,
 };

@@ -55,8 +55,14 @@ const companySchema = new mongoose.Schema(
 
         status: {
             type: String,
-            enum: ["Trial", "Active", "Suspended", "Cancelled", "Closed"],
+            enum: ["Trial", "Active", "Suspended", "Blocked", "Cancelled", "Closed"],
             default: "Active",
+        },
+
+        statusReason: {
+            type: String,
+            default: "",
+            trim: true,
         },
 
         /**
