@@ -54,6 +54,9 @@ const MODULE_CONFIG = {
 
     company: { prefix: "CO", padding: 6 },
     company_subscription: { prefix: "SUB", padding: 6 },
+    subscription_invoice: { prefix: "SINV", padding: 6 },
+    subscription_payment: { prefix: "SPMT", padding: 6 },
+    platform_payment_account: { prefix: "PACC", padding: 6 },
     payment: { prefix: "PAY", padding: 6, yearScoped: true },
     supplier_payable: { prefix: "SPAY", padding: 6 },
     payroll_run: { prefix: "PRUN", padding: 6 },

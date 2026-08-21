@@ -39,14 +39,22 @@ const companySubscriptionSchema = new mongoose.Schema(
 
         status: {
             type: String,
-            enum: ["trialing", "active", "past_due", "cancelled", "expired"],
+            enum: [
+                "trialing",
+                "pending",
+                "active",
+                "past_due",
+                "expired",
+                "cancelled",
+                "suspended",
+            ],
             default: "trialing",
             index: true,
         },
 
         paymentStatus: {
             type: String,
-            enum: ["unpaid", "paid", "waived", "refunded"],
+            enum: ["unpaid", "pending", "paid", "waived", "refunded"],
             default: "unpaid",
             index: true,
         },
@@ -77,6 +85,9 @@ const companySubscriptionSchema = new mongoose.Schema(
             enum: [
                 "manual",
                 "bank_transfer",
+                "bkash",
+                "rocket",
+                "nagad",
                 "cash",
                 "cheque",
                 "card",
@@ -96,6 +107,19 @@ const companySubscriptionSchema = new mongoose.Schema(
 
         cancelledAt: { type: Date, default: null },
         cancelReason: { type: String, default: "", trim: true },
+
+        /** Downgrade takes effect at next renewal. */
+        scheduledPlanId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "SubscriptionPlan",
+            default: null,
+        },
+
+        currentInvoiceId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "SubscriptionInvoice",
+            default: null,
+        },
 
         limits: {
             type: mongoose.Schema.Types.Mixed,

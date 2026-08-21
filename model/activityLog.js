@@ -178,7 +178,9 @@ module:{
 
         "System",
 
-        "Platform"
+        "Platform",
+
+        "Billing"
 
 
     ],
@@ -262,7 +264,13 @@ referenceType:{
 
         "Company",
 
-        "CompanySubscription"
+        "CompanySubscription",
+
+        "PlatformPaymentAccount",
+
+        "SubscriptionInvoice",
+
+        "SubscriptionPayment"
 
 
     ],
@@ -378,7 +386,9 @@ securityLevel:{
 
         "Critical",
 
-        "High"
+        "High",
+
+        "Medium"
 
     ],
 

@@ -50,6 +50,22 @@ const storagePoster = new CloudinaryStorage({
     },
 });
 
+const storagePaymentProof = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'saas-payment-proofs',
+        allowed_formats: ['jpg', 'png', 'jpeg'],
+    },
+});
+
+const storagePaymentQr = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'saas-payment-qr',
+        allowed_formats: ['jpg', 'png', 'jpeg'],
+    },
+});
+
 // 3. MULTER CONFIGURATION
 
 const uploadCategory = multer({
@@ -70,9 +86,23 @@ const uploadPosters = multer({
     fileFilter: fileFilter
 });
 
+const uploadPaymentProof = multer({
+    storage: storagePaymentProof,
+    limits: { fileSize: 1024 * 1024 * 5 },
+    fileFilter: fileFilter,
+});
+
+const uploadPaymentQr = multer({
+    storage: storagePaymentQr,
+    limits: { fileSize: 1024 * 1024 * 5 },
+    fileFilter: fileFilter,
+});
+
 
 module.exports = {
     uploadCategory,
     uploadProduct,
     uploadPosters,
+    uploadPaymentProof,
+    uploadPaymentQr,
 };

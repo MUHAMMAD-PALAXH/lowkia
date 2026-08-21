@@ -270,6 +270,9 @@ const markSubscriptionPaid = async (
     const method = [
         "manual",
         "bank_transfer",
+        "bkash",
+        "rocket",
+        "nagad",
         "cash",
         "cheque",
         "card",
@@ -279,11 +282,16 @@ const markSubscriptionPaid = async (
         ? String(paymentMethod).toLowerCase()
         : "manual";
 
-    if (method === "bank_transfer") {
+    if (
+        method === "bank_transfer" ||
+        method === "bkash" ||
+        method === "rocket" ||
+        method === "nagad"
+    ) {
         const ref = String(transactionRef || "").trim();
         if (!ref) {
             throw new AppError(
-                "Bank transaction reference is required for bank transfer.",
+                "Transaction / TrxID reference is required for this payment method.",
                 400
             );
         }
