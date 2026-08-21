@@ -798,33 +798,105 @@ const listCompanyPayments = async (companyId) => {
 };
 
 const getBillingOverview = async () => {
+    const monthStart = new Date(
+        new Date().getFullYear(),
+        new Date().getMonth(),
+        1
+    );
+
     const [
         pendingPayments,
         unpaidInvoices,
+        overdueInvoices,
         paidInvoicesMonth,
+        verifiedPaymentsMonth,
+        rejectedPaymentsMonth,
         activeAccounts,
+        totalAccounts,
+        recentPendingPayments,
+        recentUnpaidInvoices,
+        revenueByCurrency,
+        accountsByMethod,
+        unpaidSubscriptions,
     ] = await Promise.all([
         SubscriptionPayment.countDocuments({
             status: "pending_verification",
             ...NOT_DELETED,
         }),
         SubscriptionInvoice.countDocuments({
-            status: { $in: ["unpaid", "overdue"] },
+            status: { $in: ["unpaid", "overdue", "pending"] },
+            ...NOT_DELETED,
+        }),
+        SubscriptionInvoice.countDocuments({
+            status: "overdue",
             ...NOT_DELETED,
         }),
         SubscriptionInvoice.countDocuments({
             status: "paid",
-            paidAt: {
-                $gte: new Date(
-                    new Date().getFullYear(),
-                    new Date().getMonth(),
-                    1
-                ),
-            },
+            paidAt: { $gte: monthStart },
+            ...NOT_DELETED,
+        }),
+        SubscriptionPayment.countDocuments({
+            status: "verified",
+            verifiedAt: { $gte: monthStart },
+            ...NOT_DELETED,
+        }),
+        SubscriptionPayment.countDocuments({
+            status: "rejected",
+            rejectedAt: { $gte: monthStart },
             ...NOT_DELETED,
         }),
         PlatformPaymentAccount.countDocuments({
             isActive: true,
+            ...NOT_DELETED,
+        }),
+        PlatformPaymentAccount.countDocuments({ ...NOT_DELETED }),
+        SubscriptionPayment.find({
+            status: "pending_verification",
+            ...NOT_DELETED,
+        })
+            .sort({ createdAt: -1 })
+            .limit(8)
+            .populate("companyId", "companyCode name")
+            .populate(
+                "invoiceId",
+                "invoiceNumber paymentReference amountMinor currency intent"
+            )
+            .lean(),
+        SubscriptionInvoice.find({
+            status: { $in: ["unpaid", "overdue", "pending"] },
+            ...NOT_DELETED,
+        })
+            .sort({ createdAt: -1 })
+            .limit(8)
+            .populate("companyId", "companyCode name")
+            .populate("planId", "planCode name")
+            .lean(),
+        SubscriptionInvoice.aggregate([
+            {
+                $match: {
+                    status: "paid",
+                    paidAt: { $gte: monthStart },
+                    isDeleted: { $ne: true },
+                },
+            },
+            {
+                $group: {
+                    _id: "$currency",
+                    totalMinor: { $sum: "$amountMinor" },
+                    count: { $sum: 1 },
+                },
+            },
+            { $sort: { totalMinor: -1 } },
+        ]),
+        PlatformPaymentAccount.aggregate([
+            { $match: { isActive: true, isDeleted: { $ne: true } } },
+            { $group: { _id: "$paymentMethod", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+        ]),
+        CompanySubscription.countDocuments({
+            paymentStatus: { $in: ["unpaid", "pending"] },
+            status: { $in: ["active", "trialing", "pending", "suspended"] },
             ...NOT_DELETED,
         }),
     ]);
@@ -832,8 +904,25 @@ const getBillingOverview = async () => {
     return {
         pendingPayments,
         unpaidInvoices,
+        overdueInvoices,
         paidInvoicesThisMonth: paidInvoicesMonth,
+        verifiedPaymentsThisMonth: verifiedPaymentsMonth,
+        rejectedPaymentsThisMonth: rejectedPaymentsMonth,
         activePaymentAccounts: activeAccounts,
+        totalPaymentAccounts: totalAccounts,
+        unpaidSubscriptions,
+        recentPendingPayments,
+        recentUnpaidInvoices,
+        revenueThisMonth: revenueByCurrency.map((r) => ({
+            currency: r._id || "USD",
+            totalMinor: r.totalMinor || 0,
+            count: r.count || 0,
+        })),
+        accountsByMethod: accountsByMethod.map((r) => ({
+            method: r._id || "unknown",
+            count: r.count || 0,
+        })),
+        generatedAt: new Date().toISOString(),
     };
 };
 
