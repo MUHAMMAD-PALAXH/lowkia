@@ -18,6 +18,7 @@ const {
     createPlan,
     updatePlan,
     setPlanStatus,
+    deletePlan,
     duplicatePlan,
     listPlanSubscribers,
 } = require("../services/planService");
@@ -29,14 +30,11 @@ exports.ensurePlans = asyncHandler(async (req, res) => {
 });
 
 exports.listPlans = asyncHandler(async (req, res) => {
-    await ensureDefaultPlans(req.user._id);
-    // Prefer enriched list for Global Console; fall back path still works.
     const plans = await listPlansEnriched(req.query);
     return success(res, "Plans retrieved", plans);
 });
 
 exports.getPlansSummary = asyncHandler(async (req, res) => {
-    await ensureDefaultPlans(req.user._id);
     const data = await getPlansSummary();
     return success(res, "Plans summary", data);
 });
@@ -74,6 +72,11 @@ exports.archivePlan = asyncHandler(async (req, res) => {
 exports.duplicatePlan = asyncHandler(async (req, res) => {
     const plan = await duplicatePlan(req.params.id, req.user);
     return success(res, "Plan duplicated", plan, 201);
+});
+
+exports.deletePlan = asyncHandler(async (req, res) => {
+    const plan = await deletePlan(req.params.id, req.user);
+    return success(res, "Plan deleted", plan);
 });
 
 exports.listPlanSubscribers = asyncHandler(async (req, res) => {

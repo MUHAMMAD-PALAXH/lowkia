@@ -225,16 +225,13 @@ const createCompany = async (payload = {}, actorId = null) => {
     if (payload.planId || payload.autoAssignPlan !== false) {
         try {
             const {
-                ensureDefaultPlans,
                 listPlans,
                 assignSubscription,
             } = require("./subscriptionService");
-            await ensureDefaultPlans(actorId);
             let planId = payload.planId;
             if (!planId) {
                 const plans = await listPlans({ activeOnly: true });
-                const starter = plans.find((p) => p.planCode === "STARTER_MONTHLY");
-                planId = starter?._id || plans[0]?._id;
+                planId = plans[0]?._id;
             }
             if (planId) {
                 await assignSubscription(company._id, planId, actorId, {

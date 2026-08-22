@@ -625,6 +625,31 @@ const updatePlan = async (planId, payload = {}, actor = null) => {
 const setPlanStatus = async (planId, status, actor = null) =>
     updatePlan(planId, { status }, actor);
 
+const deletePlan = async (planId, actor = null) => {
+    const plan = await getPlanById(planId);
+    plan.isDeleted = true;
+    plan.status = "Archived";
+    plan.isActive = false;
+    plan.updatedBy = actor?._id || plan.updatedBy;
+    await plan.save();
+
+    await writeActivityLog({
+        user: actor,
+        companyId: null,
+        activityType: "Delete",
+        module: "Platform",
+        subModule: "Plan",
+        description: `Deleted plan ${plan.planCode}`,
+        shortDescription: `Plan deleted ${plan.planCode}`,
+        referenceType: "CompanySubscription",
+        referenceId: plan._id,
+        oldData: { planCode: plan.planCode },
+        securityLevel: "High",
+    });
+
+    return enrichPlan(plan);
+};
+
 const duplicatePlan = async (planId, actor = null) => {
     const source = await getPlanById(planId);
     let planCode = `${source.planCode}_COPY`;
@@ -743,6 +768,7 @@ module.exports = {
     createPlan,
     updatePlan,
     setPlanStatus,
+    deletePlan,
     duplicatePlan,
     listPlanSubscribers,
     enrichPlan,

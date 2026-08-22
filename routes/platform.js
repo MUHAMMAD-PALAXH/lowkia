@@ -38,6 +38,7 @@ router.post("/plans/:id/activate", subscriptionController.activatePlan);
 router.post("/plans/:id/deactivate", subscriptionController.deactivatePlan);
 router.post("/plans/:id/archive", subscriptionController.archivePlan);
 router.post("/plans/:id/duplicate", subscriptionController.duplicatePlan);
+router.delete("/plans/:id", subscriptionController.deletePlan);
 router.get("/plans/:id/subscribers", subscriptionController.listPlanSubscribers);
 
 router.get(
