@@ -504,7 +504,7 @@ const listPlansEnriched = async (query = {}) => {
     }
 
     const plans = await SubscriptionPlan.find(filter)
-        .sort({ sortOrder: 1, name: 1 })
+        .sort({ createdAt: 1, _id: 1 })
         .lean();
     const statsMap = await planStatsForIds(plans.map((p) => p._id));
     return plans.map((p) => enrichPlan(p, statsMap[String(p._id)]));
@@ -537,6 +537,13 @@ const getPlanDetail = async (planId) => {
     const plan = await getPlanById(planId);
     const statsMap = await planStatsForIds([plan._id]);
     return enrichPlan(plan, statsMap[String(plan._id)]);
+};
+
+const nextPlanSortOrder = async (explicit) => {
+    const n = Number(explicit);
+    if (Number.isFinite(n) && n > 0) return n;
+    const count = await SubscriptionPlan.countDocuments(NOT_DELETED);
+    return count + 1;
 };
 
 const createPlan = async (payload = {}, actor = null) => {
@@ -582,7 +589,7 @@ const createPlan = async (payload = {}, actor = null) => {
         productFamily:
             String(payload.productFamily || "").trim().toUpperCase() ||
             deriveProductFamily(planCode, name),
-        sortOrder: Number(payload.sortOrder) || 0,
+        sortOrder: await nextPlanSortOrder(payload.sortOrder),
         createdBy: actor?._id || null,
         updatedBy: actor?._id || null,
     });

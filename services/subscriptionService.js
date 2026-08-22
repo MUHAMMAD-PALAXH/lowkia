@@ -144,7 +144,7 @@ const listPlans = async (query = {}) => {
     if (query.activeOnly === "true" || query.activeOnly === true) {
         filter.isActive = true;
     }
-    return SubscriptionPlan.find(filter).sort({ sortOrder: 1, name: 1 }).lean();
+    return SubscriptionPlan.find(filter).sort({ createdAt: 1, _id: 1 }).lean();
 };
 
 const getPlanById = async (planId) => {
