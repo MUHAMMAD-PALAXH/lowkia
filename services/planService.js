@@ -48,6 +48,25 @@ const PLAN_FEATURE_CATALOG = [
 
 const BILLING_INTERVALS = ["monthly", "quarterly", "yearly", "lifetime"];
 const PLAN_CURRENCIES = ["USD", "BDT"];
+const PLAN_APPS = ["admin", "mobile", "website"];
+
+const normalizeApps = (raw) => {
+    const list = Array.isArray(raw) ? raw : [];
+    const out = [];
+    for (const item of list) {
+        const key = String(item || "")
+            .trim()
+            .toLowerCase();
+        if (PLAN_APPS.includes(key) && !out.includes(key)) out.push(key);
+    }
+    if (!out.length) {
+        throw new AppError(
+            "Select at least one of Admin app, Mobile app, or Website.",
+            400
+        );
+    }
+    return out;
+};
 const USER_ROLE_KEYS = [
     "company_super_admin",
     "admin",
@@ -369,6 +388,9 @@ const enrichPlan = (plan, stats = null) => {
                   },
               ],
         features: Array.isArray(plain.features) ? plain.features : [],
+        apps: Array.isArray(plain.apps) && plain.apps.length
+            ? plain.apps
+            : [...PLAN_APPS],
         stats: stats || {
             subscribers: 0,
             active: 0,
@@ -482,6 +504,9 @@ const createPlan = async (payload = {}, actor = null) => {
                   .map((f) => String(f).trim())
                   .filter(Boolean)
             : [],
+        apps: normalizeApps(
+            payload.apps !== undefined ? payload.apps : PLAN_APPS
+        ),
         status,
         isActive: status === "Active",
         visibility: payload.visibility === "Private" ? "Private" : "Public",
@@ -571,6 +596,9 @@ const updatePlan = async (planId, payload = {}, actor = null) => {
                   .map((f) => String(f).trim())
                   .filter(Boolean)
             : [];
+    }
+    if (payload.apps !== undefined) {
+        plan.apps = normalizeApps(payload.apps);
     }
     if (payload.status !== undefined) {
         if (!["Active", "Inactive", "Archived"].includes(payload.status)) {
@@ -669,6 +697,7 @@ const duplicatePlan = async (planId, actor = null) => {
             trialDays: source.trialDays,
             limits: source.limits,
             features: source.features,
+            apps: source.apps,
             status: "Inactive",
             visibility: source.visibility || "Public",
             isRecommended: false,
@@ -773,4 +802,5 @@ module.exports = {
     listPlanSubscribers,
     enrichPlan,
     isPlanRoleEnabled,
+    PLAN_APPS,
 };

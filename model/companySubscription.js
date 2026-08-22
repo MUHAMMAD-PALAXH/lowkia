@@ -129,6 +129,10 @@ const companySubscriptionSchema = new mongoose.Schema(
             type: [String],
             default: [],
         },
+        apps: {
+            type: [String],
+            default: [],
+        },
 
         /** Reserved for Stripe / other gateways. */
         gateway: {

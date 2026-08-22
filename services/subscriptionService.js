@@ -224,6 +224,7 @@ const assignSubscription = async (
         currentPeriodEnd: periodEnd,
         limits: plan.limits || {},
         features: plan.features || [],
+        apps: plan.apps || [],
         paymentNote: note || "",
         createdBy: actorId || null,
     });

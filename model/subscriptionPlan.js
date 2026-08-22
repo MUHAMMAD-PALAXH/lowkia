@@ -86,6 +86,17 @@ const subscriptionPlanSchema = new mongoose.Schema(
             default: [],
         },
 
+        /** Which products this plan includes. */
+        apps: {
+            type: [
+                {
+                    type: String,
+                    enum: ["admin", "mobile", "website"],
+                },
+            ],
+            default: () => ["admin", "mobile", "website"],
+        },
+
         /**
          * Catalog status. isActive is kept in sync for legacy filters.
          * Active = available for new subs; Inactive = not sold; Archived = historical only.
