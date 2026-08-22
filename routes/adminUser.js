@@ -2,6 +2,8 @@ const express = require('express');
 const asyncHandler = require('express-async-handler');
 const router = express.Router();
 const AdminUser = require('../model/adminUser');
+const CompanySubscription = require('../model/companySubscription');
+const Company = require('../model/company');
 const Product = require('../model/product');
 const ProductVariant = require('../model/productVariant');
 const Coupon = require('../model/couponCode');
@@ -24,6 +26,7 @@ const {
 } = require('../utils/roleAccess');
 const { resolveTenant, requireCompany } = require('../middleware/tenant');
 const { companyFilter } = require('../utils/tenantScope');
+const { isPlanRoleEnabled } = require('../services/planService');
 
 /** Tenant check that also claims legacy null-companyId users on the default company. */
 const assertUserInTenant = (user, req) => {
@@ -298,6 +301,24 @@ router.patch(
         });
       }
       user.role = nextRole === 'branch_manager' ? 'employee' : nextRole;
+      const companyId = user.companyId || req.companyId;
+      if (companyId) {
+        const company = await Company.findById(companyId).select(
+          'currentSubscriptionId'
+        );
+        if (company?.currentSubscriptionId) {
+          const sub = await CompanySubscription.findById(
+            company.currentSubscriptionId
+          ).select('limits');
+          if (sub && !isPlanRoleEnabled(sub.limits, user.role)) {
+            return res.status(403).json({
+              success: false,
+              message:
+                'This role is not included in the company subscription plan.',
+            });
+          }
+        }
+      }
     }
 
     if (Array.isArray(req.body?.menuPermissions)) {

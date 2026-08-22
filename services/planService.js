@@ -7,59 +7,160 @@ const { writeActivityLog } = require("./activityLogService");
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
 const PLAN_FEATURE_CATALOG = [
-    { key: "pos", label: "POS", group: "Core ERP" },
-    { key: "sales", label: "Sales", group: "Core ERP" },
-    { key: "purchase", label: "Purchase", group: "Core ERP" },
-    { key: "inventory", label: "Inventory", group: "Inventory" },
-    { key: "warehouse", label: "Warehouse", group: "Inventory" },
-    { key: "imei", label: "IMEI Tracking", group: "Operations" },
-    { key: "repair", label: "Repair Management", group: "Service" },
-    { key: "attendance", label: "Attendance", group: "People" },
-    { key: "finance", label: "Finance", group: "Finance" },
-    { key: "payroll", label: "Payroll", group: "Finance" },
-    { key: "reports", label: "Reports", group: "Analytics" },
-    { key: "analytics", label: "Analytics", group: "Analytics" },
-    { key: "coupons", label: "Coupons", group: "Operations" },
-    { key: "notifications", label: "Notifications", group: "Operations" },
+    { key: "Dashboard", label: "Overview", group: "Overview" },
+    { key: "Customers", label: "Customers", group: "Sales" },
+    { key: "SalesOrders", label: "Sales orders", group: "Sales" },
+    { key: "SalesReturns", label: "Returns", group: "Sales" },
+    { key: "Order", label: "Online orders", group: "Sales" },
+    { key: "Products", label: "Products", group: "Catalog" },
+    { key: "ProductApprovals", label: "Approvals", group: "Catalog" },
+    { key: "Category", label: "Categories", group: "Catalog" },
+    { key: "SubCategory", label: "Sub categories", group: "Catalog" },
+    { key: "Brands", label: "Brands", group: "Catalog" },
+    { key: "VariantType", label: "Variant types", group: "Catalog" },
+    { key: "Variants", label: "Variants", group: "Catalog" },
+    { key: "Supplier", label: "Suppliers", group: "Purchasing" },
+    { key: "PurchaseOrders", label: "Purchase orders", group: "Purchasing" },
+    { key: "GRN", label: "GRN", group: "Purchasing" },
+    { key: "Warehouse", label: "Warehouses", group: "Purchasing" },
+    { key: "StockManagement", label: "Stock", group: "Inventory" },
+    { key: "Warranty", label: "Warranty", group: "Inventory" },
+    { key: "Branches", label: "Branches", group: "Operations" },
+    { key: "BranchTransfer", label: "Transfers", group: "Operations" },
+    { key: "RepairTickets", label: "Repairs", group: "Operations" },
+    { key: "Attendance", label: "Attendance", group: "Operations" },
+    { key: "Finance", label: "Finance", group: "Operations" },
+    { key: "SubscriptionPlans", label: "Plans", group: "Subscription" },
+    { key: "CompanyBilling", label: "Billing", group: "Subscription" },
+    { key: "SalesReport", label: "Sales order reports", group: "Insights" },
+    { key: "PurchaseReport", label: "Purchase reports", group: "Insights" },
+    { key: "InventoryReport", label: "Inventory reports", group: "Insights" },
+    { key: "RepairReport", label: "Repair reports", group: "Insights" },
+    { key: "ProfitLoss", label: "Profit / loss", group: "Insights" },
+    { key: "Analytics", label: "Online sales analytics", group: "Insights" },
+    { key: "Coupon", label: "Coupons", group: "Growth" },
+    { key: "Poster", label: "Posters", group: "Growth" },
+    { key: "Notifications", label: "Notifications", group: "Admin" },
+    { key: "Users", label: "Users", group: "Admin" },
+    { key: "AccountPermission", label: "Permissions", group: "Admin" },
+    { key: "Profile", label: "Profile", group: "Account" },
 ];
+
+const BILLING_INTERVALS = ["monthly", "quarterly", "yearly", "lifetime"];
+const USER_ROLE_KEYS = [
+    "company_super_admin",
+    "admin",
+    "employee",
+    "vendor",
+];
+const PRODUCT_SOURCE_KEYS = ["po_completed", "manual", "vendor"];
+
+const parseQtyCap = (key, raw) => {
+    if (raw === null || raw === undefined || raw === "") return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+        throw new AppError(
+            `${key} must be a non-negative number or Unlimited.`,
+            400
+        );
+    }
+    return Math.floor(n);
+};
+
+const parseSlot = (label, raw = {}, { defaultEnabled = false } = {}) => {
+    const enabled = raw.enabled === true || (raw.enabled == null && defaultEnabled);
+    const unlimited = raw.unlimited === true;
+    if (!enabled) {
+        return { enabled: false, unlimited: false, qty: 0 };
+    }
+    if (unlimited) {
+        return { enabled: true, unlimited: true, qty: null };
+    }
+    const qty = parseQtyCap(label, raw.qty ?? raw.max ?? 0);
+    return { enabled: true, unlimited: false, qty: qty ?? 0 };
+};
+
+const sumSlots = (slots, keys) => {
+    let any = false;
+    let unlimited = false;
+    let total = 0;
+    for (const key of keys) {
+        const s = slots[key];
+        if (!s?.enabled) continue;
+        any = true;
+        if (s.unlimited) unlimited = true;
+        else total += Number(s.qty) || 0;
+    }
+    if (!any) return 0;
+    if (unlimited) return null;
+    return total;
+};
 
 const deriveProductFamily = (planCode = "", name = "") => {
     const code = String(planCode || "").toUpperCase();
     if (code.includes("STARTER")) return "STARTER";
     if (code.includes("PRO")) return "PRO";
     if (code.includes("ENTERPRISE")) return "ENTERPRISE";
-    const base = code.replace(/_(MONTHLY|YEARLY)$/i, "").trim();
+    const base = code
+        .replace(/_(MONTHLY|QUARTERLY|YEARLY|LIFETIME)$/i, "")
+        .trim();
     if (base) return base;
     return (
         String(name || "OTHER")
             .toUpperCase()
-            .replace(/\s+(MONTHLY|YEARLY)$/i, "")
+            .replace(/\s+(MONTHLY|QUARTERLY|YEARLY|LIFETIME)$/i, "")
             .replace(/\s+/g, "_")
             .slice(0, 32) || "OTHER"
     );
 };
 
 const normalizeLimits = (raw = {}) => {
-    const out = {};
-    for (const key of [
-        "maxUsers",
-        "maxBranches",
-        "maxWarehouses",
-        "maxProducts",
-    ]) {
-        if (raw[key] === null || raw[key] === undefined || raw[key] === "") {
-            out[key] = null;
-            continue;
+    const users = {};
+    const rawUsers = raw.users && typeof raw.users === "object" ? raw.users : {};
+    const hasUserTree = USER_ROLE_KEYS.some((k) => rawUsers[k] != null);
+    if (hasUserTree) {
+        for (const key of USER_ROLE_KEYS) {
+            users[key] = parseSlot(`users.${key}`, rawUsers[key] || {});
         }
-        const n = Number(raw[key]);
-        if (!Number.isFinite(n) || n < 0) {
-            throw new AppError(
-                `${key} must be a non-negative number or Unlimited.`,
-                400
-            );
+    } else {
+        const n = parseQtyCap("maxUsers", raw.maxUsers);
+        for (const key of USER_ROLE_KEYS) {
+            users[key] = {
+                enabled: true,
+                unlimited: n == null,
+                qty: n,
+            };
         }
-        out[key] = Math.floor(n);
     }
+
+    const products = {};
+    const rawProducts =
+        raw.products && typeof raw.products === "object" ? raw.products : {};
+    const hasProductTree = PRODUCT_SOURCE_KEYS.some((k) => rawProducts[k] != null);
+    if (hasProductTree) {
+        for (const key of PRODUCT_SOURCE_KEYS) {
+            products[key] = parseSlot(`products.${key}`, rawProducts[key] || {});
+        }
+    } else {
+        const n = parseQtyCap("maxProducts", raw.maxProducts);
+        for (const key of PRODUCT_SOURCE_KEYS) {
+            products[key] = {
+                enabled: true,
+                unlimited: n == null,
+                qty: n,
+            };
+        }
+    }
+
+    const out = {
+        maxBranches: parseQtyCap("maxBranches", raw.maxBranches),
+        maxWarehouses: parseQtyCap("maxWarehouses", raw.maxWarehouses),
+        maxSuppliers: parseQtyCap("maxSuppliers", raw.maxSuppliers),
+        users,
+        products,
+    };
+    out.maxUsers = sumSlots(users, USER_ROLE_KEYS);
+    out.maxProducts = sumSlots(products, PRODUCT_SOURCE_KEYS);
     return out;
 };
 
@@ -185,6 +286,9 @@ const enrichPlan = (plan, stats = null) => {
             maxBranches: limits.maxBranches ?? null,
             maxWarehouses: limits.maxWarehouses ?? null,
             maxProducts: limits.maxProducts ?? null,
+            maxSuppliers: limits.maxSuppliers ?? null,
+            users: limits.users || {},
+            products: limits.products || {},
         },
         features: Array.isArray(plain.features) ? plain.features : [],
         stats: stats || {
@@ -274,7 +378,7 @@ const createPlan = async (payload = {}, actor = null) => {
     const exists = await SubscriptionPlan.findOne({ planCode });
     if (exists) throw new AppError("Plan code already exists.", 409);
 
-    const billingInterval = ["monthly", "yearly"].includes(
+    const billingInterval = BILLING_INTERVALS.includes(
         payload.billingInterval
     )
         ? payload.billingInterval
@@ -299,7 +403,7 @@ const createPlan = async (payload = {}, actor = null) => {
         limits: normalizeLimits(payload.limits || {}),
         features: Array.isArray(payload.features)
             ? payload.features
-                  .map((f) => String(f).trim().toLowerCase())
+                  .map((f) => String(f).trim())
                   .filter(Boolean)
             : [],
         status,
@@ -349,7 +453,7 @@ const updatePlan = async (planId, payload = {}, actor = null) => {
         plan.description = String(payload.description || "").trim();
     }
     if (payload.billingInterval !== undefined) {
-        if (!["monthly", "yearly"].includes(payload.billingInterval)) {
+        if (!BILLING_INTERVALS.includes(payload.billingInterval)) {
             throw new AppError("Invalid billingInterval.", 400);
         }
         plan.billingInterval = payload.billingInterval;
@@ -378,7 +482,7 @@ const updatePlan = async (planId, payload = {}, actor = null) => {
     if (payload.features !== undefined) {
         plan.features = Array.isArray(payload.features)
             ? payload.features
-                  .map((f) => String(f).trim().toLowerCase())
+                  .map((f) => String(f).trim())
                   .filter(Boolean)
             : [];
     }
@@ -516,18 +620,33 @@ const listPlanSubscribers = async (planId) => {
 
     return items.map((s) => {
         const company = Array.isArray(s.company) ? s.company[0] : null;
+        const interval = s.billingInterval;
+        const mrr =
+            s.status === "active" && s.paymentStatus === "paid"
+                ? interval === "yearly"
+                    ? Math.round((s.amountMinor || 0) / 12)
+                    : interval === "quarterly"
+                      ? Math.round((s.amountMinor || 0) / 3)
+                      : interval === "lifetime"
+                        ? 0
+                        : s.amountMinor || 0
+                : 0;
         return {
             ...s,
             id: String(s._id),
             company,
-            mrrMinor:
-                s.status === "active" && s.paymentStatus === "paid"
-                    ? s.billingInterval === "yearly"
-                        ? Math.round((s.amountMinor || 0) / 12)
-                        : s.amountMinor || 0
-                    : 0,
+            mrrMinor: mrr,
         };
     });
+};
+
+const isPlanRoleEnabled = (limits, role) => {
+    const r = role === "branch_manager" ? "employee" : String(role || "");
+    const users = limits?.users;
+    if (!users || typeof users !== "object" || !Object.keys(users).length) {
+        return true;
+    }
+    return users[r]?.enabled === true;
 };
 
 module.exports = {
@@ -541,4 +660,5 @@ module.exports = {
     duplicatePlan,
     listPlanSubscribers,
     enrichPlan,
+    isPlanRoleEnabled,
 };

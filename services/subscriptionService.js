@@ -10,8 +10,12 @@ const NOT_DELETED = { isDeleted: { $ne: true } };
 
 const addInterval = (from, interval) => {
     const d = new Date(from);
-    if (interval === "yearly") {
+    if (interval === "lifetime") {
+        d.setFullYear(d.getFullYear() + 100);
+    } else if (interval === "yearly") {
         d.setFullYear(d.getFullYear() + 1);
+    } else if (interval === "quarterly") {
+        d.setMonth(d.getMonth() + 3);
     } else {
         d.setMonth(d.getMonth() + 1);
     }

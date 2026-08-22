@@ -33,7 +33,7 @@ const companySubscriptionSchema = new mongoose.Schema(
         planName: { type: String, default: "", trim: true },
         billingInterval: {
             type: String,
-            enum: ["monthly", "yearly"],
+            enum: ["monthly", "quarterly", "yearly", "lifetime"],
             required: true,
         },
 

@@ -28,7 +28,7 @@ const subscriptionPlanSchema = new mongoose.Schema(
 
         billingInterval: {
             type: String,
-            enum: ["monthly", "yearly"],
+            enum: ["monthly", "quarterly", "yearly", "lifetime"],
             required: true,
         },
 
@@ -52,12 +52,16 @@ const subscriptionPlanSchema = new mongoose.Schema(
             min: 0,
         },
 
-        /** Soft limits — null = Unlimited. */
+        /** Soft limits — null qty = Unlimited. Nested caps for roles / product sources. */
         limits: {
-            maxUsers: { type: Number, default: 10 },
-            maxBranches: { type: Number, default: 5 },
-            maxWarehouses: { type: Number, default: 10 },
-            maxProducts: { type: Number, default: 5000 },
+            type: mongoose.Schema.Types.Mixed,
+            default: () => ({
+                maxUsers: 10,
+                maxBranches: 5,
+                maxWarehouses: 10,
+                maxProducts: 5000,
+                maxSuppliers: 50,
+            }),
         },
 
         /** Feature flags (string keys). */
