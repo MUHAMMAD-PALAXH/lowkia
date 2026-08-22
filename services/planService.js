@@ -252,6 +252,62 @@ const normalizePrices = (payload = {}) => {
     };
 };
 
+const PLAN_VARIANT_INTERVALS = ["monthly", "yearly", "lifetime"];
+
+const normalizeVariants = (payload = {}) => {
+    let raw = Array.isArray(payload.variants) ? payload.variants : [];
+    if (!raw.length) {
+        const priced = normalizePrices(payload);
+        const interval = PLAN_VARIANT_INTERVALS.includes(payload.billingInterval)
+            ? payload.billingInterval
+            : "monthly";
+        raw = [{ interval, prices: priced.prices }];
+    }
+    const byInterval = {};
+    for (const row of raw) {
+        const interval = String(row?.interval || "")
+            .trim()
+            .toLowerCase();
+        if (!PLAN_VARIANT_INTERVALS.includes(interval)) continue;
+        const priced = normalizePrices({
+            prices: row.prices,
+            priceMinor: row.priceMinor,
+            currency: row.currency,
+        });
+        const curs = new Set(priced.prices.map((p) => p.currency));
+        if (!curs.has("USD") || !curs.has("BDT")) {
+            throw new AppError(
+                `USD and BDT prices are required for ${interval}.`,
+                400
+            );
+        }
+        byInterval[interval] = {
+            interval,
+            prices: priced.prices,
+        };
+    }
+    const variants = [];
+    for (const interval of PLAN_VARIANT_INTERVALS) {
+        if (!byInterval[interval]) {
+            throw new AppError(
+                `Enter USD and BDT prices for ${interval === "lifetime" ? "5 years" : interval}.`,
+                400
+            );
+        }
+        variants.push(byInterval[interval]);
+    }
+    const primary = variants[0];
+    const usd =
+        primary.prices.find((p) => p.currency === "USD") || primary.prices[0];
+    return {
+        variants,
+        billingInterval: "monthly",
+        prices: primary.prices,
+        priceMinor: usd.priceMinor,
+        currency: usd.currency,
+    };
+};
+
 const toObjectId = (id) => {
     try {
         return new mongoose.Types.ObjectId(String(id));
@@ -387,6 +443,22 @@ const enrichPlan = (plan, stats = null) => {
                       priceMinor: plain.priceMinor || 0,
                   },
               ],
+        variants: Array.isArray(plain.variants) && plain.variants.length
+            ? plain.variants
+            : [
+                  {
+                      interval: plain.billingInterval || "monthly",
+                      prices:
+                          Array.isArray(plain.prices) && plain.prices.length
+                              ? plain.prices
+                              : [
+                                    {
+                                        currency: plain.currency || "USD",
+                                        priceMinor: plain.priceMinor || 0,
+                                    },
+                                ],
+                  },
+              ],
         features: Array.isArray(plain.features) ? plain.features : [],
         apps: Array.isArray(plain.apps) && plain.apps.length
             ? plain.apps
@@ -478,12 +550,7 @@ const createPlan = async (payload = {}, actor = null) => {
     const exists = await SubscriptionPlan.findOne({ planCode });
     if (exists) throw new AppError("Plan code already exists.", 409);
 
-    const billingInterval = BILLING_INTERVALS.includes(
-        payload.billingInterval
-    )
-        ? payload.billingInterval
-        : "monthly";
-    const priced = normalizePrices(payload);
+    const priced = normalizeVariants(payload);
     const trialDays = Math.max(0, parseInt(payload.trialDays, 10) || 0);
     const status = ["Active", "Inactive", "Archived"].includes(payload.status)
         ? payload.status
@@ -493,10 +560,11 @@ const createPlan = async (payload = {}, actor = null) => {
         name,
         planCode,
         description: String(payload.description || "").trim(),
-        billingInterval,
+        billingInterval: priced.billingInterval,
         priceMinor: priced.priceMinor,
         currency: priced.currency,
         prices: priced.prices,
+        variants: priced.variants,
         trialDays,
         limits: normalizeLimits(payload.limits || {}),
         features: Array.isArray(payload.features)
@@ -553,31 +621,38 @@ const updatePlan = async (planId, payload = {}, actor = null) => {
     if (payload.description !== undefined) {
         plan.description = String(payload.description || "").trim();
     }
-    if (payload.billingInterval !== undefined) {
-        if (!BILLING_INTERVALS.includes(payload.billingInterval)) {
-            throw new AppError("Invalid billingInterval.", 400);
-        }
-        plan.billingInterval = payload.billingInterval;
-    }
     if (
+        payload.variants !== undefined ||
         payload.prices !== undefined ||
         payload.priceMinor !== undefined ||
         payload.currency !== undefined
     ) {
-        const priced = normalizePrices({
+        const priced = normalizeVariants({
+            variants: payload.variants,
             prices: payload.prices,
             priceMinor:
                 payload.priceMinor !== undefined
                     ? payload.priceMinor
                     : plan.priceMinor,
-            currency: payload.currency !== undefined
-                ? payload.currency
-                : plan.currency,
+            currency:
+                payload.currency !== undefined ? payload.currency : plan.currency,
+            billingInterval:
+                payload.billingInterval !== undefined
+                    ? payload.billingInterval
+                    : plan.billingInterval,
         });
+        plan.billingInterval = priced.billingInterval;
         plan.priceMinor = priced.priceMinor;
         plan.currency = priced.currency;
         plan.prices = priced.prices;
+        plan.variants = priced.variants;
         plan.markModified("prices");
+        plan.markModified("variants");
+    } else if (payload.billingInterval !== undefined) {
+        if (!BILLING_INTERVALS.includes(payload.billingInterval)) {
+            throw new AppError("Invalid billingInterval.", 400);
+        }
+        plan.billingInterval = payload.billingInterval;
     }
     if (payload.trialDays !== undefined) {
         const trialDays = parseInt(payload.trialDays, 10);
@@ -694,6 +769,8 @@ const duplicatePlan = async (planId, actor = null) => {
             billingInterval: source.billingInterval,
             priceMinor: source.priceMinor,
             currency: source.currency,
+            prices: source.prices,
+            variants: source.variants,
             trialDays: source.trialDays,
             limits: source.limits,
             features: source.features,

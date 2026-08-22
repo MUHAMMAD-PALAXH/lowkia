@@ -62,6 +62,27 @@ const subscriptionPlanSchema = new mongoose.Schema(
             default: [],
         },
 
+        /** Monthly / yearly / 5-year list prices (USD + BDT). */
+        variants: {
+            type: [
+                {
+                    _id: false,
+                    interval: {
+                        type: String,
+                        enum: ["monthly", "yearly", "lifetime"],
+                    },
+                    prices: [
+                        {
+                            _id: false,
+                            currency: String,
+                            priceMinor: { type: Number, min: 0 },
+                        },
+                    ],
+                },
+            ],
+            default: [],
+        },
+
         trialDays: {
             type: Number,
             default: 14,
