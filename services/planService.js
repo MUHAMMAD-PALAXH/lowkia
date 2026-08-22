@@ -47,6 +47,7 @@ const PLAN_FEATURE_CATALOG = [
 ];
 
 const BILLING_INTERVALS = ["monthly", "quarterly", "yearly", "lifetime"];
+const PLAN_CURRENCIES = ["USD", "BDT"];
 const USER_ROLE_KEYS = [
     "company_super_admin",
     "admin",
@@ -54,6 +55,7 @@ const USER_ROLE_KEYS = [
     "vendor",
 ];
 const PRODUCT_SOURCE_KEYS = ["po_completed", "manual", "vendor"];
+const ORG_KEYS = ["branches", "warehouses", "suppliers"];
 
 const parseQtyCap = (key, raw) => {
     if (raw === null || raw === undefined || raw === "") return null;
@@ -152,16 +154,83 @@ const normalizeLimits = (raw = {}) => {
         }
     }
 
+    const org = {};
+    const rawOrg = raw.org && typeof raw.org === "object" ? raw.org : {};
+    const hasOrgTree = ORG_KEYS.some((k) => rawOrg[k] != null);
+    const orgLegacy = {
+        branches: raw.maxBranches,
+        warehouses: raw.maxWarehouses,
+        suppliers: raw.maxSuppliers,
+    };
+    if (hasOrgTree) {
+        for (const key of ORG_KEYS) {
+            org[key] = parseSlot(`org.${key}`, rawOrg[key] || {});
+        }
+    } else {
+        for (const key of ORG_KEYS) {
+            const n = parseQtyCap(`max${key[0].toUpperCase()}${key.slice(1)}`, orgLegacy[key]);
+            org[key] = {
+                enabled: true,
+                unlimited: n == null,
+                qty: n,
+            };
+        }
+    }
+
+    const qtyFromSlot = (slot) =>
+        slot?.enabled ? (slot.unlimited ? null : slot.qty ?? 0) : 0;
+
     const out = {
-        maxBranches: parseQtyCap("maxBranches", raw.maxBranches),
-        maxWarehouses: parseQtyCap("maxWarehouses", raw.maxWarehouses),
-        maxSuppliers: parseQtyCap("maxSuppliers", raw.maxSuppliers),
+        maxBranches: qtyFromSlot(org.branches),
+        maxWarehouses: qtyFromSlot(org.warehouses),
+        maxSuppliers: qtyFromSlot(org.suppliers),
         users,
         products,
+        org,
     };
     out.maxUsers = sumSlots(users, USER_ROLE_KEYS);
     out.maxProducts = sumSlots(products, PRODUCT_SOURCE_KEYS);
     return out;
+};
+
+const normalizePrices = (payload = {}) => {
+    let rows = Array.isArray(payload.prices) ? payload.prices : [];
+    if (!rows.length) {
+        rows = [
+            {
+                currency: payload.currency || "USD",
+                priceMinor: payload.priceMinor,
+            },
+        ];
+    }
+    const seen = new Set();
+    const prices = [];
+    for (const row of rows) {
+        const currency = String(row?.currency || "")
+            .trim()
+            .toUpperCase();
+        if (!PLAN_CURRENCIES.includes(currency)) {
+            throw new AppError("Currency must be USD or BDT.", 400);
+        }
+        if (seen.has(currency)) continue;
+        seen.add(currency);
+        const n = Number(row.priceMinor);
+        if (!Number.isFinite(n) || n < 0) {
+            throw new AppError(
+                `Price for ${currency} must be a non-negative number.`,
+                400
+            );
+        }
+        prices.push({ currency, priceMinor: Math.round(n) });
+    }
+    if (!prices.length) {
+        throw new AppError("Add at least one currency price.", 400);
+    }
+    return {
+        prices,
+        priceMinor: prices[0].priceMinor,
+        currency: prices[0].currency,
+    };
 };
 
 const toObjectId = (id) => {
@@ -289,7 +358,16 @@ const enrichPlan = (plan, stats = null) => {
             maxSuppliers: limits.maxSuppliers ?? null,
             users: limits.users || {},
             products: limits.products || {},
+            org: limits.org || {},
         },
+        prices: Array.isArray(plain.prices) && plain.prices.length
+            ? plain.prices
+            : [
+                  {
+                      currency: plain.currency || "USD",
+                      priceMinor: plain.priceMinor || 0,
+                  },
+              ],
         features: Array.isArray(plain.features) ? plain.features : [],
         stats: stats || {
             subscribers: 0,
@@ -383,10 +461,7 @@ const createPlan = async (payload = {}, actor = null) => {
     )
         ? payload.billingInterval
         : "monthly";
-    const priceMinor = Number(payload.priceMinor);
-    if (!Number.isFinite(priceMinor) || priceMinor < 0) {
-        throw new AppError("priceMinor must be a non-negative number.", 400);
-    }
+    const priced = normalizePrices(payload);
     const trialDays = Math.max(0, parseInt(payload.trialDays, 10) || 0);
     const status = ["Active", "Inactive", "Archived"].includes(payload.status)
         ? payload.status
@@ -397,8 +472,9 @@ const createPlan = async (payload = {}, actor = null) => {
         planCode,
         description: String(payload.description || "").trim(),
         billingInterval,
-        priceMinor,
-        currency: String(payload.currency || "USD").trim().toUpperCase(),
+        priceMinor: priced.priceMinor,
+        currency: priced.currency,
+        prices: priced.prices,
         trialDays,
         limits: normalizeLimits(payload.limits || {}),
         features: Array.isArray(payload.features)
@@ -458,15 +534,25 @@ const updatePlan = async (planId, payload = {}, actor = null) => {
         }
         plan.billingInterval = payload.billingInterval;
     }
-    if (payload.priceMinor !== undefined) {
-        const priceMinor = Number(payload.priceMinor);
-        if (!Number.isFinite(priceMinor) || priceMinor < 0) {
-            throw new AppError("priceMinor must be a non-negative number.", 400);
-        }
-        plan.priceMinor = priceMinor;
-    }
-    if (payload.currency !== undefined) {
-        plan.currency = String(payload.currency || "USD").trim().toUpperCase();
+    if (
+        payload.prices !== undefined ||
+        payload.priceMinor !== undefined ||
+        payload.currency !== undefined
+    ) {
+        const priced = normalizePrices({
+            prices: payload.prices,
+            priceMinor:
+                payload.priceMinor !== undefined
+                    ? payload.priceMinor
+                    : plan.priceMinor,
+            currency: payload.currency !== undefined
+                ? payload.currency
+                : plan.currency,
+        });
+        plan.priceMinor = priced.priceMinor;
+        plan.currency = priced.currency;
+        plan.prices = priced.prices;
+        plan.markModified("prices");
     }
     if (payload.trialDays !== undefined) {
         const trialDays = parseInt(payload.trialDays, 10);

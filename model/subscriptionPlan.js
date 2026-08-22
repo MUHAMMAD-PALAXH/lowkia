@@ -46,6 +46,22 @@ const subscriptionPlanSchema = new mongoose.Schema(
             trim: true,
         },
 
+        /** Extra list prices (USD, BDT, …). First entry matches currency/priceMinor. */
+        prices: {
+            type: [
+                {
+                    _id: false,
+                    currency: {
+                        type: String,
+                        uppercase: true,
+                        trim: true,
+                    },
+                    priceMinor: { type: Number, min: 0 },
+                },
+            ],
+            default: [],
+        },
+
         trialDays: {
             type: Number,
             default: 14,
