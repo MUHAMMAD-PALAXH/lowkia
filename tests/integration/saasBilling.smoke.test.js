@@ -13,7 +13,6 @@ const {
     listPlans,
     assignSubscription,
 } = require("../../services/subscriptionService");
-const { ensureDefaultCompany } = require("../../services/companyService");
 const {
     createPaymentAccount,
     listPaymentAccounts,
@@ -43,6 +42,28 @@ async function withDb(fn) {
     }
 }
 
+/** Disposable tenant so smoke tests never write invoices onto CO-000001. */
+async function createSmokeCompany() {
+    return Company.create({
+        companyCode: `SMOKE-${Date.now()}`,
+        legalName: "Billing smoke",
+        tradeName: "Billing smoke",
+        defaultCurrency: "USD",
+        countryCode: "US",
+        timezone: "UTC",
+        status: "Trial",
+        isDefault: false,
+    });
+}
+
+async function cleanupSmokeCompany(companyId) {
+    if (!companyId) return;
+    await SubscriptionPayment.deleteMany({ companyId });
+    await SubscriptionInvoice.deleteMany({ companyId });
+    await CompanySubscription.deleteMany({ companyId });
+    await Company.deleteOne({ _id: companyId });
+}
+
 const gsaActor = () => ({
     _id: new mongoose.Types.ObjectId(),
     role: ROLES.GLOBAL_SUPER_ADMIN,
@@ -68,9 +89,11 @@ exports.checkout_submit_approve_activates = async () => {
             plans.find((p) => p.planCode === "STARTER_MONTHLY") || plans[0];
         assert.ok(plan);
 
-        const company = await ensureDefaultCompany();
+        const company = await createSmokeCompany();
         const owner = ownerActor(company._id);
         const gsa = gsaActor();
+
+        try {
 
         await assignSubscription(company._id, plan._id, owner._id, {
             startTrial: true,
@@ -109,7 +132,7 @@ exports.checkout_submit_approve_activates = async () => {
             actor: owner,
         });
         assert.ok(invoice);
-        assert.strictEqual(invoice.status, "unpaid");
+        assert.strictEqual(invoice.status, "draft");
         assert.ok(String(invoice.paymentReference).startsWith("FAP-"));
 
         const txn = `TXN-APPROVE-${Date.now()}`;
@@ -137,6 +160,9 @@ exports.checkout_submit_approve_activates = async () => {
 
         const companyFresh = await Company.findById(company._id);
         assert.strictEqual(companyFresh.status, "Active");
+        } finally {
+            await cleanupSmokeCompany(company._id);
+        }
     });
 };
 
@@ -149,9 +175,11 @@ exports.submit_reject_reopens_invoice = async () => {
             plans.find((p) => p.planCode === "STARTER_MONTHLY") ||
             plans[0];
 
-        const company = await ensureDefaultCompany();
+        const company = await createSmokeCompany();
         const owner = ownerActor(company._id);
         const gsa = gsaActor();
+
+        try {
 
         await assignSubscription(company._id, plan._id, owner._id, {
             startTrial: true,
@@ -210,6 +238,9 @@ exports.submit_reject_reopens_invoice = async () => {
         const pay = await SubscriptionPayment.findById(payment._id);
         assert.strictEqual(pay.status, "rejected");
         assert.strictEqual(pay.rejectionReason, "Invalid transaction ID");
+        } finally {
+            await cleanupSmokeCompany(company._id);
+        }
     });
 };
 
@@ -220,9 +251,11 @@ exports.early_renew_extends_period_on_approve = async () => {
         const plan =
             plans.find((p) => p.planCode === "STARTER_MONTHLY") || plans[0];
 
-        const company = await ensureDefaultCompany();
+        const company = await createSmokeCompany();
         const owner = ownerActor(company._id);
         const gsa = gsaActor();
+
+        try {
 
         const sub = await assignSubscription(
             company._id,
@@ -300,5 +333,8 @@ exports.early_renew_extends_period_on_approve = async () => {
             new Date(fresh.currentPeriodEnd) > periodEnd,
             "period end should extend past previous end"
         );
+        } finally {
+            await cleanupSmokeCompany(company._id);
+        }
     });
 };

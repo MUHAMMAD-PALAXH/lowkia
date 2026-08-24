@@ -95,7 +95,10 @@ exports.rejectIncomingPayment = asyncHandler(async (req, res) => {
 });
 
 exports.listPlatformInvoices = asyncHandler(async (req, res) => {
-    const rows = await listSubscriptionInvoices(req.query);
+    const rows = await listSubscriptionInvoices({
+        ...req.query,
+        issuedOnly: true,
+    });
     return success(res, "Invoices retrieved", rows);
 });
 

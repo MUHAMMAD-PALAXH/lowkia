@@ -209,7 +209,7 @@ const createCheckoutInvoice = async ({
         intent,
         amountMinor: plan.priceMinor || 0,
         currency: plan.currency || "USD",
-        status: "unpaid",
+        status: "draft",
         preferredPaymentMethod: preferredPaymentMethod || undefined,
         paymentAccountId: paymentAccountId || undefined,
         dueAt,
@@ -777,11 +777,26 @@ const listSubscriptionTransactions = async (query = {}) => {
         .lean();
 };
 
+const ISSUED_INVOICE_STATUSES = ["pending", "paid", "overdue"];
+
 const listSubscriptionInvoices = async (query = {}) => {
     const filter = { ...NOT_DELETED };
     if (query.companyId) filter.companyId = query.companyId;
     if (query.status) filter.status = String(query.status);
     if (query.intent) filter.intent = String(query.intent);
+    // Global Console: only real issued invoices (payment submitted or settled).
+    // Checkout drafts and unpaid rows (including smoke-test leftovers) stay hidden.
+    if (query.issuedOnly === true || query.issuedOnly === "true") {
+        filter.status = query.status
+            ? String(query.status)
+            : { $in: ISSUED_INVOICE_STATUSES };
+        if (
+            query.status &&
+            !ISSUED_INVOICE_STATUSES.includes(String(query.status))
+        ) {
+            filter.status = { $in: [] };
+        }
+    }
 
     return SubscriptionInvoice.find(filter)
         .sort({ createdAt: -1 })
@@ -828,7 +843,7 @@ const getBillingOverview = async () => {
             ...NOT_DELETED,
         }),
         SubscriptionInvoice.countDocuments({
-            status: { $in: ["unpaid", "overdue", "pending"] },
+            status: { $in: ["overdue", "pending"] },
             ...NOT_DELETED,
         }),
         SubscriptionInvoice.countDocuments({
@@ -868,7 +883,7 @@ const getBillingOverview = async () => {
             )
             .lean(),
         SubscriptionInvoice.find({
-            status: { $in: ["unpaid", "overdue", "pending"] },
+            status: { $in: ["overdue", "pending"] },
             ...NOT_DELETED,
         })
             .sort({ createdAt: -1 })
