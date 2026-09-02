@@ -182,26 +182,44 @@ const getTaxonomy = async () => {
         status: { $in: SELLABLE_COMPANY_STATUSES },
     });
 
-    const refs = await Product.aggregate([
+    const productMatch = {
+        ...MARKETPLACE_PRODUCT_QUERY,
+        companyId: { $in: sellableCompanyIds },
+    };
+
+    const [countFacet] = await Product.aggregate([
+        { $match: productMatch },
         {
-            $match: {
-                ...MARKETPLACE_PRODUCT_QUERY,
-                companyId: { $in: sellableCompanyIds },
-            },
-        },
-        {
-            $group: {
-                _id: null,
-                categoryIds: { $addToSet: "$proCategoryId" },
-                subCategoryIds: { $addToSet: "$proSubCategoryId" },
-                brandIds: { $addToSet: "$proBrandId" },
+            $facet: {
+                categories: [
+                    { $match: { proCategoryId: { $ne: null } } },
+                    { $group: { _id: "$proCategoryId", productCount: { $sum: 1 } } },
+                ],
+                subCategories: [
+                    { $match: { proSubCategoryId: { $ne: null } } },
+                    { $group: { _id: "$proSubCategoryId", productCount: { $sum: 1 } } },
+                ],
+                brands: [
+                    { $match: { proBrandId: { $ne: null } } },
+                    { $group: { _id: "$proBrandId", productCount: { $sum: 1 } } },
+                ],
             },
         },
     ]);
 
-    const categoryIds = (refs[0]?.categoryIds || []).filter(Boolean);
-    const subCategoryIds = (refs[0]?.subCategoryIds || []).filter(Boolean);
-    const brandIds = (refs[0]?.brandIds || []).filter(Boolean);
+    const categoryCountMap = new Map(
+        (countFacet?.categories || []).map((r) => [String(r._id), r.productCount])
+    );
+    const subCategoryCountMap = new Map(
+        (countFacet?.subCategories || []).map((r) => [String(r._id), r.productCount])
+    );
+    const brandCountMap = new Map(
+        (countFacet?.brands || []).map((r) => [String(r._id), r.productCount])
+    );
+
+    const categoryIds = [...categoryCountMap.keys()];
+    const subCategoryIds = [...subCategoryCountMap.keys()];
+    const brandIds = [...brandCountMap.keys()];
 
     const [categories, subCategories, brands] = await Promise.all([
         categoryIds.length
@@ -238,11 +256,59 @@ const getTaxonomy = async () => {
             : [],
     ]);
 
-    return { categories, subCategories, brands };
+    const withCount = (rows, map) =>
+        rows.map((row) => ({
+            ...row,
+            productCount: map.get(String(row._id)) || 0,
+        }));
+
+    return {
+        categories: withCount(categories, categoryCountMap),
+        subCategories: withCount(subCategories, subCategoryCountMap),
+        brands: withCount(brands, brandCountMap),
+    };
+};
+
+const listSellers = async () => {
+    const companies = await Company.find({
+        isDeleted: { $ne: true },
+        status: { $in: SELLABLE_COMPANY_STATUSES },
+    })
+        .select("_id companyCode legalName tradeName logoUrl status")
+        .sort({ tradeName: 1, legalName: 1 })
+        .lean();
+
+    const companyIds = companies.map((c) => c._id);
+    const productCounts = companyIds.length
+        ? await Product.aggregate([
+              {
+                  $match: {
+                      ...MARKETPLACE_PRODUCT_QUERY,
+                      companyId: { $in: companyIds },
+                  },
+              },
+              { $group: { _id: "$companyId", productCount: { $sum: 1 } } },
+          ])
+        : [];
+
+    const countMap = new Map(
+        productCounts.map((r) => [String(r._id), r.productCount])
+    );
+
+    return companies.map((company) => ({
+        id: company._id,
+        companyCode: company.companyCode,
+        name: company.tradeName || company.legalName,
+        legalName: company.legalName,
+        logoUrl: company.logoUrl || "",
+        status: company.status,
+        productCount: countMap.get(String(company._id)) || 0,
+    }));
 };
 
 module.exports = {
     listProducts,
     getProductById,
     getTaxonomy,
+    listSellers,
 };

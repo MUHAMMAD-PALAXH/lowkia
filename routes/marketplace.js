@@ -59,6 +59,7 @@ router.get(
     catalogController.getProduct
 );
 router.get("/taxonomy", optionalProtect, catalogController.getTaxonomy);
+router.get("/sellers", optionalProtect, catalogController.listSellers);
 
 router.post(
     "/checkout/guest-place",

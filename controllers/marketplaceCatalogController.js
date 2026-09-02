@@ -22,3 +22,8 @@ exports.getTaxonomy = asyncHandler(async (req, res) => {
     const data = await catalogService.getTaxonomy();
     return success(res, "Taxonomy retrieved", data);
 });
+
+exports.listSellers = asyncHandler(async (req, res) => {
+    const data = await catalogService.listSellers();
+    return success(res, "Sellers retrieved", data);
+});
