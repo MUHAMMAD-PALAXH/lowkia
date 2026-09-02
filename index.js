@@ -14,10 +14,45 @@ const app = express();
 // ============================================================
 // MIDDLEWARE
 // ============================================================
+const defaultAllowedOrigins = [
+  'http://localhost:3000',
+  'https://ecommerce-render-dyploy.onrender.com',
+];
+
+const configuredOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
+  : [];
+
+const isStorefrontOrigin = (origin) => {
+  if (!origin) return true;
+  if (configuredOrigins.includes(origin) || defaultAllowedOrigins.includes(origin)) {
+    return true;
+  }
+
+  try {
+    const { protocol, hostname, port } = new URL(origin);
+    if (protocol !== 'http:' && protocol !== 'https:') return false;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+    if (hostname.endsWith('.onrender.com')) return true;
+    if (hostname.endsWith('.lowkia.com')) return true;
+    if (port === '3000' && (hostname === 'localhost' || hostname === '127.0.0.1')) {
+      return true;
+    }
+  } catch (_) {
+    return false;
+  }
+
+  return false;
+};
+
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS 
-    ? process.env.ALLOWED_ORIGINS.split(',') 
-    : ['http://localhost:3000', 'https://ecommerce-render-dyploy.onrender.com'], 
+  origin(origin, callback) {
+    if (isStorefrontOrigin(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
   credentials: true,
 }));
 
