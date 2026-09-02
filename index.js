@@ -115,6 +115,7 @@ require('./model/payrollRun');
 require('./model/payroll');
 require('./model/employeeAdvance');
 require('./model/notificationCenterEvent');
+require('./model/marketplace');
 
 // ============================================================
 // ROUTES
@@ -161,6 +162,13 @@ app.use('/api/overtime-requests', require('./routes/overtime'));
 // Finance foundation (Phase 1 — company / tenant)
 app.use('/api/company', require('./routes/company'));
 app.use('/api/platform', require('./routes/platform'));
+app.use('/api/marketplace', require('./routes/marketplace'));
+app.use('/api/content', require('./routes/content'));
+app.use('/api/company/shipping-rules', require('./routes/shippingRule'));
+app.use('/api/company/marketplace-orders', require('./routes/companyMarketplaceOrder'));
+app.use('/api/company/marketplace-shipments', require('./routes/companyMarketplaceShipment'));
+app.use('/api/company/marketplace-couriers', require('./routes/companyMarketplaceCourier'));
+app.use('/api/company/marketplace-refunds', require('./routes/companyMarketplaceRefund'));
 // Finance Phase 2 — supplier payable
 app.use('/api/supplier-payables', require('./routes/supplierPayable'));
 // Finance Phase 3 — supplier payments

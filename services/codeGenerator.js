@@ -57,6 +57,12 @@ const MODULE_CONFIG = {
     subscription_invoice: { prefix: "SINV", padding: 6 },
     subscription_payment: { prefix: "SPMT", padding: 6 },
     platform_payment_account: { prefix: "PACC", padding: 6 },
+    master_order: { prefix: "MORD", padding: 6 },
+    company_order: { prefix: "CORD", padding: 6 },
+    marketplace_payment: { prefix: "MPAY", padding: 6 },
+    marketplace_refund: { prefix: "MRFD", padding: 6 },
+    marketplace_shipment: { prefix: "MSHP", padding: 6 },
+    marketplace_courier: { prefix: "MCOU", padding: 6 },
     payment: { prefix: "PAY", padding: 6, yearScoped: true },
     supplier_payable: { prefix: "SPAY", padding: 6 },
     payroll_run: { prefix: "PRUN", padding: 6 },
@@ -100,7 +106,13 @@ const MODULE_ALIASES = {
     payrollRun: "payroll_run",
     payrollPayable: "payroll_payable",
     employeeAdvance: "employee_advance",
-    salaryStructure: "salary_structure"
+    salaryStructure: "salary_structure",
+    masterOrder: "master_order",
+    companyOrder: "company_order",
+    marketplacePayment: "marketplace_payment",
+    marketplaceRefund: "marketplace_refund",
+    marketplaceShipment: "marketplace_shipment",
+    marketplaceCourier: "marketplace_courier",
 };
 
 // =====================================================
@@ -226,7 +238,7 @@ const generatePurchaseReturnCode = () => generateCode("purchase_return");
 const generateStockTransferCode = () => generateCode("stock_transfer");
 const generateStockAdjustmentCode = () => generateCode("stock_adjustment");
 const generateStockCountCode = () => generateCode("stock_count");
-const generateStockMovementCode = () => generateCode("stock_movement");
+const generateStockMovementCode = (options) => generateCode("stock_movement", options);
 const generateDamageStockCode = () => generateCode("damage_stock");
 
 // =====================================================
@@ -268,6 +280,16 @@ const generateLedgerCode = () => generateCode("ledger");
 
 const generateLeadCode = () => generateCode("lead");
 const generateContactCode = () => generateCode("contact");
+const generateMasterOrderCode = (options) => generateCode("master_order", options);
+const generateCompanyOrderCode = (options) => generateCode("company_order", options);
+const generateMarketplacePaymentCode = (options) =>
+    generateCode("marketplace_payment", options);
+const generateMarketplaceShipmentCode = (options) =>
+    generateCode("marketplace_shipment", options);
+const generateMarketplaceCourierCode = (options) =>
+    generateCode("marketplace_courier", options);
+const generateMarketplaceRefundCode = (options) =>
+    generateCode("marketplace_refund", options);
 
 // =====================================================
 // Export
@@ -338,5 +360,11 @@ module.exports = {
     generateLedgerCode,
 
     generateLeadCode,
-    generateContactCode
+    generateContactCode,
+    generateMasterOrderCode,
+    generateCompanyOrderCode,
+    generateMarketplacePaymentCode,
+    generateMarketplaceShipmentCode,
+    generateMarketplaceCourierCode,
+    generateMarketplaceRefundCode,
 };

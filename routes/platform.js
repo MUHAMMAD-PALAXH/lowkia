@@ -188,4 +188,6 @@ router.get(
     saasBillingController.listPlatformTransactions
 );
 
+router.use("/marketplace", require("./platformMarketplace"));
+
 module.exports = router;

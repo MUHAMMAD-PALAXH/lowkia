@@ -176,6 +176,7 @@ const stockMovementSchema = new mongoose.Schema(
         "Stock Adjustment",
         "Opening Balance",
         "Manual",
+        "Marketplace Order",
       ],
       required: true,
       index: true,
