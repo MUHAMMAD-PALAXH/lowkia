@@ -22,6 +22,10 @@ const formatCatalogProduct = (product, seller, availableStock = null) => ({
     name: product.name,
     description: product.description || "",
     sellingPrice: resolveUnitPrice(product),
+    offerPrice:
+        product.offerPrice != null && Number(product.offerPrice) > 0
+            ? Number(product.offerPrice)
+            : null,
     imageUrl: pickImageUrl(product.images),
     hasVariants: Boolean(product.hasVariants),
     availableStock:
@@ -132,7 +136,11 @@ const getProductById = async (productId) => {
     const product = await Product.findOne({
         _id: pid,
         ...MARKETPLACE_PRODUCT_QUERY,
-    }).lean();
+    })
+        .populate("proCategoryId", "name")
+        .populate("proSubCategoryId", "name")
+        .populate("proBrandId", "name")
+        .lean();
 
     if (!product) throw new AppError("Product not found.", 404);
 
@@ -166,6 +174,10 @@ const getProductById = async (productId) => {
                 label: variant.combinationString || "",
                 sku: variant.sku || "",
                 sellingPrice: resolveUnitPrice(variant),
+                offerPrice:
+                    variant.offerPrice != null && Number(variant.offerPrice) > 0
+                        ? Number(variant.offerPrice)
+                        : null,
                 imageUrl:
                     pickImageUrl(variant.images) || pickImageUrl(product.images),
                 availableStock: await getAvailableStock(product, variant),
