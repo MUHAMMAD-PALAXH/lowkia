@@ -217,43 +217,30 @@ const getTaxonomy = async () => {
         (countFacet?.brands || []).map((r) => [String(r._id), r.productCount])
     );
 
-    const categoryIds = [...categoryCountMap.keys()];
-    const subCategoryIds = [...subCategoryCountMap.keys()];
-    const brandIds = [...brandCountMap.keys()];
-
     const [categories, subCategories, brands] = await Promise.all([
-        categoryIds.length
-            ? Category.find({
-                  _id: { $in: categoryIds },
-                  isDeleted: false,
-                  status: "Active",
-              })
-                  .select("name image slug sortOrder")
-                  .sort({ sortOrder: 1, name: 1 })
-                  .lean()
-            : [],
-        subCategoryIds.length
-            ? SubCategory.find({
-                  _id: { $in: subCategoryIds },
-                  isDeleted: false,
-                  status: "Active",
-              })
-                  .select("name categoryId image slug sortOrder")
-                  .populate("categoryId", "name slug")
-                  .sort({ sortOrder: 1, name: 1 })
-                  .lean()
-            : [],
-        brandIds.length
-            ? Brand.find({
-                  _id: { $in: brandIds },
-                  isDeleted: false,
-                  status: "Active",
-              })
-                  .select("name subcategoryId logo slug sortOrder")
-                  .populate("subcategoryId", "name categoryId")
-                  .sort({ sortOrder: 1, name: 1 })
-                  .lean()
-            : [],
+        Category.find({
+            isDeleted: false,
+            status: "Active",
+        })
+            .select("name image slug sortOrder")
+            .sort({ sortOrder: 1, name: 1 })
+            .lean(),
+        SubCategory.find({
+            isDeleted: false,
+            status: "Active",
+        })
+            .select("name categoryId image slug sortOrder")
+            .populate("categoryId", "name slug")
+            .sort({ sortOrder: 1, name: 1 })
+            .lean(),
+        Brand.find({
+            isDeleted: false,
+            status: "Active",
+        })
+            .select("name subcategoryId logo slug sortOrder")
+            .populate("subcategoryId", "name categoryId")
+            .sort({ sortOrder: 1, name: 1 })
+            .lean(),
     ]);
 
     const withCount = (rows, map) =>
