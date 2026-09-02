@@ -31,6 +31,9 @@ const formatCatalogProduct = (product, seller, availableStock = null) => ({
     isFeatured: Boolean(product.isFeatured),
     isNewArrival: Boolean(product.isNewArrival),
     isBestSeller: Boolean(product.isBestSeller),
+    proCategoryId: product.proCategoryId || null,
+    proSubCategoryId: product.proSubCategoryId || null,
+    proBrandId: product.proBrandId || null,
     seller,
 });
 
@@ -90,7 +93,7 @@ const listProducts = async (query = {}) => {
             .skip(skip)
             .limit(limit)
             .select(
-                "companyId productCode name description sellingPrice offerPrice images hasVariants availableStock isFeatured isNewArrival isBestSeller createdAt"
+                "companyId productCode name description sellingPrice offerPrice images hasVariants availableStock isFeatured isNewArrival isBestSeller proCategoryId proSubCategoryId proBrandId createdAt"
             )
             .lean(),
         Product.countDocuments(filter),
