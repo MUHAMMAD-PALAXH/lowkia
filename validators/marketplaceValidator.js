@@ -47,7 +47,13 @@ const listCatalogValidator = [
     query("proBrandId").optional().isMongoId(),
     query("minPrice").optional().isFloat({ min: 0 }),
     query("maxPrice").optional().isFloat({ min: 0 }),
-    query("sortBy").optional().isIn(["price", "createdAt"]),
+    query("minRating").optional().isFloat({ min: 0, max: 5 }),
+    query("hasDiscount").optional().isIn(["true", "false", "1", "0"]),
+    query("availability").optional().isIn(["in_stock", "out_of_stock", "all"]),
+    query("attrs").optional().isString().trim().isLength({ max: 2000 }),
+    query("sortBy")
+        .optional()
+        .isIn(["price", "createdAt", "name", "rating", "discount"]),
     query("order").optional().isIn(["asc", "desc"]),
 ];
 

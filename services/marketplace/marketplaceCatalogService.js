@@ -3,6 +3,8 @@ const SubCategory = require("../../model/subCategory");
 const Brand = require("../../model/brand");
 const Product = require("../../model/product");
 const ProductVariant = require("../../model/productVariant");
+const VariantType = require("../../model/variantType");
+const Variant = require("../../model/variant");
 const Company = require("../../model/company");
 const Poster = require("../../model/poster");
 const Review = require("../../model/review");
@@ -81,12 +83,96 @@ const getRatingStatsMap = async (productIds = []) => {
     );
 };
 
+const truthyFlag = (value) =>
+    value === true || value === "true" || value === "1" || value === 1;
+
+const applyIdIntersection = (filter, ids) => {
+    const next = (ids || []).filter(Boolean);
+    if (!next.length) {
+        filter._id = { $in: [] };
+        return;
+    }
+    if (filter._id && filter._id.$in) {
+        const allow = new Set(next.map(String));
+        filter._id = {
+            $in: filter._id.$in.filter((id) => allow.has(String(id))),
+        };
+        return;
+    }
+    filter._id = { $in: next };
+};
+
+/**
+ * Parse attrs query: "typeId:varId1,varId2;typeId2:varId3"
+ * Within a type = OR; across types = AND.
+ */
+const parseAttrsQuery = (raw) => {
+    if (!raw || typeof raw !== "string") return [];
+    return raw
+        .split(";")
+        .map((chunk) => chunk.trim())
+        .filter(Boolean)
+        .map((chunk) => {
+            const [typePart, valuesPart] = chunk.split(":");
+            const typeId = toObjectId((typePart || "").trim());
+            const variantIds = String(valuesPart || "")
+                .split(",")
+                .map((v) => toObjectId(v.trim()))
+                .filter(Boolean);
+            return typeId && variantIds.length
+                ? { typeId, variantIds }
+                : null;
+        })
+        .filter(Boolean);
+};
+
+const productIdsForAttrGroups = async (groups) => {
+    if (!groups.length) return null;
+    let intersection = null;
+    for (const group of groups) {
+        const ids = await ProductVariant.distinct("productId", {
+            isDeleted: { $ne: true },
+            status: { $nin: ["Archived"] },
+            "attributes.variantTypeId": group.typeId,
+            "attributes.variantId": { $in: group.variantIds },
+        });
+        const asStrings = ids.map(String);
+        if (intersection === null) {
+            intersection = new Set(asStrings);
+        } else {
+            intersection = new Set(
+                asStrings.filter((id) => intersection.has(id))
+            );
+        }
+        if (intersection.size === 0) return [];
+    }
+    return [...intersection].map((id) => toObjectId(id)).filter(Boolean);
+};
+
+const productIdsWithMinRating = async (minRating) => {
+    const rows = await Review.aggregate([
+        {
+            $group: {
+                _id: "$productId",
+                averageRating: { $avg: "$rating" },
+                reviewCount: { $sum: 1 },
+            },
+        },
+        {
+            $match: {
+                averageRating: { $gte: minRating },
+                reviewCount: { $gte: 1 },
+            },
+        },
+    ]);
+    return rows.map((r) => r._id);
+};
+
 const listProducts = async (query = {}) => {
     const { skip, limit, buildPagination } = parseMarketplacePagination(query, {
         surface: "catalog",
     });
 
-    // Preview mode: every non-archived product is browsable on web + mobile.
     const filter = {
         ...MARKETPLACE_CATALOG_QUERY,
     };
@@ -123,20 +209,153 @@ const listProducts = async (query = {}) => {
         if (query.maxPrice) filter.sellingPrice.$lte = Number(query.maxPrice);
     }
 
-    const sortBy = query.sortBy === "price" ? "sellingPrice" : "createdAt";
+    if (truthyFlag(query.hasDiscount)) {
+        filter.$expr = {
+            $and: [
+                { $gt: [{ $ifNull: ["$offerPrice", 0] }, 0] },
+                { $lt: ["$offerPrice", "$sellingPrice"] },
+            ],
+        };
+    }
+
+    const availability = String(query.availability || "all");
+    if (availability === "in_stock") {
+        filter.availableStock = { $gt: 0 };
+    } else if (availability === "out_of_stock") {
+        filter.availableStock = { $lte: 0 };
+    }
+
+    const attrGroups = parseAttrsQuery(query.attrs);
+    if (attrGroups.length) {
+        const matched = await productIdsForAttrGroups(attrGroups);
+        applyIdIntersection(filter, matched || []);
+    }
+
+    if (query.minRating != null && query.minRating !== "") {
+        const minRating = Number(query.minRating);
+        if (!Number.isNaN(minRating) && minRating > 0) {
+            const ratedIds = await productIdsWithMinRating(minRating);
+            applyIdIntersection(filter, ratedIds);
+        }
+    }
+
+    const sortKey = String(query.sortBy || "createdAt");
     const sortOrder = query.order === "asc" ? 1 : -1;
 
-    const [products, total] = await Promise.all([
-        Product.find(filter)
-            .sort({ [sortBy]: sortOrder })
-            .skip(skip)
-            .limit(limit)
-            .select(
-                "companyId productCode name description sellingPrice offerPrice images hasVariants availableStock isFeatured isNewArrival isBestSeller proCategoryId proSubCategoryId proBrandId createdAt"
-            )
-            .lean(),
-        Product.countDocuments(filter),
-    ]);
+    let products;
+    let total;
+
+    if (sortKey === "rating" || sortKey === "discount") {
+        const pipeline = [
+            { $match: filter },
+            {
+                $lookup: {
+                    from: Review.collection.name,
+                    localField: "_id",
+                    foreignField: "productId",
+                    as: "_reviews",
+                },
+            },
+            {
+                $addFields: {
+                    _averageRating: {
+                        $cond: [
+                            { $gt: [{ $size: "$_reviews" }, 0] },
+                            { $avg: "$_reviews.rating" },
+                            0,
+                        ],
+                    },
+                    _discountPct: {
+                        $cond: [
+                            {
+                                $and: [
+                                    { $gt: [{ $ifNull: ["$offerPrice", 0] }, 0] },
+                                    { $gt: ["$sellingPrice", 0] },
+                                    { $lt: ["$offerPrice", "$sellingPrice"] },
+                                ],
+                            },
+                            {
+                                $multiply: [
+                                    {
+                                        $divide: [
+                                            {
+                                                $subtract: [
+                                                    "$sellingPrice",
+                                                    "$offerPrice",
+                                                ],
+                                            },
+                                            "$sellingPrice",
+                                        ],
+                                    },
+                                    100,
+                                ],
+                            },
+                            0,
+                        ],
+                    },
+                },
+            },
+            {
+                $sort: {
+                    [sortKey === "rating" ? "_averageRating" : "_discountPct"]:
+                        sortOrder,
+                    createdAt: -1,
+                },
+            },
+            {
+                $facet: {
+                    data: [
+                        { $skip: skip },
+                        { $limit: limit },
+                        {
+                            $project: {
+                                companyId: 1,
+                                productCode: 1,
+                                name: 1,
+                                description: 1,
+                                sellingPrice: 1,
+                                offerPrice: 1,
+                                images: 1,
+                                hasVariants: 1,
+                                availableStock: 1,
+                                isFeatured: 1,
+                                isNewArrival: 1,
+                                isBestSeller: 1,
+                                proCategoryId: 1,
+                                proSubCategoryId: 1,
+                                proBrandId: 1,
+                                createdAt: 1,
+                            },
+                        },
+                    ],
+                    total: [{ $count: "count" }],
+                },
+            },
+        ];
+
+        const [facet] = await Product.aggregate(pipeline);
+        products = facet?.data || [];
+        total = facet?.total?.[0]?.count || 0;
+    } else {
+        const mongoSortField =
+            sortKey === "price"
+                ? "sellingPrice"
+                : sortKey === "name"
+                  ? "name"
+                  : "createdAt";
+
+        [products, total] = await Promise.all([
+            Product.find(filter)
+                .sort({ [mongoSortField]: sortOrder })
+                .skip(skip)
+                .limit(limit)
+                .select(
+                    "companyId productCode name description sellingPrice offerPrice images hasVariants availableStock isFeatured isNewArrival isBestSeller proCategoryId proSubCategoryId proBrandId createdAt"
+                )
+                .lean(),
+            Product.countDocuments(filter),
+        ]);
+    }
 
     const pageCompanyIds = [
         ...new Set(products.map((product) => String(product.companyId))),
@@ -362,7 +581,51 @@ const getTaxonomy = async () => {
         categories: withCount(categories, categoryCountMap),
         subCategories: withCount(subCategories, subCategoryCountMap),
         brands: withCount(brands, brandCountMap),
+        variantTypes: await getFilterableVariantTypes(),
     };
+};
+
+const getFilterableVariantTypes = async () => {
+    const types = await VariantType.find({
+        isDeleted: { $ne: true },
+        status: "Active",
+        isFilterable: true,
+    })
+        .select("name type displayOrder")
+        .sort({ displayOrder: 1, name: 1 })
+        .lean();
+
+    if (!types.length) return [];
+
+    const typeIds = types.map((t) => t._id);
+    const variants = await Variant.find({
+        variantTypeId: { $in: typeIds },
+        isDeleted: { $ne: true },
+        status: "Active",
+    })
+        .select("name variantTypeId colorCode displayOrder")
+        .sort({ displayOrder: 1, name: 1 })
+        .lean();
+
+    const byType = new Map();
+    for (const v of variants) {
+        const key = String(v.variantTypeId);
+        if (!byType.has(key)) byType.set(key, []);
+        byType.get(key).push({
+            id: v._id,
+            name: v.name,
+            colorCode: v.colorCode || "",
+        });
+    }
+
+    return types
+        .map((t) => ({
+            id: t._id,
+            name: t.name,
+            type: t.type,
+            options: byType.get(String(t._id)) || [],
+        }))
+        .filter((t) => t.options.length > 0);
 };
 
 const listSellers = async () => {
