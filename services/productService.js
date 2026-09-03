@@ -1222,6 +1222,9 @@ const createProduct = async (
         product.status = "Active";
         product.isPublished = true;
         product.publishedAt = new Date();
+        product.visibility = "Public";
+        product.approvalRequired = false;
+        product.approvalStatus = "Approved";
     }
 
     await product.save();

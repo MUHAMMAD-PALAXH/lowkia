@@ -8,16 +8,22 @@ const AppError = require("../../utils/appError");
 const SELLABLE_COMPANY_STATUSES = ["Active", "Trial"];
 
 const MARKETPLACE_PRODUCT_QUERY = {
-    isDeleted: false,
+    isDeleted: { $ne: true },
     isPublished: true,
     status: "Active",
-    visibility: "Public",
     $and: [
         {
             $or: [
                 { approvalStatus: "Approved" },
                 { approvalStatus: { $exists: false } },
                 { approvalStatus: null },
+            ],
+        },
+        {
+            $or: [
+                { visibility: "Public" },
+                { visibility: { $exists: false } },
+                { visibility: null },
             ],
         },
     ],
