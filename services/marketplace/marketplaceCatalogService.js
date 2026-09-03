@@ -32,6 +32,15 @@ const formatCatalogProduct = (product, seller, availableStock = null, ratingStat
             ? Number(product.offerPrice)
             : null,
     imageUrl: pickImageUrl(product.images),
+    images: Array.isArray(product.images)
+        ? product.images
+              .filter((img) => img && img.url)
+              .map((img) => ({
+                  url: img.url,
+                  isPrimary: Boolean(img.isPrimary),
+                  _id: img._id || undefined,
+              }))
+        : [],
     hasVariants: Boolean(product.hasVariants),
     availableStock:
         availableStock !== null
