@@ -4,6 +4,7 @@ const Brand = require("../../model/brand");
 const Product = require("../../model/product");
 const ProductVariant = require("../../model/productVariant");
 const Company = require("../../model/company");
+const Poster = require("../../model/poster");
 const Review = require("../../model/review");
 const AppError = require("../../utils/appError");
 const { parseMarketplacePagination } = require("../../utils/marketplacePagination");
@@ -398,9 +399,43 @@ const listSellers = async () => {
     }));
 };
 
+/** Public storefront banners from sellable companies (no auth required). */
+const listPosters = async () => {
+    const companies = await Company.find(catalogCompanyFilter).select("_id").lean();
+    const companyIds = companies.map((c) => c._id);
+
+    const filter = {
+        imageUrl: { $nin: [null, "", "no_url", "no_data"] },
+    };
+    if (companyIds.length > 0) {
+        filter.$or = [
+            { companyId: { $in: companyIds } },
+            { companyId: null },
+            { companyId: { $exists: false } },
+        ];
+    }
+
+    const posters = await Poster.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(24)
+        .lean();
+
+    return posters.map((poster) => ({
+        _id: poster._id,
+        posterName: poster.posterName || "",
+        imageUrl: poster.imageUrl || "",
+        navigationTo: poster.navigationTo || "none",
+        targetId: poster.targetId || null,
+        companyId: poster.companyId || null,
+        createdAt: poster.createdAt,
+        updatedAt: poster.updatedAt,
+    }));
+};
+
 module.exports = {
     listProducts,
     getProductById,
     getTaxonomy,
     listSellers,
+    listPosters,
 };

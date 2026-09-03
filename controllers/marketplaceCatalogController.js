@@ -27,3 +27,8 @@ exports.listSellers = asyncHandler(async (req, res) => {
     const data = await catalogService.listSellers();
     return success(res, "Sellers retrieved", data);
 });
+
+exports.listPosters = asyncHandler(async (req, res) => {
+    const data = await catalogService.listPosters();
+    return success(res, "Posters retrieved", data);
+});
