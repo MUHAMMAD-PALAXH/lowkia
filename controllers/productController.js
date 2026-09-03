@@ -16,7 +16,8 @@ exports.createProduct = asyncHandler(async (req, res) => {
     const product = await productService.createProduct(
         req.body,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user?.role
     );
     return success(res, "Product created successfully.", product, 201);
 });
@@ -171,7 +172,8 @@ exports.setStatus = asyncHandler(async (req, res) => {
     const product = await productService.setStatus(
         req.params.id,
         req.body.status,
-        getActorId(req)
+        getActorId(req),
+        req.user?.role
     );
     return success(res, `Product status set to ${req.body.status}.`, product);
 });
@@ -180,7 +182,8 @@ exports.activateProduct = asyncHandler(async (req, res) => {
     const product = await productService.setStatus(
         req.params.id,
         "Active",
-        getActorId(req)
+        getActorId(req),
+        req.user?.role
     );
     return success(res, "Product activated successfully.", product);
 });
@@ -189,7 +192,8 @@ exports.deactivateProduct = asyncHandler(async (req, res) => {
     const product = await productService.setStatus(
         req.params.id,
         "Inactive",
-        getActorId(req)
+        getActorId(req),
+        req.user?.role
     );
     return success(res, "Product deactivated successfully.", product);
 });
@@ -198,7 +202,8 @@ exports.archiveProduct = asyncHandler(async (req, res) => {
     const product = await productService.setStatus(
         req.params.id,
         "Archived",
-        getActorId(req)
+        getActorId(req),
+        req.user?.role
     );
     return success(res, "Product archived successfully.", product);
 });
@@ -207,7 +212,8 @@ exports.publishProduct = asyncHandler(async (req, res) => {
     const product = await productService.setPublish(
         req.params.id,
         true,
-        getActorId(req)
+        getActorId(req),
+        req.user?.role
     );
     return success(res, "Product published successfully.", product);
 });
@@ -216,7 +222,8 @@ exports.unpublishProduct = asyncHandler(async (req, res) => {
     const product = await productService.setPublish(
         req.params.id,
         false,
-        getActorId(req)
+        getActorId(req),
+        req.user?.role
     );
     return success(res, "Product unpublished successfully.", product);
 });

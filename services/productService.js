@@ -14,6 +14,7 @@ const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const { hasAdminPower } = require("../utils/roleAccess");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -1005,7 +1006,12 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
 // Create
 // ==========================================================
 
-const createProduct = async (payload = {}, actorId = null, companyId = null) => {
+const createProduct = async (
+    payload = {},
+    actorId = null,
+    companyId = null,
+    actorRole = null
+) => {
     const tenant = companyFilter(companyId);
     const data = pickUpdatableFields(payload);
     const name = (data.name || "").toString().trim();
@@ -1086,7 +1092,14 @@ const createProduct = async (payload = {}, actorId = null, companyId = null) => 
         barcodeType = "EAN13";
     }
 
-    const isOwnerUpload = uploader.uploadedByType === "Owner";
+    // Trust JWT role over client-supplied uploadedByType so company/global
+    // super admins always auto-approve (client may still send "Employee").
+    if (hasAdminPower(actorRole)) {
+        uploader.uploadedByType = "Owner";
+        uploader.uploadedByModel = uploader.uploadedById ? "AdminUser" : null;
+    }
+    const isOwnerUpload =
+        uploader.uploadedByType === "Owner" || hasAdminPower(actorRole);
 
     // Vendor uploads also set vendorId so the user-app /products filter works.
     // Owner / Employee still get vendorId = their account id for catalog ownership
@@ -2235,7 +2248,7 @@ const resubmitProduct = async (id, actor = {}, note = "") => {
 // Status / publish
 // ==========================================================
 
-const setStatus = async (id, status, actorId = null) => {
+const setStatus = async (id, status, actorId = null, actorRole = null) => {
     const allowed = ["Draft", "Active", "Inactive", "Archived"];
     if (!allowed.includes(status)) {
         throw new AppError("Invalid product status.", 400);
@@ -2244,9 +2257,27 @@ const setStatus = async (id, status, actorId = null) => {
     const product = await findProductOrFail(id);
 
     if (status === "Active" && product.approvalStatus !== "Approved") {
-        throw new AppError(
-            "Product must be approved by the Owner before it can be activated.",
-            400
+        if (!hasAdminPower(actorRole)) {
+            throw new AppError(
+                "Product must be approved by the Owner before it can be activated.",
+                400
+            );
+        }
+        // Owner / super admin may activate without a separate approval step.
+        product.approvalStatus = "Approved";
+        product.approvalRequired = false;
+        product.approvedBy = toObjectId(actorId);
+        product.approvedByName = "Owner";
+        product.approvedAt = new Date();
+        product.rejectedBy = null;
+        product.rejectedByName = "";
+        product.rejectedAt = null;
+        product.rejectionReason = "";
+        pushApproval(
+            product,
+            "Approved",
+            { type: "Owner", id: actorId, name: "Owner" },
+            "Auto approved on activation by Owner."
         );
     }
 
@@ -2258,13 +2289,30 @@ const setStatus = async (id, status, actorId = null) => {
     return populateProduct(Product.findById(product._id));
 };
 
-const setPublish = async (id, publish, actorId = null) => {
+const setPublish = async (id, publish, actorId = null, actorRole = null) => {
     const product = await findProductOrFail(id);
 
     if (publish && product.approvalStatus !== "Approved") {
-        throw new AppError(
-            "Product must be approved by the Owner before publishing.",
-            400
+        if (!hasAdminPower(actorRole)) {
+            throw new AppError(
+                "Product must be approved by the Owner before publishing.",
+                400
+            );
+        }
+        product.approvalStatus = "Approved";
+        product.approvalRequired = false;
+        product.approvedBy = toObjectId(actorId);
+        product.approvedByName = "Owner";
+        product.approvedAt = new Date();
+        product.rejectedBy = null;
+        product.rejectedByName = "";
+        product.rejectedAt = null;
+        product.rejectionReason = "";
+        pushApproval(
+            product,
+            "Approved",
+            { type: "Owner", id: actorId, name: "Owner" },
+            "Auto approved on publish by Owner."
         );
     }
 

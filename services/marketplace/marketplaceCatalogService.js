@@ -4,6 +4,7 @@ const Brand = require("../../model/brand");
 const Product = require("../../model/product");
 const ProductVariant = require("../../model/productVariant");
 const Company = require("../../model/company");
+const Review = require("../../model/review");
 const AppError = require("../../utils/appError");
 const { parseMarketplacePagination } = require("../../utils/marketplacePagination");
 const {
@@ -16,7 +17,7 @@ const {
     getAvailableStock,
 } = require("./marketplaceProductService");
 
-const formatCatalogProduct = (product, seller, availableStock = null) => ({
+const formatCatalogProduct = (product, seller, availableStock = null, ratingStats = null) => ({
     id: product._id,
     productCode: product.productCode,
     name: product.name,
@@ -35,11 +36,36 @@ const formatCatalogProduct = (product, seller, availableStock = null) => ({
     isFeatured: Boolean(product.isFeatured),
     isNewArrival: Boolean(product.isNewArrival),
     isBestSeller: Boolean(product.isBestSeller),
+    averageRating: ratingStats?.averageRating ?? 0,
+    reviewCount: ratingStats?.reviewCount ?? 0,
     proCategoryId: product.proCategoryId || null,
     proSubCategoryId: product.proSubCategoryId || null,
     proBrandId: product.proBrandId || null,
     seller,
 });
+
+const getRatingStatsMap = async (productIds = []) => {
+    if (!productIds.length) return new Map();
+    const rows = await Review.aggregate([
+        { $match: { productId: { $in: productIds } } },
+        {
+            $group: {
+                _id: "$productId",
+                averageRating: { $avg: "$rating" },
+                reviewCount: { $sum: 1 },
+            },
+        },
+    ]);
+    return new Map(
+        rows.map((row) => [
+            String(row._id),
+            {
+                averageRating: Math.round((Number(row.averageRating) || 0) * 10) / 10,
+                reviewCount: Number(row.reviewCount) || 0,
+            },
+        ])
+    );
+};
 
 const listProducts = async (query = {}) => {
     const { skip, limit, buildPagination } = parseMarketplacePagination(query, {
@@ -119,8 +145,15 @@ const listProducts = async (query = {}) => {
         companies.map((company) => [String(company._id), buildSellerSnapshot(company)])
     );
 
+    const ratingMap = await getRatingStatsMap(products.map((p) => p._id));
+
     const data = products.map((product) =>
-        formatCatalogProduct(product, companyMap.get(String(product.companyId)) || null)
+        formatCatalogProduct(
+            product,
+            companyMap.get(String(product.companyId)) || null,
+            null,
+            ratingMap.get(String(product._id)) || null
+        )
     );
 
     return {
@@ -185,8 +218,15 @@ const getProductById = async (productId) => {
         );
     }
 
+    const ratingMap = await getRatingStatsMap([product._id]);
+
     return {
-        ...formatCatalogProduct(product, seller, availableStock),
+        ...formatCatalogProduct(
+            product,
+            seller,
+            availableStock,
+            ratingMap.get(String(product._id)) || null
+        ),
         variants,
     };
 };
