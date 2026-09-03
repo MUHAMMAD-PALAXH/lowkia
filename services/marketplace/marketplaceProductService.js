@@ -7,6 +7,7 @@ const AppError = require("../../utils/appError");
 
 const SELLABLE_COMPANY_STATUSES = ["Active", "Trial"];
 
+/** Strict gate for cart / checkout — only live sellable catalog rows. */
 const MARKETPLACE_PRODUCT_QUERY = {
     isDeleted: { $ne: true },
     isPublished: true,
@@ -27,6 +28,16 @@ const MARKETPLACE_PRODUCT_QUERY = {
             ],
         },
     ],
+};
+
+/**
+ * Browse/preview catalog for website + mobile apps.
+ * Shows Draft / unpublished / pending products so tenants can preview
+ * everything except trash (Archived / deleted).
+ */
+const MARKETPLACE_CATALOG_QUERY = {
+    isDeleted: { $ne: true },
+    status: { $nin: ["Archived"] },
 };
 
 const toObjectId = (value) => {
@@ -208,7 +219,6 @@ const loadSellerSnapshots = async (companyIds = []) => {
     const companies = await Company.find({
         _id: { $in: ids },
         isDeleted: { $ne: true },
-        status: { $in: SELLABLE_COMPANY_STATUSES },
     }).lean();
 
     return new Map(
@@ -218,6 +228,7 @@ const loadSellerSnapshots = async (companyIds = []) => {
 
 module.exports = {
     MARKETPLACE_PRODUCT_QUERY,
+    MARKETPLACE_CATALOG_QUERY,
     SELLABLE_COMPANY_STATUSES,
     toObjectId,
     buildLineKey,
@@ -228,4 +239,5 @@ module.exports = {
     evaluateAvailability,
     resolveMarketplaceLine,
     loadSellerSnapshots,
+    assertSellableCompany,
 };

@@ -8,14 +8,18 @@ const Review = require("../../model/review");
 const AppError = require("../../utils/appError");
 const { parseMarketplacePagination } = require("../../utils/marketplacePagination");
 const {
-    MARKETPLACE_PRODUCT_QUERY,
-    SELLABLE_COMPANY_STATUSES,
+    MARKETPLACE_CATALOG_QUERY,
     toObjectId,
     pickImageUrl,
     resolveUnitPrice,
     buildSellerSnapshot,
     getAvailableStock,
 } = require("./marketplaceProductService");
+
+/** Companies whose products may appear in browse/preview catalog. */
+const catalogCompanyFilter = {
+    isDeleted: { $ne: true },
+};
 
 const formatCatalogProduct = (product, seller, availableStock = null, ratingStats = null) => ({
     id: product._id,
@@ -72,14 +76,9 @@ const listProducts = async (query = {}) => {
         surface: "catalog",
     });
 
-    const sellableCompanyIds = await Company.distinct("_id", {
-        isDeleted: { $ne: true },
-        status: { $in: SELLABLE_COMPANY_STATUSES },
-    });
-
+    // Preview mode: every non-archived product is browsable on web + mobile.
     const filter = {
-        ...MARKETPLACE_PRODUCT_QUERY,
-        companyId: { $in: sellableCompanyIds },
+        ...MARKETPLACE_CATALOG_QUERY,
     };
 
     if (query.search) {
@@ -93,7 +92,7 @@ const listProducts = async (query = {}) => {
 
     if (query.companyId) {
         const cid = toObjectId(query.companyId);
-        if (!cid || !sellableCompanyIds.some((id) => String(id) === String(cid))) {
+        if (!cid) {
             return {
                 data: [],
                 pagination: buildPagination(0),
@@ -135,8 +134,7 @@ const listProducts = async (query = {}) => {
     const companies = pageCompanyIds.length
         ? await Company.find({
               _id: { $in: pageCompanyIds },
-              isDeleted: { $ne: true },
-              status: { $in: SELLABLE_COMPANY_STATUSES },
+              ...catalogCompanyFilter,
           })
               .select("_id companyCode legalName tradeName logoUrl defaultCurrency status")
               .lean()
@@ -168,7 +166,7 @@ const getProductById = async (productId) => {
 
     const product = await Product.findOne({
         _id: pid,
-        ...MARKETPLACE_PRODUCT_QUERY,
+        ...MARKETPLACE_CATALOG_QUERY,
     })
         .populate("proCategoryId", "name")
         .populate("proSubCategoryId", "name")
@@ -177,15 +175,15 @@ const getProductById = async (productId) => {
 
     if (!product) throw new AppError("Product not found.", 404);
 
-    const company = await Company.findOne({
-        _id: product.companyId,
-        isDeleted: { $ne: true },
-        status: { $in: SELLABLE_COMPANY_STATUSES },
-    }).lean();
+    let company = null;
+    if (product.companyId) {
+        company = await Company.findOne({
+            _id: product.companyId,
+            ...catalogCompanyFilter,
+        }).lean();
+    }
 
-    if (!company) throw new AppError("Product seller is not available.", 404);
-
-    const seller = buildSellerSnapshot(company);
+    const seller = company ? buildSellerSnapshot(company) : null;
     const availableStock = await getAvailableStock(product);
 
     let variants = [];
@@ -193,8 +191,8 @@ const getProductById = async (productId) => {
         const rows = await ProductVariant.find({
             productId: pid,
             companyId: product.companyId,
-            isDeleted: false,
-            status: "Active",
+            isDeleted: { $ne: true },
+            status: { $nin: ["Archived"] },
         })
             .select(
                 "combinationString sku sellingPrice offerPrice images quantity status"
@@ -232,14 +230,8 @@ const getProductById = async (productId) => {
 };
 
 const getTaxonomy = async () => {
-    const sellableCompanyIds = await Company.distinct("_id", {
-        isDeleted: { $ne: true },
-        status: { $in: SELLABLE_COMPANY_STATUSES },
-    });
-
     const productMatch = {
-        ...MARKETPLACE_PRODUCT_QUERY,
-        companyId: { $in: sellableCompanyIds },
+        ...MARKETPLACE_CATALOG_QUERY,
     };
 
     const [countFacet] = await Product.aggregate([
@@ -274,23 +266,23 @@ const getTaxonomy = async () => {
 
     const [categories, subCategories, brands] = await Promise.all([
         Category.find({
-            isDeleted: false,
-            status: "Active",
+            isDeleted: { $ne: true },
+            status: { $nin: ["Inactive", "Archived"] },
         })
             .select("name image slug sortOrder")
             .sort({ sortOrder: 1, name: 1 })
             .lean(),
         SubCategory.find({
-            isDeleted: false,
-            status: "Active",
+            isDeleted: { $ne: true },
+            status: { $nin: ["Inactive", "Archived"] },
         })
             .select("name categoryId image slug sortOrder")
             .populate("categoryId", "name slug")
             .sort({ sortOrder: 1, name: 1 })
             .lean(),
         Brand.find({
-            isDeleted: false,
-            status: "Active",
+            isDeleted: { $ne: true },
+            status: { $nin: ["Inactive", "Archived"] },
         })
             .select("name subcategoryId logo slug sortOrder")
             .populate("subcategoryId", "name categoryId")
@@ -312,10 +304,7 @@ const getTaxonomy = async () => {
 };
 
 const listSellers = async () => {
-    const companies = await Company.find({
-        isDeleted: { $ne: true },
-        status: { $in: SELLABLE_COMPANY_STATUSES },
-    })
+    const companies = await Company.find(catalogCompanyFilter)
         .select("_id companyCode legalName tradeName logoUrl status")
         .sort({ tradeName: 1, legalName: 1 })
         .lean();
@@ -325,7 +314,7 @@ const listSellers = async () => {
         ? await Product.aggregate([
               {
                   $match: {
-                      ...MARKETPLACE_PRODUCT_QUERY,
+                      ...MARKETPLACE_CATALOG_QUERY,
                       companyId: { $in: companyIds },
                   },
               },
