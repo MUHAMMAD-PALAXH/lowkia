@@ -195,23 +195,59 @@ const getProductById = async (productId) => {
     const seller = company ? buildSellerSnapshot(company) : null;
     const availableStock = await getAvailableStock(product);
 
-    let variants = [];
-    if (product.hasVariants) {
-        const rows = await ProductVariant.find({
-            productId: pid,
-            companyId: product.companyId,
-            isDeleted: { $ne: true },
-            status: { $nin: ["Archived"] },
-        })
-            .select(
-                "combinationString sku sellingPrice offerPrice images quantity status"
-            )
-            .lean();
+    // Always load live variant rows by productId. Do not rely only on
+    // hasVariants / companyId — older or mismatched rows were being hidden.
+    const variantFilter = {
+        productId: pid,
+        isDeleted: { $ne: true },
+        status: { $nin: ["Archived"] },
+    };
+    if (product.companyId) {
+        variantFilter.$or = [
+            { companyId: product.companyId },
+            { companyId: null },
+            { companyId: { $exists: false } },
+        ];
+    }
 
-        variants = await Promise.all(
-            rows.map(async (variant) => ({
+    const rows = await ProductVariant.find(variantFilter)
+        .select(
+            "combinationString sku sellingPrice offerPrice images quantity status attributes"
+        )
+        .populate({
+            path: "attributes.variantId",
+            select: "name",
+        })
+        .populate({
+            path: "attributes.variantTypeId",
+            select: "type name",
+        })
+        .sort({ isDefaultVariant: -1, createdAt: 1 })
+        .lean();
+
+    const variants = await Promise.all(
+        rows.map(async (variant, index) => {
+            const attrLabel = Array.isArray(variant.attributes)
+                ? variant.attributes
+                      .map((attr) => {
+                          const name =
+                              attr?.variantId?.name ||
+                              attr?.variantId?.type ||
+                              "";
+                          return String(name).trim();
+                      })
+                      .filter(Boolean)
+                      .join(" / ")
+                : "";
+            const label =
+                (variant.combinationString || "").toString().trim() ||
+                attrLabel ||
+                (variant.sku || "").toString().trim() ||
+                `Option ${index + 1}`;
+
+            return {
                 id: variant._id,
-                label: variant.combinationString || "",
+                label,
                 sku: variant.sku || "",
                 sellingPrice: resolveUnitPrice(variant),
                 offerPrice:
@@ -221,9 +257,24 @@ const getProductById = async (productId) => {
                 imageUrl:
                     pickImageUrl(variant.images) || pickImageUrl(product.images),
                 availableStock: await getAvailableStock(product, variant),
-            }))
-        );
-    }
+                attributes: Array.isArray(variant.attributes)
+                    ? variant.attributes.map((attr) => ({
+                          variantTypeId:
+                              attr?.variantTypeId?._id ||
+                              attr?.variantTypeId ||
+                              null,
+                          variantTypeName:
+                              attr?.variantTypeId?.type ||
+                              attr?.variantTypeId?.name ||
+                              "",
+                          variantId:
+                              attr?.variantId?._id || attr?.variantId || null,
+                          variantName: attr?.variantId?.name || "",
+                      }))
+                    : [],
+            };
+        })
+    );
 
     const ratingMap = await getRatingStatsMap([product._id]);
 
@@ -234,6 +285,7 @@ const getProductById = async (productId) => {
             availableStock,
             ratingMap.get(String(product._id)) || null
         ),
+        hasVariants: variants.length > 0 || Boolean(product.hasVariants),
         variants,
     };
 };
