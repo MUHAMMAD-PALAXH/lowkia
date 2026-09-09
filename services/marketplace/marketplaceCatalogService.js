@@ -50,7 +50,7 @@ const formatCatalogProduct = (
                   _id: img._id || undefined,
               }))
         : [],
-    hasVariants: Boolean(product.hasVariants) || Boolean(defaultVariant),
+    hasVariants: Boolean(defaultVariant),
     defaultVariantId: defaultVariant?.id || null,
     defaultVariantLabel: defaultVariant?.label || null,
     defaultVariantPrice: defaultVariant?.sellingPrice ?? null,
