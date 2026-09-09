@@ -118,6 +118,20 @@ const formatCartResponse = async (cart, items = []) => {
     };
 };
 
+/** Fast cart snapshot without per-line stock re-resolve (for mutations). */
+const getCartSnapshot = async (userId) => {
+    const cart = await getOrCreateCart(userId);
+    const items = await MarketplaceCartItem.find({
+        cartId: cart._id,
+        ...NOT_DELETED,
+    })
+        .sort({ createdAt: 1 })
+        .lean();
+
+    cart.itemCount = items.length;
+    return formatCartResponse(cart, items);
+};
+
 const getCart = async (userId) => {
     const cart = await getOrCreateCart(userId);
 
@@ -232,7 +246,7 @@ const addCartItem = async (userId, { productId, productVariantId = null, quantit
     }
 
     await syncCartItemCount(cart._id);
-    return getCart(userId);
+    return getCartSnapshot(userId);
 };
 
 const updateCartItem = async (userId, itemId, { quantity }) => {
@@ -276,7 +290,7 @@ const updateCartItem = async (userId, itemId, { quantity }) => {
     item.unavailableReason = "";
     await item.save();
 
-    return getCart(userId);
+    return getCartSnapshot(userId);
 };
 
 const removeCartItem = async (userId, itemId) => {
@@ -294,7 +308,7 @@ const removeCartItem = async (userId, itemId) => {
     await item.save();
     await syncCartItemCount(cart._id);
 
-    return getCart(userId);
+    return getCartSnapshot(userId);
 };
 
 const clearCart = async (userId) => {
@@ -306,7 +320,7 @@ const clearCart = async (userId) => {
     );
 
     await syncCartItemCount(cart._id);
-    return getCart(userId);
+    return getCartSnapshot(userId);
 };
 
 module.exports = {

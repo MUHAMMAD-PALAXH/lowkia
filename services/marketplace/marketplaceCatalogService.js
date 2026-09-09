@@ -24,7 +24,13 @@ const catalogCompanyFilter = {
     isDeleted: { $ne: true },
 };
 
-const formatCatalogProduct = (product, seller, availableStock = null, ratingStats = null) => ({
+const formatCatalogProduct = (
+    product,
+    seller,
+    availableStock = null,
+    ratingStats = null,
+    defaultVariant = null
+) => ({
     id: product._id,
     productCode: product.productCode,
     name: product.name,
@@ -44,7 +50,11 @@ const formatCatalogProduct = (product, seller, availableStock = null, ratingStat
                   _id: img._id || undefined,
               }))
         : [],
-    hasVariants: Boolean(product.hasVariants),
+    hasVariants: Boolean(product.hasVariants) || Boolean(defaultVariant),
+    defaultVariantId: defaultVariant?.id || null,
+    defaultVariantLabel: defaultVariant?.label || null,
+    defaultVariantPrice: defaultVariant?.sellingPrice ?? null,
+    defaultVariantOfferPrice: defaultVariant?.offerPrice ?? null,
     availableStock:
         availableStock !== null
             ? availableStock
@@ -59,6 +69,46 @@ const formatCatalogProduct = (product, seller, availableStock = null, ratingStat
     proBrandId: product.proBrandId || null,
     seller,
 });
+
+/** First Active variant per product — used for one-click add-to-cart. */
+const getDefaultVariantMap = async (products = []) => {
+    const ids = products
+        .filter((p) => p && (p.hasVariants || p._id))
+        .map((p) => p._id)
+        .filter(Boolean);
+    if (!ids.length) return new Map();
+
+    const rows = await ProductVariant.find({
+        productId: { $in: ids },
+        isDeleted: { $ne: true },
+        status: "Active",
+    })
+        .select(
+            "productId combinationString sku sellingPrice offerPrice isDefaultVariant createdAt"
+        )
+        .sort({ isDefaultVariant: -1, createdAt: 1 })
+        .lean();
+
+    const map = new Map();
+    for (const row of rows) {
+        const key = String(row.productId);
+        if (map.has(key)) continue;
+        const label =
+            (row.combinationString || "").toString().trim() ||
+            (row.sku || "").toString().trim() ||
+            "Option";
+        map.set(key, {
+            id: row._id,
+            label,
+            sellingPrice: resolveUnitPrice(row),
+            offerPrice:
+                row.offerPrice != null && Number(row.offerPrice) > 0
+                    ? Number(row.offerPrice)
+                    : null,
+        });
+    }
+    return map;
+};
 
 const getRatingStatsMap = async (productIds = []) => {
     if (!productIds.length) return new Map();
@@ -373,13 +423,15 @@ const listProducts = async (query = {}) => {
     );
 
     const ratingMap = await getRatingStatsMap(products.map((p) => p._id));
+    const defaultVariantMap = await getDefaultVariantMap(products);
 
     const data = products.map((product) =>
         formatCatalogProduct(
             product,
             companyMap.get(String(product.companyId)) || null,
             null,
-            ratingMap.get(String(product._id)) || null
+            ratingMap.get(String(product._id)) || null,
+            defaultVariantMap.get(String(product._id)) || null
         )
     );
 
@@ -420,7 +472,8 @@ const getProductById = async (productId) => {
     const variantFilter = {
         productId: pid,
         isDeleted: { $ne: true },
-        status: { $nin: ["Archived"] },
+        // Cart add only accepts Active — keep catalog options consistent.
+        status: "Active",
     };
     if (product.companyId) {
         variantFilter.$or = [
