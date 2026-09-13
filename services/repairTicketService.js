@@ -198,23 +198,19 @@ const createRepairTicket = async (
 ) => {
     const tenant = companyFilter(companyId);
     const branchId = toObjectId(payload.branchId);
-    if (!branchId) {
-        const err = new Error("Branch is required.");
-        err.status = 400;
-        throw err;
+    if (branchId) {
+        const branch = await Branch.findOne({
+            _id: branchId,
+            ...NOT_DELETED,
+            ...tenant
+        });
+        if (!branch) {
+            const err = new Error("Branch not found.");
+            err.status = 404;
+            throw err;
+        }
+        assertDocumentCompany(branch, companyId, "Branch");
     }
-
-    const branch = await Branch.findOne({
-        _id: branchId,
-        ...NOT_DELETED,
-        ...tenant
-    });
-    if (!branch) {
-        const err = new Error("Branch not found.");
-        err.status = 404;
-        throw err;
-    }
-    assertDocumentCompany(branch, companyId, "Branch");
 
     const customerName = String(payload.customerName || "").trim();
     const phone = String(payload.phone || "").trim();
@@ -438,6 +434,25 @@ const updateRepairTicket = async (
     }
     assertDocumentCompany(doc, companyId, "Repair ticket");
 
+    if (payload.branchId !== undefined) {
+        const nextBranchId = toObjectId(payload.branchId);
+        if (nextBranchId) {
+            const branch = await Branch.findOne({
+                _id: nextBranchId,
+                ...NOT_DELETED,
+                ...tenant
+            });
+            if (!branch) {
+                const err = new Error("Branch not found.");
+                err.status = 404;
+                throw err;
+            }
+            assertDocumentCompany(branch, companyId, "Branch");
+            doc.branchId = nextBranchId;
+        } else {
+            doc.branchId = null;
+        }
+    }
     if (payload.customerName != null) {
         doc.customerName = String(payload.customerName).trim();
     }
