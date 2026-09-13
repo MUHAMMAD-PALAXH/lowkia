@@ -993,9 +993,24 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
         );
 
         product.productVariants = keptIds;
-        product.hasVariants = keptIds.length > 0;
-        if (product.hasVariants && product.productType === "Simple") {
-            product.productType = "Variant";
+
+        // Regular products still have one "Default" stock row — that is NOT multi-variant.
+        const keptRows = await ProductVariant.find({
+            _id: { $in: keptIds },
+            isDeleted: { $ne: true }
+        })
+            .select("attributes combinationString")
+            .lean();
+        const isMulti = keptRows.some((row) => {
+            const attrs = Array.isArray(row.attributes) ? row.attributes : [];
+            const combo = String(row.combinationString || "")
+                .trim()
+                .toLowerCase();
+            return attrs.length > 0 || (combo && combo !== "default");
+        });
+        product.hasVariants = isMulti;
+        if (product.productType === "Simple" || product.productType === "Variant") {
+            product.productType = isMulti ? "Variant" : "Simple";
         }
     } catch (err) {
         throw mapVariantWriteError(err);
@@ -1420,6 +1435,7 @@ const getProducts = async (query = {}, companyId = null) => {
     // Manual / ThirdParty: fill zero stock from variant opening qty + unit profit.
     await hydrateListStockFromVariants(items);
     await attachSoldQty(items);
+    await enrichListVariantFlags(items);
 
     return {
         items,
@@ -2020,6 +2036,44 @@ const hydrateListStockFromVariants = async (items = []) => {
             }
         }
         applyUnitProfit(p);
+    }
+    return items;
+};
+
+/**
+ * List rows only keep variant ObjectIds — compute real multi-variant flags
+ * from combination attributes so the UI can show Regular vs Multi correctly.
+ * Also corrects legacy rows where any Default stock row forced productType=Variant.
+ */
+const enrichListVariantFlags = async (items = []) => {
+    if (!items.length) return items;
+    const ids = items.map((p) => p._id).filter(Boolean);
+    if (!ids.length) return items;
+
+    const rows = await ProductVariant.find({
+        productId: { $in: ids },
+        isDeleted: { $ne: true }
+    })
+        .select("productId attributes combinationString")
+        .lean();
+
+    const multiIds = new Set();
+    for (const row of rows) {
+        const attrs = Array.isArray(row.attributes) ? row.attributes : [];
+        const combo = String(row.combinationString || "")
+            .trim()
+            .toLowerCase();
+        if (attrs.length > 0 || (combo && combo !== "default")) {
+            multiIds.add(String(row.productId));
+        }
+    }
+
+    for (const p of items) {
+        const multi = multiIds.has(String(p._id));
+        p.hasVariants = multi;
+        if (p.productType === "Simple" || p.productType === "Variant") {
+            p.productType = multi ? "Variant" : "Simple";
+        }
     }
     return items;
 };
