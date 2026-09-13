@@ -42,7 +42,8 @@ exports.updateRepairTicket = asyncHandler(async (req, res) => {
     const doc = await repairTicketService.updateRepairTicket(
         req.params.id,
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Repair ticket updated.", doc);
 });
@@ -51,7 +52,8 @@ exports.updateRepairTicketStatus = asyncHandler(async (req, res) => {
     const doc = await repairTicketService.updateRepairTicketStatus(
         req.params.id,
         req.body?.status,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Repair ticket status updated.", doc);
 });
@@ -59,7 +61,8 @@ exports.updateRepairTicketStatus = asyncHandler(async (req, res) => {
 exports.completeRepairTicket = asyncHandler(async (req, res) => {
     const doc = await repairTicketService.completeRepairTicket(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Repair ticket completed.", doc);
 });
@@ -67,7 +70,8 @@ exports.completeRepairTicket = asyncHandler(async (req, res) => {
 exports.deleteRepairTicket = asyncHandler(async (req, res) => {
     const result = await repairTicketService.deleteRepairTicket(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Repair ticket deleted.", result);
 });

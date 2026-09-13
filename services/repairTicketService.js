@@ -1,7 +1,8 @@
 const RepairTicket = require("../model/repairTicket");
 const ItemTrack = require("../model/itemTrack");
 const Branch = require("../model/branch");
-const { generateRepairTicketCode } = require("./codeGenerator");
+const Customer = require("../model/customer");
+const { generateRepairTicketCode, generateCustomerCode } = require("./codeGenerator");
 const { generateProductBarcode } = require("./barcodeGenerator");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
@@ -32,6 +33,61 @@ const resolveTrackingType = (value) =>
     !String(value || "").toUpperCase().includes("NON")
         ? "IMEI"
         : "Non-IMEI";
+
+/**
+ * Link an existing customer or create one from repair walk-in details
+ * so the Customer screen stays in sync.
+ */
+const resolveRepairCustomerId = async ({
+    customerId,
+    customerName,
+    phone,
+    email = "",
+    address = "",
+    actorId = null,
+    companyId = null,
+}) => {
+    const tenant = companyFilter(companyId);
+    const existingId = toObjectId(customerId);
+    if (existingId) {
+        const existing = await Customer.findOne({
+            _id: existingId,
+            isDeleted: { $ne: true },
+            ...tenant,
+        });
+        if (existing) return existing._id;
+    }
+
+    const byPhone = await Customer.findOne({
+        phone,
+        isDeleted: { $ne: true },
+        ...tenant,
+    });
+    if (byPhone) return byPhone._id;
+
+    const customerCode = await generateCustomerCode();
+    const created = await Customer.create(
+        stampCompany(
+            {
+                name: customerName,
+                phone,
+                email: String(email || "").trim(),
+                address: String(address || "").trim(),
+                customerCode,
+                customerId: customerCode,
+                customerType: "Retail",
+                paymentTerms: "Cash",
+                status: "Active",
+                isApproved: true,
+                approvedAt: new Date(),
+                note: "Created from repair ticket",
+                createdBy: toObjectId(actorId),
+            },
+            companyId
+        )
+    );
+    return created._id;
+};
 
 const resolveStatus = (value) => {
     const allowed = [
@@ -163,6 +219,16 @@ const createRepairTicket = async (
         throw err;
     }
 
+    const resolvedCustomerId = await resolveRepairCustomerId({
+        customerId: payload.customerId,
+        customerName,
+        phone,
+        email: payload.email,
+        address: payload.address,
+        actorId,
+        companyId,
+    });
+
     const ticketSource = resolveTicketSource(payload.ticketSource);
     const trackingType = resolveTrackingType(payload.trackingType);
     const serviceDetails = String(
@@ -259,7 +325,7 @@ const createRepairTicket = async (
         expectedDeliveryDate:
             payload.expectedDeliveryDate || payload.pickupDate || null,
         pickupDate: payload.pickupDate || null,
-        customerId: toObjectId(payload.customerId),
+        customerId: resolvedCustomerId,
         customerName,
         phone,
         alternatePhone: String(payload.alternatePhone || "").trim(),
@@ -343,13 +409,20 @@ const getRepairTicketById = async (id, companyId = null) => {
     return doc;
 };
 
-const updateRepairTicket = async (id, payload = {}, actorId = null) => {
-    const doc = await RepairTicket.findOne({ _id: id, ...NOT_DELETED });
+const updateRepairTicket = async (
+    id,
+    payload = {},
+    actorId = null,
+    companyId = null
+) => {
+    const tenant = companyFilter(companyId);
+    const doc = await RepairTicket.findOne({ _id: id, ...NOT_DELETED, ...tenant });
     if (!doc) {
         const err = new Error("Repair ticket not found.");
         err.status = 404;
         throw err;
     }
+    assertDocumentCompany(doc, companyId, "Repair ticket");
 
     if (payload.customerName != null) {
         doc.customerName = String(payload.customerName).trim();
@@ -398,6 +471,21 @@ const updateRepairTicket = async (id, payload = {}, actorId = null) => {
         doc.markModified("device");
     }
 
+    // Keep / create customer master when name+phone are present.
+    const nextName = String(payload.customerName ?? doc.customerName ?? "").trim();
+    const nextPhone = String(payload.phone ?? doc.phone ?? "").trim();
+    if (nextName && nextPhone) {
+        doc.customerId = await resolveRepairCustomerId({
+            customerId: payload.customerId ?? doc.customerId,
+            customerName: nextName,
+            phone: nextPhone,
+            email: payload.email ?? doc.email,
+            address: payload.address ?? doc.address,
+            actorId,
+            companyId,
+        });
+    }
+
     const amounts = calcAmounts({
         diagnosisCharge: payload.diagnosisCharge ?? doc.diagnosisCharge,
         serviceCharge: payload.serviceCharge ?? payload.price ?? doc.serviceCharge,
@@ -412,16 +500,23 @@ const updateRepairTicket = async (id, payload = {}, actorId = null) => {
 
     doc.updatedBy = toObjectId(actorId || payload.updatedBy || payload.actorId);
     await doc.save();
-    return getRepairTicketById(doc._id);
+    return getRepairTicketById(doc._id, companyId);
 };
 
-const updateRepairTicketStatus = async (id, status, actorId = null) => {
-    const doc = await RepairTicket.findOne({ _id: id, ...NOT_DELETED });
+const updateRepairTicketStatus = async (
+    id,
+    status,
+    actorId = null,
+    companyId = null
+) => {
+    const tenant = companyFilter(companyId);
+    const doc = await RepairTicket.findOne({ _id: id, ...NOT_DELETED, ...tenant });
     if (!doc) {
         const err = new Error("Repair ticket not found.");
         err.status = 404;
         throw err;
     }
+    assertDocumentCompany(doc, companyId, "Repair ticket");
 
     const next = resolveStatus(status);
     doc.status = next;
@@ -434,19 +529,21 @@ const updateRepairTicketStatus = async (id, status, actorId = null) => {
     }
     doc.updatedBy = toObjectId(actorId);
     await doc.save();
-    return getRepairTicketById(doc._id);
+    return getRepairTicketById(doc._id, companyId);
 };
 
-const completeRepairTicket = async (id, actorId = null) =>
-    updateRepairTicketStatus(id, "Completed", actorId);
+const completeRepairTicket = async (id, actorId = null, companyId = null) =>
+    updateRepairTicketStatus(id, "Completed", actorId, companyId);
 
-const deleteRepairTicket = async (id, actorId = null) => {
-    const doc = await RepairTicket.findOne({ _id: id, ...NOT_DELETED });
+const deleteRepairTicket = async (id, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const doc = await RepairTicket.findOne({ _id: id, ...NOT_DELETED, ...tenant });
     if (!doc) {
         const err = new Error("Repair ticket not found.");
         err.status = 404;
         throw err;
     }
+    assertDocumentCompany(doc, companyId, "Repair ticket");
     doc.isDeleted = true;
     doc.updatedBy = toObjectId(actorId);
     await doc.save();
