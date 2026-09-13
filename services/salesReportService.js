@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const SalesOrder = require("../model/salesOrder");
 const SalesReturn = require("../model/salesReturn");
 const StockMovement = require("../model/StockMovement");
+const SalesTarget = require("../model/salesTarget");
 const AppError = require("../utils/appError");
 const { companySnapshot } = require("./financeReportService");
 
@@ -25,9 +26,10 @@ const utcDayBound = (value, end = false) => {
 };
 
 const resolvePeriod = (query) => {
-    const to = utcDayBound(query.to, true) || new Date();
+    const to =
+        utcDayBound(query.to || query.dateTo, true) || new Date();
     const from =
-        utcDayBound(query.from, false) ||
+        utcDayBound(query.from || query.dateFrom, false) ||
         new Date(to.getTime() - 29 * 24 * 60 * 60 * 1000);
     if (from > to) throw new AppError("'from' must be before or equal to 'to'.", 422);
     const duration = to.getTime() - from.getTime() + 1;
@@ -37,6 +39,66 @@ const resolvePeriod = (query) => {
         previousFrom: new Date(from.getTime() - duration),
         previousTo: new Date(from.getTime() - 1),
     };
+};
+
+const groupByToPeriodType = (groupBy) => {
+    if (groupBy === "week") return "weekly";
+    if (groupBy === "month") return "monthly";
+    return "daily";
+};
+
+const formatTrendLabel = (period, groupBy) => {
+    if (!period) return "";
+    if (groupBy === "month") {
+        const [year, month] = String(period).split("-");
+        if (!year || !month) return String(period);
+        const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
+        return date.toLocaleDateString("en-GB", {
+            month: "short",
+            year: "numeric",
+            timeZone: "UTC",
+        });
+    }
+    const date = new Date(`${period}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) return String(period);
+    const dayLabel = date.toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        timeZone: "UTC",
+    });
+    return groupBy === "week" ? `Wk ${dayLabel}` : dayLabel;
+};
+
+const normalizePeriodKey = (periodType, raw) => {
+    const value = String(raw || "").trim();
+    if (periodType === "yearly") {
+        if (/^\d{4}$/.test(value)) return value;
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            throw new AppError("Invalid yearly period. Use YYYY.", 422);
+        }
+        return String(date.getUTCFullYear());
+    }
+    if (periodType === "monthly") {
+        if (/^\d{4}-\d{2}$/.test(value)) return value;
+        const date = utcDayBound(value, false);
+        if (!date) throw new AppError("Invalid monthly period. Use YYYY-MM.", 422);
+        return date.toISOString().slice(0, 7);
+    }
+    const date = utcDayBound(value, false);
+    if (!date) {
+        throw new AppError(
+            periodType === "weekly"
+                ? "Invalid weekly period. Use a date (YYYY-MM-DD)."
+                : "Invalid daily period. Use YYYY-MM-DD.",
+            422
+        );
+    }
+    if (periodType === "weekly") {
+        const day = date.getUTCDay() || 7;
+        date.setUTCDate(date.getUTCDate() - day + 1);
+    }
+    return date.toISOString().slice(0, 10);
 };
 
 const applyBranchScope = (match, requestedBranchId, managedBranchIds) => {
@@ -335,27 +397,111 @@ const periodKeys = (from, to, groupBy) => {
     return keys;
 };
 
-const mergeTrend = (from, to, groupBy, orderRows = [], returnRows = []) => {
+const mergeTrend = async (
+    companyId,
+    from,
+    to,
+    groupBy,
+    orderRows = [],
+    returnRows = []
+) => {
+    const keys = periodKeys(from, to, groupBy);
+    const periodType = groupByToPeriodType(groupBy);
+    const targetRows = keys.length
+        ? await SalesTarget.find({
+              companyId: objectId(companyId),
+              periodType,
+              periodKey: { $in: keys },
+          })
+              .select("periodKey amount")
+              .lean()
+        : [];
+    const targetMap = new Map(
+        targetRows.map((row) => [row.periodKey, number(row.amount)])
+    );
     const orders = new Map(orderRows.map((row) => [row._id, row]));
     const returns = new Map(returnRows.map((row) => [row._id, row]));
-    return periodKeys(from, to, groupBy).map((period) => {
+    return keys.map((period) => {
         const sale = orders.get(period) || {};
         const returned = returns.get(period) || {};
         const grossSales = number(sale.grossSales);
         const returnAmount = number(returned.returnAmount);
         return {
             period,
+            label: formatTrendLabel(period, groupBy),
+            date: period,
             grossSales,
+            returns: returnAmount,
             returnAmount,
             netSales: grossSales - returnAmount,
+            target: number(targetMap.get(period)),
             paidAmount: number(sale.paidAmount),
             dueAmount: number(sale.dueAmount),
+            orders: number(sale.orderCount),
             orderCount: number(sale.orderCount),
             returnCount: number(returned.returnCount),
+            units: number(sale.unitsSold),
             unitsSold: number(sale.unitsSold),
             unitsReturned: number(returned.unitsReturned),
         };
     });
+};
+
+const listSalesTargets = async (companyId, query = {}) => {
+    if (!objectId(companyId)) throw new AppError("Company context is required.", 403);
+    const filter = { companyId: objectId(companyId) };
+    if (query.periodType) filter.periodType = query.periodType;
+    if (query.periodKey) filter.periodKey = String(query.periodKey).trim();
+    if (query.month && /^\d{4}-\d{2}$/.test(String(query.month))) {
+        const month = String(query.month);
+        filter.$or = [
+            { periodType: "monthly", periodKey: month },
+            { periodType: "daily", periodKey: { $regex: `^${month}-` } },
+            { periodType: "weekly", periodKey: { $regex: `^${month}-` } },
+            { periodType: "yearly", periodKey: month.slice(0, 4) },
+        ];
+    }
+    return SalesTarget.find(filter).sort({ periodType: 1, periodKey: 1 }).lean();
+};
+
+const upsertSalesTarget = async (companyId, payload = {}, userId = null) => {
+    if (!objectId(companyId)) throw new AppError("Company context is required.", 403);
+    const periodType = String(payload.periodType || "").toLowerCase();
+    if (!["daily", "weekly", "monthly", "yearly"].includes(periodType)) {
+        throw new AppError("periodType must be daily, weekly, monthly, or yearly.", 422);
+    }
+    const periodKey = normalizePeriodKey(periodType, payload.periodKey || payload.date);
+    const amount = number(payload.amount);
+    if (amount < 0) throw new AppError("amount must be 0 or greater.", 422);
+    const note = String(payload.note || "").trim().slice(0, 200);
+    return SalesTarget.findOneAndUpdate(
+        { companyId: objectId(companyId), periodType, periodKey },
+        {
+            $set: {
+                amount,
+                note,
+                updatedAt: new Date(),
+            },
+            $setOnInsert: {
+                companyId: objectId(companyId),
+                periodType,
+                periodKey,
+                createdBy: objectId(userId),
+            },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+    ).lean();
+};
+
+const deleteSalesTarget = async (companyId, targetId) => {
+    if (!objectId(companyId)) throw new AppError("Company context is required.", 403);
+    if (!objectId(targetId)) throw new AppError("Invalid sales target id.", 422);
+    const deleted = await SalesTarget.findOneAndDelete({
+        _id: objectId(targetId),
+        companyId: objectId(companyId),
+    }).lean();
+    if (!deleted) throw new AppError("Sales target not found.", 404);
+    return deleted;
 };
 
 const comparison = (current, previous) => {
@@ -466,6 +612,31 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
     const previousReturnAmount = number(previousReturnSummary.returnAmount);
     const previousNet = previousGross - previousReturnAmount;
     const cogs = await getCogs(currentMatch, currentSummary);
+    const trend = await mergeTrend(
+        companyId,
+        period.from,
+        period.to,
+        groupBy,
+        current.trend,
+        returns.trend
+    );
+    const yearKey = String(period.from.getUTCFullYear());
+    const [yearlyTargetDoc, salesTargets] = await Promise.all([
+        SalesTarget.findOne({
+            companyId: objectId(companyId),
+            periodType: "yearly",
+            periodKey: yearKey,
+        })
+            .select("amount periodKey")
+            .lean(),
+        SalesTarget.find({
+            companyId: objectId(companyId),
+            periodType: groupByToPeriodType(groupBy),
+            periodKey: { $in: trend.map((row) => row.period) },
+        })
+            .select("periodType periodKey amount note")
+            .lean(),
+    ]);
 
     return {
         meta: {
@@ -487,6 +658,7 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
                 search: query.search || null,
                 groupBy,
             },
+            yearlyTarget: number(yearlyTargetDoc?.amount),
             cogs: {
                 source: "StockMovement(Sale/OUT/totalCost)",
                 reliable: cogs.reliable,
@@ -531,13 +703,8 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
                 number(previousSummary.paidAmount)
             ),
         },
-        trend: mergeTrend(
-            period.from,
-            period.to,
-            groupBy,
-            current.trend,
-            returns.trend
-        ),
+        trend,
+        salesTargets,
         statusBreakdown: breakdownRows(current.statusBreakdown),
         paymentBreakdown: {
             byStatus: breakdownRows(current.paymentStatusBreakdown),
@@ -561,4 +728,9 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
     };
 };
 
-module.exports = { getDashboard };
+module.exports = {
+    getDashboard,
+    listSalesTargets,
+    upsertSalesTarget,
+    deleteSalesTarget,
+};

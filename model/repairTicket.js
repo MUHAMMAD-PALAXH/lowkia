@@ -392,6 +392,24 @@ internalNote:{
     default:""
 },
 
+repairedBy:{
+    type:String,
+    default:"",
+    trim:true
+},
+
+repairWarrantyPeriod:{
+    type:Number,
+    default:0,
+    min:0
+},
+
+repairWarrantyUnit:{
+    type:String,
+    enum:["Day","Week","Month","Year"],
+    default:"Day"
+},
+
 
 // ======================================================
 // Pricing

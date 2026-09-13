@@ -34,6 +34,11 @@ const resolveTrackingType = (value) =>
         ? "IMEI"
         : "Non-IMEI";
 
+const resolveRepairWarrantyUnit = (value) => {
+    const v = String(value || "Day").trim();
+    return ["Day", "Week", "Month", "Year"].includes(v) ? v : "Day";
+};
+
 /**
  * Link an existing customer or create one from repair walk-in details
  * so the Customer screen stays in sync.
@@ -345,6 +350,14 @@ const createRepairTicket = async (
         diagnosis: String(payload.diagnosis || "").trim(),
         repairSolution: String(payload.repairSolution || "").trim(),
         internalNote: String(payload.internalNote || "").trim(),
+        repairedBy: String(payload.repairedBy || "").trim(),
+        repairWarrantyPeriod: Math.max(
+            Number(payload.repairWarrantyPeriod) || 0,
+            0
+        ),
+        repairWarrantyUnit: resolveRepairWarrantyUnit(
+            payload.repairWarrantyUnit
+        ),
         ...amounts,
         createdBy
             },
@@ -377,7 +390,8 @@ const getRepairTickets = async (query = {}, companyId = null) => {
             { phone: { $regex: search, $options: "i" } },
             { serviceDetails: { $regex: search, $options: "i" } },
             { "device.productName": { $regex: search, $options: "i" } },
-            { "device.imei1": { $regex: search, $options: "i" } }
+            { "device.imei1": { $regex: search, $options: "i" } },
+            { repairedBy: { $regex: search, $options: "i" } }
         ];
     }
 
@@ -453,6 +467,20 @@ const updateRepairTicket = async (
     }
     if (payload.internalNote != null) {
         doc.internalNote = String(payload.internalNote).trim();
+    }
+    if (payload.repairedBy != null) {
+        doc.repairedBy = String(payload.repairedBy).trim();
+    }
+    if (payload.repairWarrantyPeriod != null) {
+        doc.repairWarrantyPeriod = Math.max(
+            Number(payload.repairWarrantyPeriod) || 0,
+            0
+        );
+    }
+    if (payload.repairWarrantyUnit != null) {
+        doc.repairWarrantyUnit = resolveRepairWarrantyUnit(
+            payload.repairWarrantyUnit
+        );
     }
     if (payload.repairDate || payload.receivedDate) {
         doc.receivedDate = payload.repairDate || payload.receivedDate;
