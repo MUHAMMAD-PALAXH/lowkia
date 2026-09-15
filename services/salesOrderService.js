@@ -1946,10 +1946,16 @@ const completeSalesOrder = async (id, actorId = null) => {
     return deliverSalesOrder(id, actorId);
 };
 
-const lookupByBarcode = async (barcode, warehouseId = null) => {
+const lookupByBarcode = async (
+    barcode,
+    warehouseId = null,
+    companyId = null
+) => {
     const value = String(barcode || "").trim();
     if (!value) throw new AppError("Barcode is required.", 400);
+    const tenant = companyFilter(companyId);
 
+    // Variants may still lack companyId; enforce tenancy via Product.
     let matchedVariant = await ProductVariant.findOne({
         barcode: value,
         isDeleted: { $ne: true }
@@ -1959,10 +1965,18 @@ const lookupByBarcode = async (barcode, warehouseId = null) => {
     if (matchedVariant) {
         product = await Product.findOne({
             _id: matchedVariant.productId,
-            ...NOT_DELETED
+            ...NOT_DELETED,
+            ...tenant
         });
+        if (!product) {
+            throw new AppError("No product found for this barcode.", 404);
+        }
     } else {
-        product = await Product.findOne({ barcode: value, ...NOT_DELETED });
+        product = await Product.findOne({
+            barcode: value,
+            ...NOT_DELETED,
+            ...tenant
+        });
         if (product) {
             matchedVariant = await ProductVariant.findOne({
                 productId: product._id,
@@ -1996,7 +2010,8 @@ const lookupByBarcode = async (barcode, warehouseId = null) => {
             ...(matchedVariant
                 ? { productVariantId: matchedVariant._id }
                 : {}),
-            isDeleted: { $ne: true }
+            isDeleted: { $ne: true },
+            ...tenant
         });
         availableStock = Number(inv?.availableStock) || 0;
     }
@@ -2018,15 +2033,40 @@ const lookupByBarcode = async (barcode, warehouseId = null) => {
     };
 };
 
-const lookupByImei = async (imei, warehouseId = null) => {
+const lookupByImei = async (imei, warehouseId = null, companyId = null) => {
     const value = String(imei || "").trim();
     if (!value) throw new AppError("IMEI is required.", 400);
+    const tenant = companyFilter(companyId);
 
-    const track = await ItemTrack.findOne({ imei: value }).populate(
+    let track = await ItemTrack.findOne({
+        imei: value,
+        ...tenant
+    }).populate(
         "productId",
-        "name productCode trackingType sellingPrice warrantyType warrantyPeriod"
+        "name productCode trackingType sellingPrice warrantyType warrantyPeriod companyId"
     );
-    if (!track) throw new AppError("IMEI not found.", 404);
+
+    // Transition: unstamped tracks belonging to this company's product.
+    if (!track) {
+        track = await ItemTrack.findOne({
+            imei: value,
+            $or: [{ companyId: null }, { companyId: { $exists: false } }]
+        }).populate(
+            "productId",
+            "name productCode trackingType sellingPrice warrantyType warrantyPeriod companyId"
+        );
+        const productCompany = track?.productId?.companyId || track?.companyId;
+        if (
+            !track ||
+            !productCompany ||
+            String(productCompany) !== String(companyId)
+        ) {
+            throw new AppError("IMEI not found.", 404);
+        }
+        track.companyId = companyId;
+        await track.save();
+    }
+
     if (track.status !== "available") {
         throw new AppError(
             `IMEI is not available (status: ${track.status}).`,
@@ -2052,6 +2092,96 @@ const lookupByImei = async (imei, warehouseId = null) => {
         branchId: track.currentBranchId,
         warrantyType: resolveWarrantyType(product?.warrantyType),
         warrantyPeriod: Math.max(Number(product?.warrantyPeriod) || 0, 0)
+    };
+};
+
+/**
+ * Scan-to-open: match sales order by orderNumber / id, or sold IMEI → order.
+ */
+const lookupByOrderCode = async (code, companyId = null) => {
+    const value = String(code || "").trim();
+    if (!value) throw new AppError("Order code is required.", 400);
+    const tenant = companyFilter(companyId);
+    const escaped = escapeRegex(value);
+
+    let order = await SalesOrder.findOne({
+        ...NOT_DELETED,
+        ...tenant,
+        orderNumber: { $regex: `^${escaped}$`, $options: "i" }
+    }).select(
+        "_id orderNumber status customerName customerPhone grandTotal orderDate stockUpdated"
+    );
+
+    if (!order) {
+        const oid = toObjectId(value);
+        if (oid) {
+            order = await SalesOrder.findOne({
+                _id: oid,
+                ...NOT_DELETED,
+                ...tenant
+            }).select(
+                "_id orderNumber status customerName customerPhone grandTotal orderDate stockUpdated"
+            );
+        }
+    }
+
+    let matchedImei = null;
+    if (!order) {
+        let track = await ItemTrack.findOne({
+            imei: value,
+            status: "sold",
+            ...tenant
+        }).select("saleInfo imei companyId productId");
+
+        if (!track) {
+            track = await ItemTrack.findOne({
+                imei: value,
+                status: "sold",
+                $or: [{ companyId: null }, { companyId: { $exists: false } }]
+            })
+                .populate("productId", "companyId")
+                .select("saleInfo imei companyId productId");
+            const productCompany =
+                track?.productId?.companyId || track?.companyId;
+            if (
+                track &&
+                productCompany &&
+                String(productCompany) === String(companyId)
+            ) {
+                track.companyId = companyId;
+                await track.save();
+            } else {
+                track = null;
+            }
+        }
+
+        const orderId = track?.saleInfo?.orderId;
+        if (orderId) {
+            order = await SalesOrder.findOne({
+                _id: orderId,
+                ...NOT_DELETED,
+                ...tenant
+            }).select(
+                "_id orderNumber status customerName customerPhone grandTotal orderDate stockUpdated"
+            );
+            matchedImei = track.imei || value;
+        }
+    }
+
+    if (!order) {
+        throw new AppError("No sales order found for this code.", 404);
+    }
+
+    return {
+        id: order._id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        customerName: order.customerName || "",
+        customerPhone: order.customerPhone || "",
+        grandTotal: Number(order.grandTotal) || 0,
+        orderDate: order.orderDate || null,
+        stockUpdated: !!order.stockUpdated,
+        matchedImei
     };
 };
 
@@ -2403,5 +2533,6 @@ module.exports = {
     getSalesOrderStats,
     lookupByBarcode,
     lookupByImei,
+    lookupByOrderCode,
     getBranchCatalog
 };

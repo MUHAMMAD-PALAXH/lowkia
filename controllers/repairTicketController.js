@@ -120,6 +120,9 @@ exports.bulkPermanentDeleteRepairTickets = asyncHandler(async (req, res) => {
 });
 
 exports.lookupImeiWarranty = asyncHandler(async (req, res) => {
-    const data = await repairTicketService.lookupImeiWarranty(req.params.imei);
+    const data = await repairTicketService.lookupImeiWarranty(
+        req.params.imei,
+        req.companyId
+    );
     return success(res, "IMEI warranty lookup completed.", data);
 });

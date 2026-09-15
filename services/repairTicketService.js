@@ -729,7 +729,7 @@ const getRepairTicketStats = async (query = {}, companyId = null) => {
  * Warranty / lifecycle lookup for repair tickets (existing sold products).
  * Same auth pattern as other repair-ticket routes (no JWT protect).
  */
-const lookupImeiWarranty = async (imei) => {
+const lookupImeiWarranty = async (imei, companyId = null) => {
     const raw = String(imei || "").trim();
     if (!raw) {
         const err = new Error("IMEI is required.");
@@ -737,14 +737,49 @@ const lookupImeiWarranty = async (imei) => {
         throw err;
     }
 
+    const tenant = companyFilter(companyId);
     const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const item = await ItemTrack.findOne({
+    const imeiMatch = {
         imei: { $regex: `^${escaped}$`, $options: "i" },
         isDeleted: { $ne: true }
-    })
-        .populate("productId", "name description warrantyType warrantyPeriod")
+    };
+
+    let item = await ItemTrack.findOne({ ...imeiMatch, ...tenant })
+        .populate(
+            "productId",
+            "name description warrantyType warrantyPeriod companyId"
+        )
         .populate("variantId", "sku combinationString attributes barcode")
         .lean();
+
+    // Transition: unstamped tracks owned by this company's product.
+    if (!item) {
+        item = await ItemTrack.findOne({
+            ...imeiMatch,
+            $or: [{ companyId: null }, { companyId: { $exists: false } }]
+        })
+            .populate(
+                "productId",
+                "name description warrantyType warrantyPeriod companyId"
+            )
+            .populate("variantId", "sku combinationString attributes barcode")
+            .lean();
+        const productCompany = item?.productId?.companyId;
+        if (
+            !item ||
+            !productCompany ||
+            String(productCompany) !== String(companyId)
+        ) {
+            const err = new Error("IMEI record not found.");
+            err.status = 404;
+            throw err;
+        }
+        await ItemTrack.updateOne(
+            { _id: item._id },
+            { $set: { companyId } }
+        );
+        item = { ...item, companyId };
+    }
 
     if (!item) {
         const err = new Error("IMEI record not found.");

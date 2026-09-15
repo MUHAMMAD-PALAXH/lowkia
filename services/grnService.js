@@ -1394,23 +1394,28 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
                 // Linked IMEI product without variant — skip track insert, keep GRN complete
                 continue;
             }
-            const rows = imeis.map((imei) => ({
-                imei,
-                productId: item.productId,
-                variantId: item.productVariantId,
-                vendorId: actorId,
-                currentBranchId: grn.branchId || null,
-                status: "available",
-                history: [
+            const rows = imeis.map((imei) =>
+                stampCompany(
                     {
+                        imei,
+                        productId: item.productId,
+                        variantId: item.productVariantId,
+                        vendorId: actorId,
+                        currentBranchId: grn.branchId || null,
                         status: "available",
-                        branchId: grn.branchId || null,
-                        updatedBy: actorId,
-                        date: new Date(),
-                        notes: `GRN ${grn.grnNumber}`
-                    }
-                ]
-            }));
+                        history: [
+                            {
+                                status: "available",
+                                branchId: grn.branchId || null,
+                                updatedBy: actorId,
+                                date: new Date(),
+                                notes: `GRN ${grn.grnNumber}`
+                            }
+                        ]
+                    },
+                    grn.companyId
+                )
+            );
             await ItemTrack.insertMany(rows, { session });
         }
 

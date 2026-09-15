@@ -26,6 +26,7 @@ router.get("/", listValidator, validate, salesOrderController.getSalesOrders);
 router.get("/stats", salesOrderController.getSalesOrderStats);
 router.get("/lookup/barcode/:code", salesOrderController.lookupByBarcode);
 router.get("/lookup/imei/:imei", salesOrderController.lookupByImei);
+router.get("/lookup/order/:code", salesOrderController.lookupByOrderCode);
 router.get("/branch-catalog", salesOrderController.getBranchCatalog);
 
 router.post(

@@ -965,13 +965,18 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
                     }
 
                     await ItemTrack.insertMany(
-                        fresh.map((imei) => ({
-                            imei,
-                            productId: product._id,
-                            variantId: variantDoc._id,
-                            vendorId,
-                            status: "available"
-                        }))
+                        fresh.map((imei) =>
+                            stampCompany(
+                                {
+                                    imei,
+                                    productId: product._id,
+                                    variantId: variantDoc._id,
+                                    vendorId,
+                                    status: "available"
+                                },
+                                product.companyId
+                            )
+                        )
                     );
                 }
             }
@@ -1752,11 +1757,11 @@ const seedManualOpeningInventory = async (product) => {
     if (!product?._id || !isManualLikeSource(product.productSourceType)) {
         return;
     }
-    if (isImeiTracking(product.trackingType)) return;
 
     const warehouseId = await resolveOpeningWarehouseId(product);
     if (!warehouseId) return;
 
+    const imeiMode = isImeiTracking(product.trackingType);
     const variants = await ProductVariant.find({
         productId: product._id,
         isDeleted: { $ne: true }
@@ -1771,7 +1776,16 @@ const seedManualOpeningInventory = async (product) => {
         0;
 
     for (const variant of variants) {
-        const opening = Math.max(Number(variant.quantity) || 0, 0);
+        let opening = 0;
+        if (imeiMode) {
+            opening = await ItemTrack.countDocuments({
+                productId: product._id,
+                variantId: variant._id,
+                status: "available"
+            });
+        } else {
+            opening = Math.max(Number(variant.quantity) || 0, 0);
+        }
         if (opening <= 0) continue;
 
         const hasLiveInv = await Inventory.exists({
@@ -1809,15 +1823,22 @@ const seedManualOpeningInventory = async (product) => {
         }
 
         if (!inv) {
-            inv = new Inventory({
-                warehouseId,
-                branchId,
-                productId: product._id,
-                productVariantId: variant._id,
-                currentStock: 0,
-                availableStock: 0,
-                reservedStock: 0
-            });
+            inv = new Inventory(
+                stampCompany(
+                    {
+                        warehouseId,
+                        branchId,
+                        productId: product._id,
+                        productVariantId: variant._id,
+                        currentStock: 0,
+                        availableStock: 0,
+                        reservedStock: 0
+                    },
+                    product.companyId
+                )
+            );
+        } else if (product.companyId && !inv.companyId) {
+            inv.companyId = product.companyId;
         }
 
         const cost =
@@ -1858,13 +1879,13 @@ const materializeOpeningInventoryForWarehouse = async ({
     const product = await Product.findOne({ _id: pid, ...NOT_DELETED })
         .session(session || null)
         .select(
-            "productSourceType trackingType costPrice purchasePrice averagePurchasePrice"
+            "productSourceType trackingType costPrice purchasePrice averagePurchasePrice companyId"
         );
     if (!product || !isManualLikeSource(product.productSourceType)) {
         return null;
     }
-    if (isImeiTracking(product.trackingType)) return null;
 
+    const imeiMode = isImeiTracking(product.trackingType);
     let opening = 0;
     let unitCost =
         Number(product.costPrice) ||
@@ -1872,7 +1893,16 @@ const materializeOpeningInventoryForWarehouse = async ({
         Number(product.averagePurchasePrice) ||
         0;
 
-    if (vid) {
+    if (imeiMode) {
+        const trackFilter = {
+            productId: pid,
+            status: "available"
+        };
+        if (vid) trackFilter.variantId = vid;
+        opening = await ItemTrack.countDocuments(trackFilter).session(
+            session || null
+        );
+    } else if (vid) {
         const variant = await ProductVariant.findOne({
             _id: vid,
             productId: pid,
@@ -1941,20 +1971,23 @@ const materializeOpeningInventoryForWarehouse = async ({
     if (!inv) {
         const [created] = await Inventory.create(
             [
-                {
-                    warehouseId: wid,
-                    branchId: toObjectId(branchId) || null,
-                    productId: pid,
-                    productVariantId: vid || null,
-                    currentStock: opening,
-                    availableStock: opening,
-                    reservedStock: 0,
-                    averageCost: unitCost,
-                    inventoryValue: unitCost * opening,
-                    stockStatus: "In Stock",
-                    lastMovementDate: new Date(),
-                    isDeleted: false
-                }
+                stampCompany(
+                    {
+                        warehouseId: wid,
+                        branchId: toObjectId(branchId) || null,
+                        productId: pid,
+                        productVariantId: vid || null,
+                        currentStock: opening,
+                        availableStock: opening,
+                        reservedStock: 0,
+                        averageCost: unitCost,
+                        inventoryValue: unitCost * opening,
+                        stockStatus: "In Stock",
+                        lastMovementDate: new Date(),
+                        isDeleted: false
+                    },
+                    product.companyId
+                )
             ],
             session ? { session } : undefined
         );

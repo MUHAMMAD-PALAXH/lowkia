@@ -166,7 +166,8 @@ exports.completeSalesOrder = asyncHandler(async (req, res) => {
 exports.lookupByBarcode = asyncHandler(async (req, res) => {
     const data = await salesOrderService.lookupByBarcode(
         req.params.code,
-        req.query.warehouseId
+        req.query.warehouseId,
+        req.companyId
     );
     return success(res, "Product found for barcode.", data);
 });
@@ -174,9 +175,18 @@ exports.lookupByBarcode = asyncHandler(async (req, res) => {
 exports.lookupByImei = asyncHandler(async (req, res) => {
     const data = await salesOrderService.lookupByImei(
         req.params.imei,
-        req.query.warehouseId
+        req.query.warehouseId,
+        req.companyId
     );
     return success(res, "IMEI found.", data);
+});
+
+exports.lookupByOrderCode = asyncHandler(async (req, res) => {
+    const data = await salesOrderService.lookupByOrderCode(
+        req.params.code,
+        req.companyId
+    );
+    return success(res, "Sales order found.", data);
 });
 
 exports.getBranchCatalog = asyncHandler(async (req, res) => {
