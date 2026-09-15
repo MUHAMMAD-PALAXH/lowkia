@@ -213,14 +213,10 @@ const createBranch = async (payload, actorId = null, companyId = null) => {
     }
 
     if (!data.city?.trim()) {
-        const fallback =
+        data.city =
             data.location?.trim() ||
             data.address?.trim() ||
             "";
-        if (!fallback) {
-            throw new AppError("City is required.", 400);
-        }
-        data.city = fallback;
     }
 
     if (!data.address?.trim() && data.location?.trim()) {

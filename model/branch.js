@@ -56,7 +56,7 @@ const branchSchema = new mongoose.Schema(
 
         city: {
             type: String,
-            required: true,
+            default: "",
             trim: true
         },
 

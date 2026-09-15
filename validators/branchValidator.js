@@ -66,15 +66,9 @@ const createBranchValidator = [
         .withMessage("Branch name must be between 2 and 150 characters.")
         .trim(),
     body("city")
-        .custom((value, { req }) => {
-            const city = value != null ? String(value).trim() : "";
-            const location = req.body.location != null ? String(req.body.location).trim() : "";
-            const address = req.body.address != null ? String(req.body.address).trim() : "";
-            if (!city && !location && !address) {
-                throw new Error("City is required.");
-            }
-            return true;
-        }),
+        .optional({ nullable: true, checkFalsy: true })
+        .isString()
+        .trim(),
     body("location")
         .optional({ nullable: true, checkFalsy: true })
         .isString()
