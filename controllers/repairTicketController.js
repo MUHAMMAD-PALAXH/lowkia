@@ -31,9 +31,12 @@ exports.getRepairTicketStats = asyncHandler(async (req, res) => {
 });
 
 exports.getRepairTicketById = asyncHandler(async (req, res) => {
+    const includeDeleted =
+        req.query.deleted === "true" || req.query.trash === "true";
     const doc = await repairTicketService.getRepairTicketById(
         req.params.id,
-        req.companyId
+        req.companyId,
+        { includeDeleted }
     );
     return success(res, "Repair ticket retrieved.", doc);
 });
@@ -73,7 +76,47 @@ exports.deleteRepairTicket = asyncHandler(async (req, res) => {
         getActorId(req),
         req.companyId
     );
-    return success(res, "Repair ticket deleted.", result);
+    return success(res, "Repair ticket moved to trash.", result);
+});
+
+exports.restoreRepairTicket = asyncHandler(async (req, res) => {
+    const doc = await repairTicketService.restoreRepairTicket(
+        req.params.id,
+        getActorId(req),
+        req.companyId
+    );
+    return success(res, "Repair ticket restored from trash.", doc);
+});
+
+exports.permanentDeleteRepairTicket = asyncHandler(async (req, res) => {
+    const result = await repairTicketService.permanentDeleteRepairTicket(
+        req.params.id,
+        req.companyId
+    );
+    return success(res, "Repair ticket permanently deleted.", result);
+});
+
+exports.bulkDeleteRepairTickets = asyncHandler(async (req, res) => {
+    const result = await repairTicketService.bulkDeleteRepairTickets(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Repair tickets moved to trash.", result);
+});
+
+exports.bulkRestoreRepairTickets = asyncHandler(async (req, res) => {
+    const result = await repairTicketService.bulkRestoreRepairTickets(
+        req.body || {},
+        getActorId(req)
+    );
+    return success(res, "Repair tickets restored from trash.", result);
+});
+
+exports.bulkPermanentDeleteRepairTickets = asyncHandler(async (req, res) => {
+    const result = await repairTicketService.bulkPermanentDeleteRepairTickets(
+        req.body || {}
+    );
+    return success(res, "Trash items permanently deleted.", result);
 });
 
 exports.lookupImeiWarranty = asyncHandler(async (req, res) => {

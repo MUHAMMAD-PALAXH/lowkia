@@ -6,8 +6,28 @@ const { generateRepairTicketCode, generateCustomerCode } = require("./codeGenera
 const { generateProductBarcode } = require("./barcodeGenerator");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
+
+const trash = createTrashOps(RepairTicket, {
+    label: "Repair Ticket",
+    nameField: "ticketNumber",
+    statusField: "status",
+    restoreStatus: null,
+    scopeStatusMap: {
+        pending: "Pending",
+        diagnosing: "Diagnosing",
+        waitingforapproval: "Waiting For Approval",
+        waitingforparts: "Waiting For Parts",
+        repairing: "Repairing",
+        qualitycheck: "Quality Check",
+        readyforpickup: "Ready For Pickup",
+        completed: "Completed",
+        delivered: "Delivered",
+        cancelled: "Cancelled"
+    }
+});
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -365,7 +385,11 @@ const createRepairTicket = async (
 };
 
 const getRepairTickets = async (query = {}, companyId = null) => {
-    const filter = { ...NOT_DELETED, ...companyFilter(companyId) };
+    const trashMode = isTrashQuery(query);
+    const tenant = companyFilter(companyId);
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
     if (query.branchId) filter.branchId = toObjectId(query.branchId);
     if (query.status) filter.status = String(query.status).trim();
     if (query.ticketSource) filter.ticketSource = resolveTicketSource(query.ticketSource);
@@ -394,22 +418,27 @@ const getRepairTickets = async (query = {}, companyId = null) => {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 200);
     const skip = (page - 1) * limit;
+    const sort = trash.resolveEntitySort(query);
 
     const [items, total] = await Promise.all([
         populateTicket(
-            RepairTicket.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)
+            RepairTicket.find(filter).sort(sort).skip(skip).limit(limit)
         ).lean(),
         RepairTicket.countDocuments(filter)
     ]);
 
-    return { items, total, page, limit };
+    return { items, total, page, limit, trash: trashMode };
 };
 
-const getRepairTicketById = async (id, companyId = null) => {
+const getRepairTicketById = async (
+    id,
+    companyId = null,
+    { includeDeleted = false } = {}
+) => {
     const tenant = companyFilter(companyId);
-    const doc = await populateTicket(
-        RepairTicket.findOne({ _id: id, ...NOT_DELETED, ...tenant })
-    ).lean();
+    const filter = { _id: id, ...tenant };
+    if (!includeDeleted) Object.assign(filter, NOT_DELETED);
+    const doc = await populateTicket(RepairTicket.findOne(filter)).lean();
     if (!doc) {
         const err = new Error("Repair ticket not found.");
         err.status = 404;
@@ -580,73 +609,120 @@ const completeRepairTicket = async (id, actorId = null, companyId = null) =>
 
 const deleteRepairTicket = async (id, actorId = null, companyId = null) => {
     const tenant = companyFilter(companyId);
-    const doc = await RepairTicket.findOne({ _id: id, ...NOT_DELETED, ...tenant });
-    if (!doc) {
+    const existing = await RepairTicket.findOne({
+        _id: id,
+        ...NOT_DELETED,
+        ...tenant
+    });
+    if (!existing) {
         const err = new Error("Repair ticket not found.");
         err.status = 404;
         throw err;
     }
-    assertDocumentCompany(doc, companyId, "Repair ticket");
-    doc.isDeleted = true;
-    doc.updatedBy = toObjectId(actorId);
-    await doc.save();
+    assertDocumentCompany(existing, companyId, "Repair ticket");
+    const doc = await trash.softDelete(id, actorId);
     return { id: String(doc._id) };
 };
 
+const restoreRepairTicket = async (id, actorId = null, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const existing = await RepairTicket.findOne({
+        _id: id,
+        isDeleted: true,
+        ...tenant
+    });
+    if (!existing) {
+        const err = new Error("Trash repair ticket not found.");
+        err.status = 404;
+        throw err;
+    }
+    assertDocumentCompany(existing, companyId, "Repair ticket");
+    await trash.restore(id, actorId);
+    return getRepairTicketById(id, companyId);
+};
+
+const permanentDeleteRepairTicket = async (id, companyId = null) => {
+    const tenant = companyFilter(companyId);
+    const existing = await RepairTicket.findOne({
+        _id: id,
+        isDeleted: true,
+        ...tenant
+    });
+    if (!existing) {
+        const err = new Error("Trash repair ticket not found.");
+        err.status = 404;
+        throw err;
+    }
+    assertDocumentCompany(existing, companyId, "Repair ticket");
+    return trash.permanentDelete(id);
+};
+
+const bulkDeleteRepairTickets = (payload, actorId) =>
+    trash.bulkSoftDelete(payload, actorId);
+const bulkRestoreRepairTickets = (payload, actorId) =>
+    trash.bulkRestore(payload, actorId);
+const bulkPermanentDeleteRepairTickets = (payload) =>
+    trash.bulkPermanentDelete(payload);
+
 const getRepairTicketStats = async (query = {}, companyId = null) => {
-    const match = { ...NOT_DELETED, ...companyFilter(companyId) };
+    const tenant = companyFilter(companyId);
+    const match = { ...NOT_DELETED, ...tenant };
     if (query.branchId) match.branchId = toObjectId(query.branchId);
 
-    const [rows] = await RepairTicket.aggregate([
-        { $match: match },
-        {
-            $group: {
-                _id: null,
-                total: { $sum: 1 },
-                pending: {
-                    $sum: {
-                        $cond: [{ $eq: ["$status", "Pending"] }, 1, 0]
-                    }
-                },
-                repairing: {
-                    $sum: {
-                        $cond: [{ $eq: ["$status", "Repairing"] }, 1, 0]
-                    }
-                },
-                completed: {
-                    $sum: {
-                        $cond: [
-                            {
-                                $in: [
-                                    "$status",
-                                    ["Completed", "Ready For Pickup", "Delivered"]
-                                ]
-                            },
-                            1,
-                            0
-                        ]
-                    }
-                },
-                unpaid: {
-                    $sum: {
-                        $cond: [{ $eq: ["$paymentStatus", "Unpaid"] }, 1, 0]
-                    }
-                },
-                totalValue: { $sum: "$totalAmount" }
+    const [[rows], trashCount] = await Promise.all([
+        RepairTicket.aggregate([
+            { $match: match },
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: 1 },
+                    pending: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Pending"] }, 1, 0]
+                        }
+                    },
+                    repairing: {
+                        $sum: {
+                            $cond: [{ $eq: ["$status", "Repairing"] }, 1, 0]
+                        }
+                    },
+                    completed: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $in: [
+                                        "$status",
+                                        ["Completed", "Ready For Pickup", "Delivered"]
+                                    ]
+                                },
+                                1,
+                                0
+                            ]
+                        }
+                    },
+                    unpaid: {
+                        $sum: {
+                            $cond: [{ $eq: ["$paymentStatus", "Unpaid"] }, 1, 0]
+                        }
+                    },
+                    totalValue: { $sum: "$totalAmount" }
+                }
             }
-        }
+        ]),
+        RepairTicket.countDocuments({ isDeleted: true, ...tenant })
     ]);
 
-    return (
-        rows || {
+    return {
+        ...(rows || {
             total: 0,
             pending: 0,
             repairing: 0,
             completed: 0,
             unpaid: 0,
             totalValue: 0
-        }
-    );
+        }),
+        trashCount
+    };
 };
 
 /**
@@ -745,6 +821,11 @@ module.exports = {
     updateRepairTicketStatus,
     completeRepairTicket,
     deleteRepairTicket,
+    restoreRepairTicket,
+    permanentDeleteRepairTicket,
+    bulkDeleteRepairTickets,
+    bulkRestoreRepairTickets,
+    bulkPermanentDeleteRepairTickets,
     getRepairTicketStats,
     lookupImeiWarranty
 };

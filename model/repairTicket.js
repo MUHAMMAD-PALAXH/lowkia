@@ -611,6 +611,17 @@ isDeleted:{
 
     type:Boolean,
     default:false
+},
+
+deletedAt:{
+    type:Date,
+    default:null
+},
+
+deletedBy:{
+    type:mongoose.Schema.Types.ObjectId,
+    ref:"AdminUser",
+    default:null
 }
 
 },
@@ -629,8 +640,10 @@ repairTicketSchema.index({assignedTechnician:1});
 repairTicketSchema.index({receivedDate:-1});
 repairTicketSchema.index({expectedDeliveryDate:1});
 repairTicketSchema.index({pickupDate:1});
+repairTicketSchema.index({isDeleted:1});
 repairTicketSchema.index({companyId:1,receivedDate:-1});
 repairTicketSchema.index({companyId:1,branchId:1,status:1,receivedDate:-1});
+repairTicketSchema.index({companyId:1,isDeleted:1,createdAt:-1});
 
 
 module.exports = mongoose.model("RepairTicket",repairTicketSchema);
