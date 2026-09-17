@@ -1768,7 +1768,22 @@ const resolveOpeningWarehouseId = async (product) => {
     })
         .select("_id")
         .lean();
-    return companyDefault?._id || null;
+    if (companyDefault?._id) return companyDefault._id;
+
+    // Fallback: warehouse named/coded "default" when flag is unset.
+    const namedDefault = await Warehouse.findOne({
+        ...NOT_DELETED,
+        status: "Active",
+        companyId: product.companyId,
+        $or: [
+            { warehouseName: { $regex: /^default$/i } },
+            { warehouseCode: { $regex: /^default$/i } },
+            { warehouseName: { $regex: /^default\b/i } }
+        ]
+    })
+        .select("_id")
+        .lean();
+    return namedDefault?._id || null;
 };
 
 /**
