@@ -268,17 +268,32 @@ app.get('/', (req, res) => {
 
 // GLOBAL ERROR HANDLER
 app.use((err, req, res, next) => {
-  console.error('Global error:', { message: err.message });
+  console.error('Global error:', { message: err.message, code: err.code, name: err.name });
 
   const statusCode = err.statusCode || err.status || 500;
   const isOperational = err.isOperational === true;
 
-  res.status(statusCode).json({
+  // Stale code counters / unique index collisions → actionable client message
+  const isDup =
+    err.code === 11000 ||
+    err.code === 'E11000' ||
+    (typeof err.message === 'string' && err.message.includes('E11000'));
+
+  let message =
+    process.env.NODE_ENV === 'production' && !isOperational
+      ? 'Internal server error'
+      : err.message;
+
+  let finalStatus = statusCode;
+  if (isDup) {
+    finalStatus = 409;
+    message =
+      'A record with this code already exists. Please retry — the system will allocate the next available code.';
+  }
+
+  res.status(finalStatus).json({
     success: false,
-    message:
-      process.env.NODE_ENV === 'production' && !isOperational
-        ? 'Internal server error'
-        : err.message,
+    message,
     data: null,
     errors: err.errors || null,
   });

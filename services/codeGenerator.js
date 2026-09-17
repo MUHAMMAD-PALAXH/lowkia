@@ -133,6 +133,77 @@ const resolveModule = (module) => {
 // Optional Mongo session for transactional finance writes.
 // =====================================================
 
+/**
+ * Lazy model loaders for uniqueness checks (avoid circular requires at boot).
+ * Only modules that have hit stale-counter E11000 collisions in production.
+ */
+const UNIQUE_CODE_MODELS = {
+    employee: () => require("../model/employee"),
+    shift: () => require("../model/shift"),
+    holiday: () => require("../model/holiday"),
+    attendance_policy: () => require("../model/attendancePolicy"),
+    attendance: () => require("../model/attendance"),
+    attendance_correction: () => require("../model/attendanceCorrection"),
+    overtime_request: () => require("../model/overtimeRequest"),
+};
+
+const UNIQUE_CODE_FIELDS = {
+    employee: "employeeCode",
+    shift: "shiftCode",
+    holiday: "holidayCode",
+    attendance_policy: "policyCode",
+    attendance: "attendanceCode",
+    attendance_correction: "correctionCode",
+    overtime_request: "overtimeCode",
+};
+
+/** Raise counter floor so the next $inc cannot collide with existing docs. */
+const ensureCounterAtLeast = async (counterModule, minNumber, config, session) => {
+    if (!minNumber || minNumber < 1) return;
+    const opts = { upsert: true };
+    if (session) opts.session = session;
+    await Counter.findOneAndUpdate(
+        { module: counterModule },
+        [
+            {
+                $set: {
+                    module: counterModule,
+                    prefix: { $ifNull: ["$prefix", config.prefix] },
+                    padding: { $ifNull: ["$padding", config.padding] },
+                    lastNumber: {
+                        $max: [{ $ifNull: ["$lastNumber", 0] }, minNumber],
+                    },
+                },
+            },
+        ],
+        opts
+    );
+};
+
+const maxExistingCodeNumber = async (resolvedBase, prefix) => {
+    const load = UNIQUE_CODE_MODELS[resolvedBase];
+    const field = UNIQUE_CODE_FIELDS[resolvedBase];
+    if (!load || !field) return 0;
+    const Model = load();
+    const docs = await Model.find({ [field]: new RegExp(`^${prefix}-\\d+$`) })
+        .select(field)
+        .lean();
+    let max = 0;
+    for (const doc of docs) {
+        const m = String(doc[field] || "").match(/(\d+)$/);
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+    return max;
+};
+
+const isCodeTaken = async (resolvedBase, code) => {
+    const load = UNIQUE_CODE_MODELS[resolvedBase];
+    const field = UNIQUE_CODE_FIELDS[resolvedBase];
+    if (!load || !field) return false;
+    const Model = load();
+    return !!(await Model.exists({ [field]: code }));
+};
+
 const generateCode = async (module, options = {}) => {
     const resolvedBase = resolveModule(module);
     const config = MODULE_CONFIG[resolvedBase];
@@ -146,38 +217,63 @@ const generateCode = async (module, options = {}) => {
         ? `${resolvedBase}_${year}`
         : resolvedBase;
 
-    const update = {
-        $inc: { lastNumber: 1 },
-        $setOnInsert: {
-            module: counterModule,
-            prefix: config.prefix,
-            padding: config.padding
+    // Heal stale counters (seed/import left codes ahead of Counter.lastNumber).
+    if (UNIQUE_CODE_MODELS[resolvedBase]) {
+        const maxExisting = await maxExistingCodeNumber(
+            resolvedBase,
+            config.prefix
+        );
+        await ensureCounterAtLeast(
+            counterModule,
+            maxExisting,
+            config,
+            options.session
+        );
+    }
+
+    const maxAttempts = options.maxAttempts || 25;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const update = {
+            $inc: { lastNumber: 1 },
+            $setOnInsert: {
+                module: counterModule,
+                prefix: config.prefix,
+                padding: config.padding,
+            },
+        };
+
+        const queryOptions = {
+            new: true,
+            upsert: true,
+        };
+        if (options.session) {
+            queryOptions.session = options.session;
         }
-    };
 
-    const queryOptions = {
-        new: true,
-        upsert: true
-    };
-    if (options.session) {
-        queryOptions.session = options.session;
+        const counter = await Counter.findOneAndUpdate(
+            { module: counterModule },
+            update,
+            queryOptions
+        );
+
+        const padding = counter.padding ?? config.padding;
+        const prefix = counter.prefix ?? config.prefix;
+        const number = pad(counter.lastNumber, padding);
+
+        const code = config.yearScoped
+            ? `${prefix}-${year}-${number}`
+            : `${prefix}-${number}`;
+
+        if (UNIQUE_CODE_MODELS[resolvedBase]) {
+            if (await isCodeTaken(resolvedBase, code)) continue;
+        }
+
+        return code;
     }
 
-    const counter = await Counter.findOneAndUpdate(
-        { module: counterModule },
-        update,
-        queryOptions
+    throw new Error(
+        `Unable to allocate a unique code for module "${resolvedBase}".`
     );
-
-    const padding = counter.padding ?? config.padding;
-    const prefix = counter.prefix ?? config.prefix;
-    const number = pad(counter.lastNumber, padding);
-
-    if (config.yearScoped) {
-        return `${prefix}-${year}-${number}`;
-    }
-
-    return `${prefix}-${number}`;
 };
 
 // =====================================================

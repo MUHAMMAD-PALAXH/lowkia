@@ -5,6 +5,8 @@ const Shift = require("../model/shift");
 const AdminUser = require("../model/adminUser");
 const Department = require("../model/department");
 const Designation = require("../model/designation");
+// Registered for populateEmployee(salaryStructureId) — avoid MissingSchemaError.
+require("../model/salaryStructure");
 const { generateEmployeeCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
@@ -393,11 +395,11 @@ const assignShift = async (id, shiftId, actorId = null, companyId = null) => {
 
 const deleteEmployee = async (id, actorId, companyId = null) => {
     await getEmployeeById(id, companyId);
-    return trash.softDelete(id, actorId);
+    return trash.softDelete(id, actorId, companyId);
 };
 const restoreEmployee = async (id, actorId, companyId = null) => {
     companyFilter(companyId);
-    const doc = await trash.restore(id, actorId);
+    const doc = await trash.restore(id, actorId, companyId);
     assertDocumentCompany(doc, companyId, "Employee");
     return doc;
 };
@@ -405,7 +407,7 @@ const permanentDeleteEmployee = async (id, companyId = null) => {
     companyFilter(companyId);
     const doc = await Employee.findOne({ _id: id, isDeleted: true });
     assertDocumentCompany(doc, companyId, "Employee");
-    return trash.permanentDelete(id);
+    return trash.permanentDelete(id, companyId);
 };
 
 module.exports = {
