@@ -578,8 +578,7 @@ const formatCalendarDay = (value) => {
 const daysInclusive = (from, to) =>
     Math.round((to.getTime() - from.getTime()) / 86400000) + 1;
 
-const resolveJoinDate = (emp) =>
-    asCalendarDay(emp.joiningDate) || asCalendarDay(emp.createdAt);
+const resolveJoinDate = (emp) => asCalendarDay(emp.joiningDate);
 
 const scalePreview = (preview, factor) => {
     const currency = preview.currency || DEFAULT_CURRENCY;

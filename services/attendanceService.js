@@ -241,7 +241,17 @@ const scheduledWindow = (workDate, shift, timezone) => {
     return { scheduledIn, scheduledOut, night };
 };
 
-const computeLateMinutes = ({ checkInAt, scheduledIn, shift, policy }) => {
+const computeLateMinutes = ({
+    checkInAt,
+    scheduledIn,
+    scheduledOut,
+    shift,
+    policy,
+}) => {
+    // Punch entirely after the shift window is a missed shift, not "late".
+    if (scheduledOut && checkInAt >= new Date(scheduledOut)) {
+        return 0;
+    }
     const grace =
         Number(shift.lateGraceMinutes) >= 0
             ? Number(shift.lateGraceMinutes)
@@ -265,6 +275,9 @@ const recomputeDurations = (attendance, { shift, policy, now = new Date() } = {}
         attendance.actualWorkedMinutes = 0;
         attendance.workingMinutes = 0;
         attendance.workingHours = 0;
+        attendance.overtimeMinutes = 0;
+        attendance.overtimeHours = 0;
+        attendance.isOvertime = false;
         return attendance;
     }
 
@@ -277,12 +290,13 @@ const recomputeDurations = (attendance, { shift, policy, now = new Date() } = {}
     attendance.workingHours = Number((actual / 60).toFixed(2));
 
     if (checkOut && attendance.scheduledOut) {
+        const scheduledOut = new Date(attendance.scheduledOut);
         const earlyGrace =
             Number(shift?.earlyLeaveGraceMinutes) >= 0
                 ? Number(shift.earlyLeaveGraceMinutes)
                 : Number(policy?.earlyLeaveThresholdMinutes) || 0;
         const earlyMs =
-            new Date(attendance.scheduledOut) - checkOut - earlyGrace * 60 * 1000;
+            scheduledOut - checkOut - earlyGrace * 60 * 1000;
         attendance.earlyLeaveMinutes =
             earlyMs > 0 ? Math.floor(earlyMs / (1000 * 60)) : 0;
         attendance.leftEarly = attendance.earlyLeaveMinutes > 0;
@@ -291,10 +305,10 @@ const recomputeDurations = (attendance, { shift, policy, now = new Date() } = {}
             Number(shift?.overtimeAfterMinutes) >= 0
                 ? Number(shift.overtimeAfterMinutes)
                 : Number(policy?.overtimeAfterMinutes) || 0;
-        const otMs =
-            checkOut -
-            new Date(attendance.scheduledOut) -
-            otAfter * 60 * 1000;
+        // OT only counts time worked after the later of shift-end and check-in.
+        // A punch that starts after the shift ends must not invent hours of OT.
+        const otAnchor = checkIn > scheduledOut ? checkIn : scheduledOut;
+        const otMs = checkOut - otAnchor - otAfter * 60 * 1000;
         const potential = otMs > 0 ? Math.floor(otMs / (1000 * 60)) : 0;
         if (policy?.overtimeEnabled === false) {
             attendance.overtimeMinutes = 0;
@@ -334,6 +348,9 @@ const recomputeDurations = (attendance, { shift, policy, now = new Date() } = {}
         if (!attendance.checkOutStatus || attendance.checkOutStatus === "Completed") {
             attendance.checkOutStatus = "Manual";
         }
+        attendance.overtimeMinutes = 0;
+        attendance.overtimeHours = 0;
+        attendance.isOvertime = false;
     }
 
     return attendance;
@@ -358,9 +375,20 @@ const scheduledMinutesOf = (row) => {
 };
 
 const lateMinutesOf = (row) => {
-    const stored = Number(row?.lateMinutes) || 0;
-    if (stored > 0) return stored;
     if (!row?.checkIn) return 0;
+    if (row?.scheduledOut && new Date(row.checkIn) >= new Date(row.scheduledOut)) {
+        return 0;
+    }
+    const stored = Number(row?.lateMinutes) || 0;
+    if (stored > 0) {
+        if (
+            row?.scheduledOut &&
+            new Date(row.checkIn) >= new Date(row.scheduledOut)
+        ) {
+            return 0;
+        }
+        return stored;
+    }
     if (row?.scheduledIn) {
         const diff = Math.floor(
             (new Date(row.checkIn) - new Date(row.scheduledIn)) / 60000
@@ -443,10 +471,37 @@ const populateAttendance = (q) =>
     q
         .populate(
             "shiftId",
-            "shiftCode shiftName startTime endTime shiftType lateGraceMinutes minimumWorkingMinutes earlyLeaveGraceMinutes"
+            "shiftCode shiftName startTime endTime shiftType lateGraceMinutes minimumWorkingMinutes earlyLeaveGraceMinutes overtimeAfterMinutes"
         )
         .populate("branchId", "branchCode name")
-        .populate("policyId", "policyCode policyName gracePeriodMinutes");
+        .populate(
+            "policyId",
+            "policyCode policyName gracePeriodMinutes overtimeEnabled overtimeAfterMinutes earlyLeaveThresholdMinutes minimumWorkingMinutes halfDayThresholdMinutes"
+        );
+
+const healAttendanceDurations = (doc, now = new Date()) => {
+    if (!doc) return false;
+    const beforeOt = Number(doc.overtimeMinutes) || 0;
+    const beforeLate = Number(doc.lateMinutes) || 0;
+    recomputeDurations(doc, {
+        shift: doc.shiftId,
+        policy: doc.policyId,
+        now
+    });
+    if (
+        doc.scheduledOut &&
+        doc.checkIn &&
+        new Date(doc.checkIn) >= new Date(doc.scheduledOut)
+    ) {
+        doc.lateMinutes = 0;
+        doc.isLate = false;
+        if (doc.checkInStatus === "Late") doc.checkInStatus = "On Time";
+    }
+    return (
+        beforeOt !== (Number(doc.overtimeMinutes) || 0) ||
+        beforeLate !== (Number(doc.lateMinutes) || 0)
+    );
+};
 
 /**
  * Lightweight employee link probe for self-service punch screens.
@@ -492,7 +547,13 @@ const getMyToday = async (user, companyIdOverride = null) => {
         attendanceDate
     );
     if (attendance) {
-        recomputeDurations(attendance, { shift, policy, now });
+        if (healAttendanceDurations(attendance, now)) {
+            try {
+                await attendance.save();
+            } catch (_) {
+                /* best-effort heal */
+            }
+        }
     }
 
     const { scheduledIn, scheduledOut } = scheduledWindow(
@@ -653,6 +714,7 @@ const checkIn = async (user, payload = {}, meta = {}) => {
     const lateMinutes = computeLateMinutes({
         checkInAt: now,
         scheduledIn,
+        scheduledOut,
         shift,
         policy
     });
@@ -952,7 +1014,7 @@ const getMyHistory = async (user, query = {}) => {
     }
     if (query.status) filter.attendanceStatus = query.status;
 
-    const [items, total] = await Promise.all([
+    const [docs, total] = await Promise.all([
         populateAttendance(
             Attendance.find(filter)
                 .sort({ attendanceDate: -1 })
@@ -962,8 +1024,23 @@ const getMyHistory = async (user, query = {}) => {
         Attendance.countDocuments(filter)
     ]);
 
+    const persistFixes = [];
+    for (const doc of docs) {
+        if (healAttendanceDurations(doc)) {
+            persistFixes.push(doc.save());
+        }
+    }
+    if (persistFixes.length) {
+        Promise.all(persistFixes).catch((err) =>
+            console.warn(
+                "[Attendance] history duration heal failed:",
+                err?.message || err
+            )
+        );
+    }
+
     return {
-        items,
+        items: docs,
         pagination: {
             page,
             limit,
@@ -1001,9 +1078,12 @@ const getMyMonthlySummary = async (user, query = {}) => {
     })
         .populate(
             "shiftId",
-            "shiftCode shiftName startTime endTime lateGraceMinutes minimumWorkingMinutes"
+            "shiftCode shiftName startTime endTime lateGraceMinutes minimumWorkingMinutes overtimeAfterMinutes earlyLeaveGraceMinutes"
         )
-        .lean();
+        .populate(
+            "policyId",
+            "overtimeEnabled overtimeAfterMinutes earlyLeaveThresholdMinutes minimumWorkingMinutes halfDayThresholdMinutes"
+        );
 
     const summary = {
         year,
@@ -1027,7 +1107,12 @@ const getMyMonthlySummary = async (user, query = {}) => {
         records: rows.length
     };
 
-    for (const r of rows) {
+    const persistFixes = [];
+    for (const doc of rows) {
+        if (healAttendanceDurations(doc, now)) {
+            persistFixes.push(doc.save());
+        }
+        const r = doc.toObject ? doc.toObject() : doc;
         const day = classifyDay(r);
         if (day.punched) summary.punched += 1;
         if (day.present) summary.present += 1;
@@ -1046,6 +1131,14 @@ const getMyMonthlySummary = async (user, query = {}) => {
         summary.totalOvertimeMinutes += day.overtimeMinutes;
         summary.approvedOvertimeMinutes +=
             Number(r.approvedOvertimeMinutes) || 0;
+    }
+    if (persistFixes.length) {
+        Promise.all(persistFixes).catch((err) =>
+            console.warn(
+                "[Attendance] duration heal failed:",
+                err?.message || err
+            )
+        );
     }
 
     summary.totalWorkingHours = Number(
