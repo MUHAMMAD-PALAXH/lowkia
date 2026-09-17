@@ -122,11 +122,15 @@ const ensureErpCustomer = async ({
                 address: formatAddress(address),
                 customerType: "Retail",
                 paymentTerms: "Cash",
-                note: `Auto-created from marketplace order ${companyOrder.orderNumber}`,
+                source: "OnlineOrder",
+                note: `Auto-created from online order ${companyOrder.orderNumber}`,
             },
             actorId,
             companyId
         );
+    } else if (!customer.source) {
+        customer.source = "OnlineOrder";
+        await customer.save();
     }
 
     companyOrder.erpCustomerId = customer._id;

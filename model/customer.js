@@ -100,6 +100,21 @@ customerType:{
 },
 
 
+/** Where this customer record was first created */
+source:{
+
+    type:String,
+    enum:[
+        "Manual",
+        "SalesOrder",
+        "RepairTicket",
+        "OnlineOrder"
+    ],
+    default:"Manual",
+    index:true
+},
+
+
 name:{
 
     type:String,

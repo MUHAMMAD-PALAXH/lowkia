@@ -113,7 +113,12 @@ const createCustomer = async (payload, actorId = null, companyId = null) => {
                 currentBalance: data.openingBalance || 0,
                 isApproved: true,
                 approvedAt: new Date(),
-                createdBy: actorId || null
+                createdBy: actorId || null,
+                source: ["Manual", "SalesOrder", "RepairTicket", "OnlineOrder"].includes(
+                    payload.source
+                )
+                    ? payload.source
+                    : "Manual"
             },
             companyId
         )

@@ -15,7 +15,7 @@ const {
 } = require("./codeGenerator");
 const productService = require("./productService");
 const AppError = require("../utils/appError");
-const { companyFilter } = require("../utils/tenantScope");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
@@ -624,6 +624,8 @@ const resolveHeaderRefs = async (payload) => {
     const warehouseId = toObjectId(payload.warehouseId);
     const branchId = toObjectId(payload.branchId);
     const supplierId = toObjectId(payload.supplierId);
+    const companyId = payload.companyId || null;
+    const tenant = companyFilter(companyId);
 
     let customerId = toObjectId(payload.customerId);
     let customer = null;
@@ -633,6 +635,18 @@ const resolveHeaderRefs = async (payload) => {
         payload.isWalkIn === true ||
         String(payload.customerMode || "").toLowerCase() === "walkin";
 
+    const sourceHint =
+        String(payload.customerSource || "").trim() || "SalesOrder";
+    const allowedSources = [
+        "Manual",
+        "SalesOrder",
+        "RepairTicket",
+        "OnlineOrder"
+    ];
+    const customerSource = allowedSources.includes(sourceHint)
+        ? sourceHint
+        : "SalesOrder";
+
     if (isWalkIn || !customerId) {
         const name =
             (payload.customerName || payload.walkInName || "Walk-in Customer")
@@ -641,31 +655,82 @@ const resolveHeaderRefs = async (payload) => {
         const phone = (payload.customerPhone || payload.walkInPhone || "")
             .toString()
             .trim();
+        const email = (payload.customerEmail || "")
+            .toString()
+            .trim()
+            .toLowerCase();
+        const address = (payload.deliveryAddress || payload.customerAddress || "")
+            .toString()
+            .trim();
 
         if (phone) {
             customer = await Customer.findOne({
                 phone,
-                isDeleted: false
+                isDeleted: false,
+                ...tenant
+            });
+            // Heal pre-tenant walk-in rows created without companyId
+            if (!customer) {
+                customer = await Customer.findOne({
+                    phone,
+                    isDeleted: false,
+                    $or: [{ companyId: null }, { companyId: { $exists: false } }]
+                });
+                if (customer) {
+                    customer.companyId = companyId;
+                    if (!customer.source || customer.source === "Manual") {
+                        customer.source = customerSource;
+                    }
+                    if (name && name !== "Walk-in Customer") customer.name = name;
+                    if (email && !customer.email) customer.email = email;
+                    if (address && !customer.address) customer.address = address;
+                    await customer.save();
+                }
+            }
+        }
+        if (!customer && email) {
+            customer = await Customer.findOne({
+                email,
+                isDeleted: false,
+                ...tenant
             });
         }
         if (!customer) {
             const customerCode = await generateCustomerCode();
-            customer = await Customer.create({
-                name,
-                phone,
-                customerCode,
-                customerId: customerCode,
-                customerType: "Retail",
-                paymentTerms: "Cash",
-                status: "Active",
-                isApproved: true,
-                approvedAt: new Date(),
-                note: "Walk-in / showroom customer"
-            });
+            customer = await Customer.create(
+                stampCompany(
+                    {
+                        name,
+                        phone,
+                        email,
+                        address,
+                        customerCode,
+                        customerId: customerCode,
+                        customerType: "Retail",
+                        paymentTerms: "Cash",
+                        status: "Active",
+                        isApproved: true,
+                        approvedAt: new Date(),
+                        source: customerSource,
+                        note:
+                            customerSource === "OnlineOrder"
+                                ? "Created from online order"
+                                : "Created from sales order"
+                    },
+                    companyId
+                )
+            );
+        } else if (!customer.source) {
+            customer.source = customerSource;
+            await customer.save();
         }
         customerId = customer._id;
     } else {
-        customer = await Customer.findOne({ _id: customerId, isDeleted: false });
+        customer = await Customer.findOne({
+            _id: customerId,
+            isDeleted: false,
+            ...tenant
+        });
         if (!customer) throw new AppError("Customer not found.", 404);
     }
 
@@ -1122,11 +1187,27 @@ const updateSalesOrder = async (id, payload, actorId = null, companyId = null) =
         );
     }
 
-    if (payload.customerId || payload.warehouseId || payload.branchId) {
+    if (
+        payload.customerId ||
+        payload.warehouseId ||
+        payload.branchId ||
+        payload.walkIn ||
+        payload.customerName ||
+        payload.customerPhone
+    ) {
         const refs = await resolveHeaderRefs({
             customerId: payload.customerId || order.customerId,
             warehouseId: payload.warehouseId || order.warehouseId,
-            branchId: payload.branchId || order.branchId
+            branchId: payload.branchId || order.branchId,
+            companyId: companyId || order.companyId || payload.companyId,
+            walkIn: payload.walkIn,
+            isWalkIn: payload.isWalkIn,
+            customerMode: payload.customerMode,
+            customerName: payload.customerName || payload.walkInName,
+            customerPhone: payload.customerPhone || payload.walkInPhone,
+            customerEmail: payload.customerEmail,
+            customerSource: payload.customerSource || "SalesOrder",
+            salesType: payload.salesType || order.salesType
         });
         order.customerId = refs.customerId;
         order.warehouseId = refs.warehouseId;
@@ -1134,6 +1215,7 @@ const updateSalesOrder = async (id, payload, actorId = null, companyId = null) =
         order.customerName = refs.customer.name;
         order.customerPhone = refs.customer.phone || "";
         order.customerEmail = refs.customer.email || "";
+        if (refs.salesType) order.salesType = refs.salesType;
     }
 
     if (payload.items) {

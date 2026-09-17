@@ -88,7 +88,13 @@ const resolveRepairCustomerId = async ({
         isDeleted: { $ne: true },
         ...tenant,
     });
-    if (byPhone) return byPhone._id;
+    if (byPhone) {
+        if (!byPhone.source) {
+            byPhone.source = "RepairTicket";
+            await byPhone.save();
+        }
+        return byPhone._id;
+    }
 
     const customerCode = await generateCustomerCode();
     const created = await Customer.create(
@@ -105,6 +111,7 @@ const resolveRepairCustomerId = async ({
                 status: "Active",
                 isApproved: true,
                 approvedAt: new Date(),
+                source: "RepairTicket",
                 note: "Created from repair ticket",
                 createdBy: toObjectId(actorId),
             },
