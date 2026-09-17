@@ -29,6 +29,7 @@ const MODULE_CONFIG = {
     variant_type: { prefix: "VT", padding: 6 },
     variant: { prefix: "VAR", padding: 6 },
     product: { prefix: "PRD", padding: 6 },
+    product_sku: { prefix: "SKU", padding: 6 },
     product_variant: { prefix: "PVAR", padding: 6 },
     asset: { prefix: "AST", padding: 6 },
     barcode: { prefix: "BAR", padding: 6 },
@@ -314,6 +315,7 @@ const generateUnitCode = () => generateCode("unit");
 const generateVariantTypeCode = () => generateCode("variant_type");
 const generateVariantCode = () => generateCode("variant");
 const generateProductCode = () => generateCode("product");
+const generateProductSku = () => generateCode("product_sku");
 const generateProductVariantCode = () => generateCode("product_variant");
 const generateBarcodeCode = () => generateCode("barcode");
 const generateAssetCode = () => generateCode("asset");
@@ -419,6 +421,7 @@ module.exports = {
     generateVariantTypeCode,
     generateVariantCode,
     generateProductCode,
+    generateProductSku,
     generateProductVariantCode,
     generateBarcodeCode,
     generateAssetCode,

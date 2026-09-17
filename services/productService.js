@@ -8,7 +8,7 @@ const Supplier = require("../model/supplier");
 const Category = require("../model/category");
 const SubCategory = require("../model/subCategory");
 const Brand = require("../model/brand");
-const { generateProductCode } = require("./codeGenerator");
+const { generateProductCode, generateProductSku } = require("./codeGenerator");
 const { generateProductBarcode } = require("./barcodeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
@@ -815,13 +815,26 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
 
             let sku =
                 (raw.sku || "").toString().trim().toUpperCase() || undefined;
+            // Product-level SKU is the catalog identity. Variants get a
+            // professional suffix only when multiple combinations exist.
             if (!sku && variantsInput.length > 1) {
+                const base =
+                    (product.sku || productCode || "SKU")
+                        .toString()
+                        .trim()
+                        .toUpperCase() || "SKU";
                 const slug = label
                     .toUpperCase()
                     .replace(/[^A-Z0-9]+/g, "-")
                     .replace(/^-+|-+$/g, "")
-                    .slice(0, 24);
-                sku = `${productCode}-${slug || index + 1}`;
+                    .slice(0, 20);
+                sku = `${base}-${slug || index + 1}`;
+            } else if (!sku && variantsInput.length === 1) {
+                sku =
+                    (product.sku || productCode || "")
+                        .toString()
+                        .trim()
+                        .toUpperCase() || undefined;
             }
             if (sku) {
                 // Same payload may list the same SKU twice — auto-suffix instead of failing.
@@ -1143,11 +1156,12 @@ const createProduct = async (
         barcodeType,
         barcodeGeneratedAt: barcode ? new Date() : null,
         slug: data.slug ? slugify(data.slug) : slugify(name),
-        sku:
+        sku: (
             (data.sku || sourceVariant?.sku || sourceProduct?.sku || "")
                 .toString()
                 .trim()
-                .toUpperCase(),
+                .toUpperCase() || (await generateProductSku())
+        ),
         proCategoryId: categoryId || sourceProduct?.proCategoryId || null,
         proSubCategoryId: subCategoryId || sourceProduct?.proSubCategoryId || null,
         proBrandId: brandId || sourceProduct?.proBrandId || null,
@@ -2538,6 +2552,14 @@ const updateProduct = async (id, payload = {}, actorId = null) => {
     }
 
     Object.assign(product, data);
+
+    // Auto SKU when client leaves sku empty on create-like updates.
+    if (!String(product.sku || "").trim()) {
+        product.sku = await generateProductSku();
+    } else {
+        product.sku = String(product.sku).trim().toUpperCase();
+    }
+
 
     // A Non IMEI product must always own exactly one barcode, generated once
     if (product.trackingType === "Non-IMEI" && !product.barcode) {
