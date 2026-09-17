@@ -2,6 +2,24 @@ const NotificationCenterEvent = require("../model/notificationCenterEvent");
 const Branch = require("../model/branch");
 const Warehouse = require("../model/warehouse");
 const AdminUser = require("../model/adminUser");
+const { ROLES } = require("../constants/roles");
+
+const expandAudienceRoles = (roles = []) => {
+    const set = new Set(
+        (Array.isArray(roles) ? roles : [])
+            .map((role) => String(role || "").toLowerCase())
+            .filter(Boolean)
+    );
+    if (set.has(ROLES.ADMIN) || set.has(ROLES.COMPANY_SUPER_ADMIN)) {
+        set.add(ROLES.ADMIN);
+        set.add(ROLES.COMPANY_SUPER_ADMIN);
+    }
+    if (set.has(ROLES.BRANCH_MANAGER) || set.has(ROLES.EMPLOYEE)) {
+        set.add(ROLES.BRANCH_MANAGER);
+        set.add(ROLES.EMPLOYEE);
+    }
+    return [...set];
+};
 
 const MODULES = [
     {
@@ -9,91 +27,155 @@ const MODULES = [
         category: "permission",
         screen: "AccountPermission",
         label: "Account permission",
-        roles: ["admin"],
+        roles: [ROLES.COMPANY_SUPER_ADMIN, ROLES.ADMIN],
     },
     {
         paths: ["/payment", "/api/payments", "/api/customer-payments"],
         category: "payment",
         screen: "Finance",
         label: "Payment",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/orders"],
         category: "online_order",
         screen: "Order",
         label: "Online order",
-        roles: ["admin", "branch_manager", "vendor"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+            ROLES.VENDOR,
+        ],
     },
     {
         paths: ["/api/sales-orders"],
         category: "sales_order",
         screen: "SalesOrders",
         label: "Sales order",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/api/purchase-orders"],
         category: "purchase_order",
         screen: "PurchaseOrders",
         label: "Purchase order",
-        roles: ["admin", "branch_manager", "vendor"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+            ROLES.VENDOR,
+        ],
     },
     {
         paths: ["/api/grn"],
         category: "grn",
         screen: "GRN",
         label: "GRN",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/api/repair-tickets"],
         category: "repair",
         screen: "RepairTickets",
         label: "Repair ticket",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/api/suppliers"],
         category: "supplier",
         screen: "Supplier",
         label: "Supplier",
-        roles: ["admin", "branch_manager", "vendor"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+            ROLES.VENDOR,
+        ],
     },
     {
         paths: ["/api/branches"],
         category: "branch",
         screen: "Branches",
         label: "Branch",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/api/inventory", "/api/imei-inventory"],
         category: "stock",
         screen: "StockManagement",
         label: "Stock",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/api/warehouses"],
         category: "warehouse",
         screen: "Warehouse",
         label: "Warehouse",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/api/sales-returns", "/api/purchase-returns"],
         category: "return",
         screen: "SalesReturns",
         label: "Return",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/products", "/api/products"],
         category: "product",
         screen: "Products",
         label: "Product",
-        roles: ["admin", "branch_manager", "vendor"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+            ROLES.VENDOR,
+        ],
     },
     {
         paths: [
@@ -106,7 +188,12 @@ const MODULES = [
         category: "attendance",
         screen: "Attendance",
         label: "Attendance",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: [
@@ -122,62 +209,103 @@ const MODULES = [
         category: "finance",
         screen: "Finance",
         label: "Finance",
-        roles: ["admin"],
+        roles: [ROLES.COMPANY_SUPER_ADMIN, ROLES.ADMIN],
     },
     {
         paths: ["/api/customers"],
         category: "update",
         screen: "Customers",
         label: "Customer",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/categories", "/subCategories", "/brands", "/variantTypes", "/variants"],
         category: "product",
         screen: "Products",
         label: "Catalog",
-        roles: ["admin", "branch_manager"],
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/couponCodes"],
         category: "update",
         screen: "Coupon",
         label: "Coupon",
-        roles: ["admin"],
+        roles: [ROLES.COMPANY_SUPER_ADMIN, ROLES.ADMIN],
     },
     {
         paths: ["/posters"],
         category: "update",
         screen: "Poster",
         label: "Poster",
-        roles: ["admin"],
+        roles: [ROLES.COMPANY_SUPER_ADMIN, ROLES.ADMIN],
     },
     {
         paths: ["/api/settings", "/api/company"],
         category: "update",
         screen: "Dashboard",
         label: "Workspace",
-        roles: ["admin"],
+        roles: [ROLES.COMPANY_SUPER_ADMIN, ROLES.ADMIN],
+    },
+    {
+        paths: [
+            "/api/company/marketplace-orders",
+            "/api/company/marketplace-shipments",
+            "/api/company/marketplace-refunds",
+        ],
+        category: "online_order",
+        screen: "MarketplaceOrders",
+        label: "Marketplace order",
+        roles: [
+            ROLES.COMPANY_SUPER_ADMIN,
+            ROLES.ADMIN,
+            ROLES.EMPLOYEE,
+            ROLES.BRANCH_MANAGER,
+        ],
     },
     {
         paths: ["/notification"],
         category: "update",
         screen: "Notifications",
         label: "Push campaign",
-        roles: ["admin"],
+        roles: [ROLES.COMPANY_SUPER_ADMIN, ROLES.ADMIN],
     },
 ];
 
-const resolveModule = (path) => {
-    const normalized = String(path || "").toLowerCase();
-    return MODULES.find((item) =>
-        item.paths.some(
-            (prefix) =>
-                normalized === prefix ||
-                normalized.startsWith(`${prefix}/`) ||
-                normalized.startsWith(`${prefix}?`)
-        )
-    );
+const pathMatchesModule = (normalized, prefix) =>
+    normalized === prefix ||
+    normalized.startsWith(`${prefix}/`) ||
+    normalized.startsWith(`${prefix}?`);
+
+const resolveModule = (reqOrPath) => {
+    const candidates = [];
+    if (typeof reqOrPath === "string") {
+        candidates.push(reqOrPath);
+    } else if (reqOrPath && typeof reqOrPath === "object") {
+        const base = reqOrPath.baseUrl || "";
+        const original = String(reqOrPath.originalUrl || "").split("?")[0];
+        const joined =
+            base && reqOrPath.path ? `${base}${reqOrPath.path}` : "";
+        candidates.push(base, original, joined);
+    }
+    for (const raw of candidates) {
+        const normalized = String(raw || "").toLowerCase();
+        if (!normalized) continue;
+        const found = MODULES.find((item) =>
+            item.paths.some((prefix) => pathMatchesModule(normalized, prefix))
+        );
+        if (found) return found;
+    }
+    return null;
 };
 
 const actionFromRequest = (method, path) => {
@@ -284,8 +412,16 @@ const priorityFor = (action, category, responseBody) => {
 const emitNotification = async (payload) => {
     try {
         if (!payload?.companyId) return null;
+        const audienceRoles = expandAudienceRoles(
+            payload.audienceRoles || [
+                ROLES.COMPANY_SUPER_ADMIN,
+                ROLES.ADMIN,
+                ROLES.EMPLOYEE,
+                ROLES.BRANCH_MANAGER,
+            ]
+        );
         return await NotificationCenterEvent.create({
-            audienceRoles: ["admin", "branch_manager"],
+            audienceRoles,
             category: "system",
             eventType: "updated",
             priority: "normal",
@@ -294,6 +430,7 @@ const emitNotification = async (payload) => {
             screen: "Dashboard",
             source: "system",
             ...payload,
+            audienceRoles,
         });
     } catch (error) {
         console.warn("[NotificationCenter] emit failed:", error.message);
@@ -305,7 +442,7 @@ const captureMutation = async ({ req, responseBody, statusCode }) => {
     try {
         if (statusCode < 200 || statusCode >= 300) return null;
         if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return null;
-        const module = resolveModule(req.baseUrl || req.originalUrl);
+        const module = resolveModule(req);
         if (!module) return null;
 
         const entity = pickEntity(responseBody, req);
@@ -327,7 +464,7 @@ const captureMutation = async ({ req, responseBody, statusCode }) => {
         return await emitNotification({
             companyId,
             branchId: entity.branchId || null,
-            audienceRoles: module.roles,
+            audienceRoles: expandAudienceRoles(module.roles),
             category: module.category,
             eventType: action.replaceAll(" ", "_"),
             priority: priorityFor(action, module.category, responseBody),
@@ -344,7 +481,7 @@ const captureMutation = async ({ req, responseBody, statusCode }) => {
             },
             metadata: {
                 method: req.method,
-                path: req.originalUrl.split("?")[0],
+                path: String(req.originalUrl || "").split("?")[0],
             },
             source: "api",
         });

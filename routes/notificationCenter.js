@@ -6,6 +6,11 @@ const NotificationCenterEvent = require("../model/notificationCenterEvent");
 const { protect } = require("../middleware/auth");
 const { resolveTenant, requireCompany } = require("../middleware/tenant");
 const { getManagedBranchIds } = require("../middleware/hrAccess");
+const {
+    isCompanyEmployee,
+    isVendor,
+    normalizeRole,
+} = require("../utils/roleAccess");
 
 const router = express.Router();
 router.use(
@@ -21,19 +26,51 @@ router.use(
 const escapeRegex = (value) =>
     String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const parseClock = (value) => {
+    const match = String(value || "")
+        .trim()
+        .match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (
+        !Number.isFinite(hour) ||
+        !Number.isFinite(minute) ||
+        hour < 0 ||
+        hour > 23 ||
+        minute < 0 ||
+        minute > 59
+    ) {
+        return null;
+    }
+    return { hour, minute, minutes: hour * 60 + minute };
+};
+
+const startOfDay = (value) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    date.setHours(0, 0, 0, 0);
+    return date;
+};
+
+const endOfDay = (value) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    date.setHours(23, 59, 59, 999);
+    return date;
+};
+
+/**
+ * Company-scoped feed: every company user sees company broadcasts for their
+ * tenant. Vendors still match audienceRoles. Branch staff stay branch-scoped.
+ */
 const visibilityQuery = (req) => {
+    const role = normalizeRole(req.user.role);
     const conditions = [
         {
             $or: [
                 { recipientId: null },
                 { recipientId: req.user._id },
-            ],
-        },
-        {
-            $or: [
-                { recipientId: req.user._id },
-                { audienceRoles: req.user.role },
-                { audienceRoles: { $size: 0 } },
             ],
         },
         { "archivedBy.userId": { $ne: req.user._id } },
@@ -44,9 +81,21 @@ const visibilityQuery = (req) => {
             ],
         },
     ];
+
+    if (isVendor(role)) {
+        conditions.push({
+            $or: [
+                { recipientId: req.user._id },
+                { audienceRoles: role },
+                { audienceRoles: { $size: 0 } },
+            ],
+        });
+    }
+
     if (
-        req.user.role === "branch_manager" &&
-        Array.isArray(req.notificationBranchIds)
+        isCompanyEmployee(role) &&
+        Array.isArray(req.notificationBranchIds) &&
+        req.notificationBranchIds.length > 0
     ) {
         conditions.push({
             $or: [
@@ -59,6 +108,100 @@ const visibilityQuery = (req) => {
         companyId: req.companyId,
         $and: conditions,
     };
+};
+
+const applyListFilters = (query, req) => {
+    if (req.query.category && req.query.category !== "all") {
+        query.category = String(req.query.category).toLowerCase();
+    }
+    if (req.query.priority && req.query.priority !== "all") {
+        query.priority = String(req.query.priority).toLowerCase();
+    }
+    if (req.query.unread === "true") {
+        query["readBy.userId"] = { $ne: req.user._id };
+    }
+    if (req.query.read === "true") {
+        query["readBy.userId"] = req.user._id;
+    }
+
+    const actorId = String(req.query.actorId || req.query.userId || "").trim();
+    if (actorId && mongoose.Types.ObjectId.isValid(actorId)) {
+        query["actor.userId"] = new mongoose.Types.ObjectId(actorId);
+    }
+
+    const dateFrom = req.query.dateFrom
+        ? startOfDay(req.query.dateFrom)
+        : null;
+    const dateTo = req.query.dateTo ? endOfDay(req.query.dateTo) : null;
+    const timeFrom = parseClock(req.query.timeFrom);
+    const timeTo = parseClock(req.query.timeTo);
+
+    if (dateFrom || dateTo) {
+        query.createdAt = {};
+        if (dateFrom) {
+            const from = new Date(dateFrom);
+            if (timeFrom && !dateTo && !timeTo) {
+                from.setHours(timeFrom.hour, timeFrom.minute, 0, 0);
+            } else if (timeFrom && dateFrom) {
+                from.setHours(timeFrom.hour, timeFrom.minute, 0, 0);
+            }
+            query.createdAt.$gte = from;
+        }
+        if (dateTo) {
+            const to = new Date(dateTo);
+            if (timeTo) {
+                to.setHours(timeTo.hour, timeTo.minute, 59, 999);
+            }
+            query.createdAt.$lte = to;
+        } else if (dateFrom && timeTo && !dateTo) {
+            const to = new Date(dateFrom);
+            to.setHours(timeTo.hour, timeTo.minute, 59, 999);
+            query.createdAt.$lte = to;
+        }
+    } else if (timeFrom || timeTo) {
+        const fromMins = timeFrom ? timeFrom.minutes : 0;
+        const toMins = timeTo ? timeTo.minutes : 23 * 60 + 59;
+        query.$and.push({
+            $expr: {
+                $and: [
+                    {
+                        $gte: [
+                            {
+                                $add: [
+                                    { $multiply: [{ $hour: "$createdAt" }, 60] },
+                                    { $minute: "$createdAt" },
+                                ],
+                            },
+                            fromMins,
+                        ],
+                    },
+                    {
+                        $lte: [
+                            {
+                                $add: [
+                                    { $multiply: [{ $hour: "$createdAt" }, 60] },
+                                    { $minute: "$createdAt" },
+                                ],
+                            },
+                            toMins,
+                        ],
+                    },
+                ],
+            },
+        });
+    }
+
+    if (req.query.search) {
+        const pattern = new RegExp(escapeRegex(req.query.search), "i");
+        query.$and.push({
+            $or: [
+                { title: pattern },
+                { message: pattern },
+                { entityLabel: pattern },
+                { "actor.name": pattern },
+            ],
+        });
+    }
 };
 
 const decorate = (item, userId) => {
@@ -84,29 +227,7 @@ router.get(
             100
         );
         const query = visibilityQuery(req);
-        if (req.query.category && req.query.category !== "all") {
-            query.category = String(req.query.category).toLowerCase();
-        }
-        if (req.query.priority && req.query.priority !== "all") {
-            query.priority = String(req.query.priority).toLowerCase();
-        }
-        if (req.query.unread === "true") {
-            query["readBy.userId"] = { $ne: req.user._id };
-        }
-        if (req.query.read === "true") {
-            query["readBy.userId"] = req.user._id;
-        }
-        if (req.query.search) {
-            const pattern = new RegExp(escapeRegex(req.query.search), "i");
-            query.$and.push({
-                $or: [
-                    { title: pattern },
-                    { message: pattern },
-                    { entityLabel: pattern },
-                    { "actor.name": pattern },
-                ],
-            });
-        }
+        applyListFilters(query, req);
 
         const [items, total] = await Promise.all([
             NotificationCenterEvent.find(query)
@@ -129,6 +250,41 @@ router.get(
                     totalPages: Math.max(Math.ceil(total / limit), 1),
                 },
             },
+        });
+    })
+);
+
+router.get(
+    "/actors",
+    asyncHandler(async (req, res) => {
+        const actors = await NotificationCenterEvent.aggregate([
+            {
+                $match: {
+                    companyId: new mongoose.Types.ObjectId(
+                        String(req.companyId)
+                    ),
+                    "actor.userId": { $ne: null },
+                },
+            },
+            {
+                $group: {
+                    _id: "$actor.userId",
+                    name: { $first: "$actor.name" },
+                    role: { $first: "$actor.role" },
+                    count: { $sum: 1 },
+                },
+            },
+            { $sort: { name: 1 } },
+        ]);
+        res.json({
+            success: true,
+            message: "Notification actors retrieved successfully.",
+            data: actors.map((item) => ({
+                id: String(item._id),
+                name: item.name || "User",
+                role: item.role || "",
+                count: item.count || 0,
+            })),
         });
     })
 );
