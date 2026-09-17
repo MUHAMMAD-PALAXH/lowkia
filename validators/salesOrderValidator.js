@@ -1,6 +1,13 @@
 const { body, param, query } = require("express-validator");
 
-const PAYMENT_METHODS = ["Cash", "Bank", "Card", "Mobile Banking", "Credit"];
+const PAYMENT_METHODS = [
+    "Cash",
+    "Bank",
+    "Card",
+    "Mobile Banking",
+    "Credit",
+    "Apple Pay",
+];
 const STATUSES = [
     "Draft",
     "Pending Approval",

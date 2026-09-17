@@ -100,10 +100,11 @@ const assertMethodProviderCombo = (method, provider) => {
     const m = assertPaymentMethod(method);
     const p = assertPaymentProvider(provider);
 
-    // Card / Apple Pay must go through a PCI provider (never raw card storage).
+    // Live card / Apple Pay must use a PCI provider (Stripe). Counter recording
+    // (customer already paid on terminal/phone) uses OTHER — never raw card data.
     if ((m === "CARD" || m === "APPLE_PAY") && p === "NONE") {
         throw new AppError(
-            `${m} requires a payment provider (e.g. STRIPE). Raw card data is not stored.`,
+            `${m} requires STRIPE for online checkout, or OTHER for counter-recorded payments.`,
             400
         );
     }

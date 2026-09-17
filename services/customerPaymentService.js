@@ -74,8 +74,9 @@ const populatePayment = (q) =>
     q
         .populate(
             "salesOrderId",
-            "orderNumber grandTotal paidAmount dueAmount paymentStatus status customerId"
+            "orderNumber grandTotal paidAmount dueAmount paymentStatus status customerId customerName"
         )
+        .populate("partyId", "fullName name customerCode phone email")
         .populate("createdBy", "firstName lastName email role");
 
 const getPaymentOrFail = async (id, companyId) => {
@@ -527,6 +528,7 @@ const completeCheckout = async (paymentId, user, meta = {}) => {
                                 : payment.paymentMethod === "BANK_TRANSFER"
                                   ? "Bank"
                                   : order.paymentMethod,
+                    skipPaymentLedger: true,
                 },
                 user?._id || null
             );
@@ -677,11 +679,27 @@ const listCustomerPayments = async (companyId, query = {}) => {
         originalPaymentId: null,
     };
     if (query.status) filter.status = query.status;
+    if (query.paymentMethod) {
+        filter.paymentMethod = String(query.paymentMethod)
+            .trim()
+            .toUpperCase()
+            .replace(/\s+/g, "_");
+    }
     if (query.salesOrderId && toObjectId(query.salesOrderId)) {
         filter.salesOrderId = toObjectId(query.salesOrderId);
     }
     if (query.customerId && toObjectId(query.customerId)) {
         filter.partyId = toObjectId(query.customerId);
+    }
+    if (query.search) {
+        const s = String(query.search).trim();
+        if (s) {
+            filter.$or = [
+                { paymentNumber: { $regex: s, $options: "i" } },
+                { note: { $regex: s, $options: "i" } },
+                { providerTransactionId: { $regex: s, $options: "i" } },
+            ];
+        }
     }
 
     const [items, total] = await Promise.all([

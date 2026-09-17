@@ -32,6 +32,102 @@ const toObjectId = (value) => {
 const escapeRegex = (value = "") =>
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Map SO paymentMethod label → finance Payment.paymentMethod. */
+const soMethodToFinance = (raw) => {
+    const s = String(raw || "").trim().toLowerCase();
+    if (s.includes("apple")) return "APPLE_PAY";
+    if (s.includes("cash")) return "CASH";
+    if (s.includes("card")) return "CARD";
+    if (s.includes("bank") || s.includes("transfer")) return "BANK_TRANSFER";
+    if (s.includes("mobile")) return "BANK_TRANSFER";
+    if (s.includes("credit")) return "CASH";
+    return "CASH";
+};
+
+/**
+ * Always write a CustomerPayment ledger row when counter pay increases SO.paidAmount.
+ * CARD / APPLE_PAY use provider OTHER (terminal/phone already charged — no card data stored).
+ */
+const recordSalesOrderPaymentLedger = async (
+    order,
+    {
+        amountMajor,
+        paymentMethod,
+        actorId = null,
+        note = "",
+        reference = "",
+    } = {}
+) => {
+    const amount = Math.max(Number(amountMajor) || 0, 0);
+    if (amount <= 0 || !order?._id) return null;
+
+    const Payment = require("../model/payment");
+    const {
+        generatePaymentNumber,
+        applyStatusTransition,
+    } = require("./paymentFoundationService");
+    const { DEFAULT_CURRENCY, toMinor, toMajor } = require("../utils/money");
+
+    const financeMethod = soMethodToFinance(paymentMethod || order.paymentMethod);
+    const paymentProvider =
+        financeMethod === "CARD" || financeMethod === "APPLE_PAY"
+            ? "OTHER"
+            : "NONE";
+    const currency = DEFAULT_CURRENCY;
+    const amountMinor = toMinor(amount, currency);
+    const paymentNumber = await generatePaymentNumber();
+
+    const payment = new Payment({
+        companyId: order.companyId || null,
+        branchId: order.branchId || null,
+        paymentNumber,
+        paymentDate: new Date(),
+        paymentType: "CustomerPayment",
+        purpose: "againstPayable",
+        partyType: "Customer",
+        partyId: order.customerId || order._id,
+        salesOrderId: order._id,
+        currency,
+        amountMinor,
+        amount: toMajor(amountMinor, currency),
+        paidAmountMinor: 0,
+        paidAmount: 0,
+        dueAmountMinor: amountMinor,
+        dueAmount: toMajor(amountMinor, currency),
+        paymentMethod: financeMethod,
+        paymentProvider,
+        status: "approved",
+        requiresApproval: false,
+        requestedBy: actorId || null,
+        createdBy: actorId || null,
+        note: String(note || "").trim().slice(0, 1000),
+        providerTransactionId: String(reference || "").trim().slice(0, 200),
+        sourceModule: "Sales",
+        isManualEntry: true,
+        referenceType: "SalesOrder",
+        referenceId: order._id,
+        allocations: [
+            {
+                targetType: "SalesOrder",
+                targetId: order._id,
+                amountMinor,
+                note: "POS counter payment",
+            },
+        ],
+    });
+
+    applyStatusTransition(payment, "paid", actorId || null);
+    payment.paidAmountMinor = amountMinor;
+    payment.paidAmount = toMajor(amountMinor, currency);
+    payment.dueAmountMinor = 0;
+    payment.dueAmount = 0;
+    payment.transactionDate = new Date();
+    payment.postedBy = actorId || null;
+    payment.postedAt = new Date();
+    await payment.save();
+    return payment;
+};
+
 /** Parse YYYY-MM-DD (or ISO) into start/end-of-day UTC for orderDate filters. */
 const parseOrderDateBound = (value, endOfDay = false) => {
     if (value == null || value === "") return null;
@@ -1837,6 +1933,7 @@ const completeSale = async (id, payload = {}, actorId = null, companyId = null) 
     }
 
     order.paymentMethod = method;
+    const previousPaid = Number(order.paidAmount) || 0;
     order.paidAmount = paidAmount;
     order.dueAmount = Math.max((Number(order.grandTotal) || 0) - paidAmount, 0);
     if (paidAmount <= 0) order.paymentStatus = isCredit ? "Pending" : "Pending";
@@ -1869,6 +1966,21 @@ const completeSale = async (id, payload = {}, actorId = null, companyId = null) 
     } else {
         order.updatedBy = actorId || null;
         await order.save();
+    }
+
+    const delta = Math.max(paidAmount - previousPaid, 0);
+    if (delta > 0.009 && payload.skipPaymentLedger !== true) {
+        try {
+            await recordSalesOrderPaymentLedger(order, {
+                amountMajor: delta,
+                paymentMethod: method,
+                actorId,
+                note: payload.note || payload.paymentNote || "",
+                reference: payload.reference || payload.bankReference || "",
+            });
+        } catch (e) {
+            console.warn("[SO completeSale] payment ledger:", e?.message || e);
+        }
     }
 
     try {
@@ -1925,6 +2037,8 @@ const markPaid = async (id, payload = {}, actorId = null, companyId = null) => {
 
     order.updatedBy = actorId || null;
 
+    const delta = Math.max(paidAmount - currentPaid, 0);
+
     if (order.paymentStatus === "Paid" && !order.stockUpdated) {
         await applyStockOut(order, actorId, {
             setStatus: order.status === "Draft" ? "Confirmed" : order.status,
@@ -1935,6 +2049,20 @@ const markPaid = async (id, payload = {}, actorId = null, companyId = null) => {
         });
     } else {
         await order.save();
+    }
+
+    if (delta > 0.009 && payload.skipPaymentLedger !== true) {
+        try {
+            await recordSalesOrderPaymentLedger(order, {
+                amountMajor: delta,
+                paymentMethod: order.paymentMethod,
+                actorId,
+                note: payload.note || payload.paymentNote || "",
+                reference: payload.reference || payload.bankReference || "",
+            });
+        } catch (e) {
+            console.warn("[SO markPaid] payment ledger:", e?.message || e);
+        }
     }
 
     return populateSo(SalesOrder.findById(order._id));

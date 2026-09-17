@@ -424,7 +424,8 @@ paymentMethod:{
         "Bank",
         "Card",
         "Mobile Banking",
-        "Credit"
+        "Credit",
+        "Apple Pay"
     ],
     default:"Cash"
 },
