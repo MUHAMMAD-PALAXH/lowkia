@@ -1725,7 +1725,8 @@ const isManualLikeSource = (sourceType) => {
 };
 
 /**
- * Prefer product.warehouseIds; else first warehouse linked to product.branchIds.
+ * Prefer product.warehouseIds; else warehouse linked to product.branchIds;
+ * else first Active warehouse in the product's company (opening stock must land somewhere).
  */
 const resolveOpeningWarehouseId = async (product) => {
     const preferred = (product.warehouseIds || [])
@@ -1733,19 +1734,32 @@ const resolveOpeningWarehouseId = async (product) => {
         .filter(Boolean);
     if (preferred.length) return preferred[0];
 
+    const Warehouse = require("../model/warehouse");
     const branchIds = (product.branchIds || [])
         .map((id) => toObjectId(id))
         .filter(Boolean);
-    if (!branchIds.length) return null;
+    if (branchIds.length) {
+        const byBranch = await Warehouse.findOne({
+            ...NOT_DELETED,
+            status: "Active",
+            branchIds: { $in: branchIds },
+            ...(product.companyId ? { companyId: product.companyId } : {}),
+        })
+            .select("_id")
+            .lean();
+        if (byBranch?._id) return byBranch._id;
+    }
 
-    const Warehouse = require("../model/warehouse");
-    const wh = await Warehouse.findOne({
+    if (!product.companyId) return null;
+    const byCompany = await Warehouse.findOne({
         ...NOT_DELETED,
-        branchIds: { $in: branchIds }
+        status: "Active",
+        companyId: product.companyId,
     })
         .select("_id")
+        .sort({ createdAt: 1 })
         .lean();
-    return wh?._id || null;
+    return byCompany?._id || null;
 };
 
 /**
@@ -1756,17 +1770,43 @@ const resolveOpeningWarehouseId = async (product) => {
  */
 const seedManualOpeningInventory = async (product) => {
     if (!product?._id || !isManualLikeSource(product.productSourceType)) {
-        return;
+        return { seeded: false, reason: "not_manual_like" };
     }
-
-    const warehouseId = await resolveOpeningWarehouseId(product);
-    if (!warehouseId) return;
 
     const imeiMode = isImeiTracking(product.trackingType);
     const variants = await ProductVariant.find({
         productId: product._id,
-        isDeleted: { $ne: true }
+        isDeleted: { $ne: true },
     }).select("_id quantity costPrice purchasePrice sellingPrice");
+
+    let needsOpening = false;
+    for (const variant of variants) {
+        if (imeiMode) {
+            const n = await ItemTrack.countDocuments({
+                productId: product._id,
+                variantId: variant._id,
+                status: "available",
+            });
+            if (n > 0) {
+                needsOpening = true;
+                break;
+            }
+        } else if (Math.max(Number(variant.quantity) || 0, 0) > 0) {
+            needsOpening = true;
+            break;
+        }
+    }
+    if (!needsOpening) {
+        return { seeded: false, reason: "no_opening_qty" };
+    }
+
+    const warehouseId = await resolveOpeningWarehouseId(product);
+    if (!warehouseId) {
+        throw new AppError(
+            "Select a warehouse (or create an Active warehouse) so opening stock can be added to Inventory.",
+            400
+        );
+    }
 
     const branchId =
         toObjectId((product.branchIds || [])[0]) || product.branchId || null;
@@ -1776,13 +1816,14 @@ const seedManualOpeningInventory = async (product) => {
         Number(product.averagePurchasePrice) ||
         0;
 
+    let seededRows = 0;
     for (const variant of variants) {
         let opening = 0;
         if (imeiMode) {
             opening = await ItemTrack.countDocuments({
                 productId: product._id,
                 variantId: variant._id,
-                status: "available"
+                status: "available",
             });
         } else {
             opening = Math.max(Number(variant.quantity) || 0, 0);
@@ -1795,8 +1836,8 @@ const seedManualOpeningInventory = async (product) => {
             isDeleted: { $ne: true },
             $or: [
                 { availableStock: { $gt: 0 } },
-                { currentStock: { $gt: 0 } }
-            ]
+                { currentStock: { $gt: 0 } },
+            ],
         });
         if (hasLiveInv) continue;
 
@@ -1804,7 +1845,7 @@ const seedManualOpeningInventory = async (product) => {
             warehouseId,
             productId: product._id,
             productVariantId: variant._id,
-            isDeleted: { $ne: true }
+            isDeleted: { $ne: true },
         });
 
         if (!inv) {
@@ -1812,7 +1853,7 @@ const seedManualOpeningInventory = async (product) => {
                 warehouseId,
                 productId: product._id,
                 productVariantId: variant._id,
-                isDeleted: true
+                isDeleted: true,
             });
             if (soft) {
                 soft.isDeleted = false;
@@ -1833,7 +1874,7 @@ const seedManualOpeningInventory = async (product) => {
                         productVariantId: variant._id,
                         currentStock: 0,
                         availableStock: 0,
-                        reservedStock: 0
+                        reservedStock: 0,
                     },
                     product.companyId
                 )
@@ -1857,7 +1898,41 @@ const seedManualOpeningInventory = async (product) => {
         inv.lastMovementDate = new Date();
         if (branchId && !inv.branchId) inv.branchId = branchId;
         await inv.save();
+        seededRows += 1;
     }
+
+    return { seeded: seededRows > 0, seededRows, warehouseId };
+};
+
+/**
+ * Heal Manual / ThirdParty products that have opening qty on variants but no
+ * Inventory rows (common when warehouse was optional at create time).
+ */
+const backfillManualOpeningInventory = async (companyId = null) => {
+    const tenant = companyId ? { companyId } : {};
+    const products = await Product.find({
+        ...tenant,
+        ...NOT_DELETED,
+        productSourceType: { $in: ["Manual", "ThirdParty"] },
+    })
+        .select(
+            "_id productSourceType trackingType warehouseIds branchIds branchId companyId costPrice purchasePrice averagePurchasePrice"
+        )
+        .lean(false);
+
+    let healed = 0;
+    for (const product of products) {
+        try {
+            const result = await seedManualOpeningInventory(product);
+            if (result?.seeded) {
+                healed += 1;
+                await syncProductStockSummary(product);
+            }
+        } catch (_) {
+            // Skip products that still cannot resolve a warehouse.
+        }
+    }
+    return { healed, scanned: products.length };
 };
 
 /**
@@ -2759,5 +2834,6 @@ module.exports = {
     getProductStats,
     getCompletedPurchaseOrderSourceLines,
     seedManualOpeningInventory,
+    backfillManualOpeningInventory,
     materializeOpeningInventoryForWarehouse
 };

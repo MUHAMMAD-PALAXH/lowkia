@@ -25,6 +25,25 @@ const toObjectId = (value) => {
 const escapeRegex = (value = "") =>
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** One heal pass per company per process — materialize Manual/Vendor opening stock. */
+const _manualStockHealedCompanies = new Set();
+
+const ensureManualOpeningStockHealed = async (companyId) => {
+    if (!companyId) return;
+    const key = String(companyId);
+    if (_manualStockHealedCompanies.has(key)) return;
+    _manualStockHealedCompanies.add(key);
+    try {
+        const productService = require("./productService");
+        if (typeof productService.backfillManualOpeningInventory === "function") {
+            await productService.backfillManualOpeningInventory(companyId);
+        }
+    } catch (err) {
+        _manualStockHealedCompanies.delete(key);
+        console.error("Manual stock backfill failed:", err.message);
+    }
+};
+
 /** Keep Inventory.stockStatus in sync after qty changes */
 const computeStockStatus = (availableStock, reorderLevel = 0) => {
     const avail = Number(availableStock) || 0;
@@ -48,7 +67,7 @@ const populateInventory = (query) =>
         .populate("branchId", "branchCode name city")
         .populate(
             "productId",
-            "name productCode sku barcode trackingType productType isDeleted"
+            "name productCode sku barcode trackingType productType productSourceType isDeleted"
         )
         .populate("productVariantId", "sku combinationString attributes");
 
@@ -137,6 +156,8 @@ const getLiveWarehouseStock = async (productId) => {
 };
 
 const getInventoryList = async (query = {}, companyId = null) => {
+    await ensureManualOpeningStockHealed(companyId);
+
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
