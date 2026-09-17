@@ -78,6 +78,22 @@ const populateMovement = (query) =>
         .populate("productId", "name productCode trackingType")
         .populate("productVariantId", "sku combinationString")
         .populate("grnId", "grnNumber status")
+        .populate({
+            path: "salesOrderId",
+            select: "orderNumber customerId customerName customerPhone",
+            populate: {
+                path: "customerId",
+                select: "customerCode name phone"
+            }
+        })
+        .populate({
+            path: "salesReturnId",
+            select: "returnNumber customerId customerName customerPhone",
+            populate: {
+                path: "customerId",
+                select: "customerCode name phone"
+            }
+        })
         .populate("createdBy", "name email");
 
 const resolveSearchProductIds = async (search) => {
