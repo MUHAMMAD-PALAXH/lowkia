@@ -1,5 +1,9 @@
 const mongoose = require("mongoose");
 const Customer = require("../model/customer");
+const SalesOrder = require("../model/salesOrder");
+const RepairTicket = require("../model/repairTicket");
+const CompanyOrder = require("../model/marketplace/companyOrder");
+const MasterOrder = require("../model/marketplace/masterOrder");
 const { generateCustomerCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
@@ -45,6 +49,208 @@ const PROTECTED_FIELDS = [
 
 const escapeRegex = (value = "") =>
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+const pushUniqueStatus = (list, status) => {
+    const value = String(status || "").trim();
+    if (!value) return;
+    if (!list.includes(value)) list.push(value);
+};
+
+/**
+ * Live rollups matching Customer History (SO + repair + online).
+ * Also collects distinct movement statuses for the directory table.
+ */
+const attachLiveCustomerFinancials = async (customers = []) => {
+    const docs = Array.isArray(customers) ? customers : [];
+    if (!docs.length) return [];
+
+    const ids = docs.map((c) => c._id).filter(Boolean);
+    const idSet = new Set(ids.map((id) => String(id)));
+    const phones = [
+        ...new Set(
+            docs
+                .map((c) => String(c.phone || "").trim())
+                .filter(Boolean)
+        )
+    ];
+    const phoneToId = new Map();
+    for (const c of docs) {
+        const phone = String(c.phone || "").trim();
+        if (phone) phoneToId.set(phone, String(c._id));
+    }
+
+    const [salesOrders, tickets, onlineOrders] = await Promise.all([
+        SalesOrder.find({
+            customerId: { $in: ids },
+            isDeleted: { $ne: true }
+        })
+            .select(
+                "customerId status paymentStatus grandTotal paidAmount dueAmount"
+            )
+            .lean(),
+        RepairTicket.find({
+            isDeleted: { $ne: true },
+            $or: [
+                { customerId: { $in: ids } },
+                ...(phones.length ? [{ phone: { $in: phones } }] : [])
+            ]
+        })
+            .select(
+                "customerId phone status paymentStatus totalAmount paidAmount dueAmount"
+            )
+            .lean(),
+        CompanyOrder.find({
+            customerId: { $in: ids },
+            isDeleted: { $ne: true }
+        })
+            .select("customerId status salesOrderId totals masterOrderId")
+            .lean()
+    ]);
+
+    const bridgedSalesOrderIds = new Set(
+        onlineOrders
+            .filter((o) => o.salesOrderId)
+            .map((o) => String(o.salesOrderId))
+    );
+
+    const masterIds = onlineOrders
+        .map((o) => o.masterOrderId)
+        .filter(Boolean);
+    const masters = masterIds.length
+        ? await MasterOrder.find({ _id: { $in: masterIds } })
+              .select("paymentStatus")
+              .lean()
+        : [];
+    const masterPayById = new Map(
+        masters.map((m) => [String(m._id), m.paymentStatus])
+    );
+
+    const byId = new Map();
+    const ensure = (cid) => {
+        if (!byId.has(cid)) {
+            byId.set(cid, {
+                totalSalesAmount: 0,
+                totalPaidAmount: 0,
+                totalDueAmount: 0,
+                movementStatuses: []
+            });
+        }
+        return byId.get(cid);
+    };
+
+    for (const order of salesOrders) {
+        if (bridgedSalesOrderIds.has(String(order._id))) continue;
+        const cid = String(order.customerId || "");
+        if (!idSet.has(cid)) continue;
+        const acc = ensure(cid);
+        acc.totalSalesAmount = money(
+            acc.totalSalesAmount + money(order.grandTotal)
+        );
+        acc.totalPaidAmount = money(
+            acc.totalPaidAmount + money(order.paidAmount)
+        );
+        acc.totalDueAmount = money(acc.totalDueAmount + money(order.dueAmount));
+        pushUniqueStatus(acc.movementStatuses, order.status);
+    }
+
+    for (const ticket of tickets) {
+        let cid = ticket.customerId ? String(ticket.customerId) : "";
+        if (!idSet.has(cid)) {
+            cid = phoneToId.get(String(ticket.phone || "").trim()) || "";
+        }
+        if (!cid || !idSet.has(cid)) continue;
+        const acc = ensure(cid);
+        acc.totalSalesAmount = money(
+            acc.totalSalesAmount + money(ticket.totalAmount)
+        );
+        acc.totalPaidAmount = money(
+            acc.totalPaidAmount + money(ticket.paidAmount)
+        );
+        acc.totalDueAmount = money(
+            acc.totalDueAmount + money(ticket.dueAmount)
+        );
+        pushUniqueStatus(acc.movementStatuses, ticket.status);
+    }
+
+    for (const order of onlineOrders) {
+        const cid = String(order.customerId || "");
+        if (!idSet.has(cid)) continue;
+        const acc = ensure(cid);
+        const total = money(order.totals?.total);
+        const payStatus = masterPayById.get(String(order.masterOrderId));
+        const paid = payStatus === "successful" ? total : 0;
+        const due = Math.max(total - paid, 0);
+        acc.totalSalesAmount = money(acc.totalSalesAmount + total);
+        acc.totalPaidAmount = money(acc.totalPaidAmount + paid);
+        acc.totalDueAmount = money(acc.totalDueAmount + due);
+        pushUniqueStatus(acc.movementStatuses, order.status);
+    }
+
+    const writes = [];
+    for (const [id, fin] of byId.entries()) {
+        writes.push(
+            Customer.updateOne(
+                { _id: id },
+                {
+                    $set: {
+                        totalSalesAmount: fin.totalSalesAmount,
+                        totalPaidAmount: fin.totalPaidAmount,
+                        totalDueAmount: fin.totalDueAmount,
+                        currentBalance: fin.totalDueAmount
+                    }
+                }
+            )
+        );
+    }
+    for (const c of docs) {
+        const cid = String(c._id);
+        if (byId.has(cid)) continue;
+        writes.push(
+            Customer.updateOne(
+                { _id: c._id },
+                {
+                    $set: {
+                        totalSalesAmount: 0,
+                        totalPaidAmount: 0,
+                        totalDueAmount: 0,
+                        currentBalance: 0
+                    }
+                }
+            )
+        );
+    }
+    if (writes.length) {
+        Promise.all(writes).catch((err) =>
+            console.warn(
+                "[Customer] financial rollup persist failed:",
+                err?.message || err
+            )
+        );
+    }
+
+    return docs.map((doc) => {
+        const plain = doc.toObject
+            ? doc.toObject({ virtuals: true })
+            : { ...doc };
+        const fin = byId.get(String(doc._id));
+        if (!fin) {
+            plain.totalSalesAmount = 0;
+            plain.totalPaidAmount = 0;
+            plain.totalDueAmount = 0;
+            plain.currentBalance = 0;
+            plain.movementStatuses = [];
+            return plain;
+        }
+        plain.totalSalesAmount = fin.totalSalesAmount;
+        plain.totalPaidAmount = fin.totalPaidAmount;
+        plain.totalDueAmount = fin.totalDueAmount;
+        plain.currentBalance = fin.totalDueAmount;
+        plain.movementStatuses = fin.movementStatuses;
+        return plain;
+    });
+};
 
 const pickUpdatableFields = (payload = {}) => {
     const data = { ...payload };
@@ -150,10 +356,13 @@ const getCustomers = async (query = {}, companyId = null) => {
     }
 
     const sort = trash.resolveEntitySort(query);
-    const [items, total] = await Promise.all([
+    const [rawItems, total] = await Promise.all([
         Customer.find(filter).sort(sort).skip(skip).limit(limit),
         Customer.countDocuments(filter)
     ]);
+    const items = trashMode
+        ? rawItems
+        : await attachLiveCustomerFinancials(rawItems);
 
     return {
         items,
@@ -254,7 +463,7 @@ const bulkPermanentDeleteCustomers = async (payload, companyId = null) => {
 
 const getCustomerStats = async (companyId = null) => {
     const tenant = companyFilter(companyId);
-    const [[rows], trashCount] = await Promise.all([
+    const [[rows], trashCount, customers] = await Promise.all([
         Customer.aggregate([
             { $match: { isDeleted: { $ne: true }, ...tenant } },
             {
@@ -271,22 +480,30 @@ const getCustomerStats = async (companyId = null) => {
                         $sum: {
                             $cond: [{ $eq: ["$status", "Inactive"] }, 1, 0]
                         }
-                    },
-                    dueAmount: { $sum: "$totalDueAmount" }
+                    }
                 }
             }
         ]),
-        Customer.countDocuments({ isDeleted: true, ...tenant })
+        Customer.countDocuments({ isDeleted: true, ...tenant }),
+        Customer.find({ isDeleted: { $ne: true }, ...tenant }).select(
+            "_id phone"
+        )
     ]);
+
+    const live = await attachLiveCustomerFinancials(customers);
+    const dueAmount = live.reduce(
+        (sum, row) => sum + money(row.totalDueAmount),
+        0
+    );
 
     return {
         ...(rows || {
             total: 0,
             active: 0,
             blocked: 0,
-            inactive: 0,
-            dueAmount: 0
+            inactive: 0
         }),
+        dueAmount: money(dueAmount),
         trashCount
     };
 };
