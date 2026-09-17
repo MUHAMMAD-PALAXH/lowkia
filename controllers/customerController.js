@@ -38,6 +38,16 @@ exports.getDueReport = asyncHandler(async (req, res) => {
     return success(res, "Customer due report retrieved successfully.", report);
 });
 
+exports.getCustomerHistory = asyncHandler(async (req, res) => {
+    const customerHistoryService = require("../services/customerHistoryService");
+    const data = await customerHistoryService.getCustomerHistory(
+        req.params.id,
+        req.query,
+        req.companyId
+    );
+    return success(res, "Customer history retrieved successfully.", data);
+});
+
 exports.getCustomerById = asyncHandler(async (req, res) => {
     const includeDeleted =
         req.query.deleted === "true" || req.query.trash === "true";

@@ -26,6 +26,13 @@ router.get("/stats", customerController.getCustomerStats);
 router.get("/active", customerController.getActiveCustomers);
 router.get("/reports/due", customerController.getDueReport);
 
+router.get(
+    "/:id/history",
+    idValidator,
+    validate,
+    customerController.getCustomerHistory
+);
+
 router.post("/bulk-delete", customerController.bulkDeleteCustomers);
 router.post("/bulk-restore", customerController.bulkRestoreCustomers);
 router.post(

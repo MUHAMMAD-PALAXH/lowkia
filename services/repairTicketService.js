@@ -417,6 +417,9 @@ const getRepairTickets = async (query = {}, companyId = null) => {
         ? { isDeleted: true, ...tenant }
         : { ...NOT_DELETED, ...tenant };
     if (query.branchId) filter.branchId = toObjectId(query.branchId);
+    if (query.customerId && toObjectId(query.customerId)) {
+        filter.customerId = toObjectId(query.customerId);
+    }
     if (query.status) filter.status = String(query.status).trim();
     if (query.ticketSource) filter.ticketSource = resolveTicketSource(query.ticketSource);
     if (query.paymentMethod) {
