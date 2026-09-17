@@ -454,6 +454,7 @@ const receiveReturn = async (id, actorId = null, companyId = null) => {
                         productVariantId: line.productVariantId || null,
                         sku: line.sku || "",
                         productName: line.productName,
+                        companyId: ret.companyId || inv.companyId || null,
                         movementType: "Sales Return",
                         movementDirection: "IN",
                         quantity: qty,

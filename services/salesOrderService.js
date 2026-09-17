@@ -781,6 +781,7 @@ const restoreInventoryQty = async ({
     unitCost,
     salesOrderId,
     actorId,
+    companyId = null,
     session
 }) => {
     let inv = await findInventoryRow({
@@ -830,6 +831,7 @@ const restoreInventoryQty = async ({
                 productVariantId: productVariantId || null,
                 sku: sku || "",
                 productName,
+                companyId: companyId || inv.companyId || null,
                 movementType: "Adjustment",
                 movementDirection: "IN",
                 quantity: qty,
@@ -926,6 +928,7 @@ const reverseStockForTrash = async (order, actorId = null) => {
                 unitCost: line.unitPrice,
                 salesOrderId: order._id,
                 actorId,
+                companyId: order.companyId,
                 session
             });
 
@@ -1527,6 +1530,7 @@ const deductInventory = async ({
     salesOrderId,
     actorId,
     orderCreatedBy,
+    companyId = null,
     session
 }) => {
     let resolvedWarehouseId = toObjectId(warehouseId) || warehouseId;
@@ -1642,6 +1646,7 @@ const deductInventory = async ({
                 productVariantId: productVariantId || null,
                 sku: sku || "",
                 productName,
+                companyId: companyId || inv.companyId || null,
                 movementType: "Sale",
                 movementDirection: "OUT",
                 quantity: qty,
@@ -1851,6 +1856,7 @@ const applyStockOut = async (
                 salesOrderId: order._id,
                 actorId,
                 orderCreatedBy: order.createdBy,
+                companyId: order.companyId,
                 session
             });
 

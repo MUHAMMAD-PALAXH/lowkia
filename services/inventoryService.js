@@ -243,7 +243,20 @@ const getInventoryStats = async (query = {}, companyId = null) => {
                 totalQty: { $sum: "$currentStock" },
                 availableQty: { $sum: "$availableStock" },
                 reservedQty: { $sum: "$reservedStock" },
-                inventoryValue: { $sum: "$inventoryValue" },
+                inventoryValue: {
+                    $sum: {
+                        $cond: [
+                            { $gt: [{ $ifNull: ["$inventoryValue", 0] }, 0] },
+                            { $ifNull: ["$inventoryValue", 0] },
+                            {
+                                $multiply: [
+                                    { $ifNull: ["$currentStock", 0] },
+                                    { $ifNull: ["$averageCost", 0] }
+                                ]
+                            }
+                        ]
+                    }
+                },
                 lowStock: {
                     $sum: {
                         $cond: [
@@ -355,31 +368,69 @@ const getStockMovements = async (query = {}, companyId = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
-    const filter = { ...companyFilter(companyId) };
 
-    if (query.warehouseId) filter.warehouseId = toObjectId(query.warehouseId);
-    if (query.branchId) filter.branchId = toObjectId(query.branchId);
-    if (query.productId) filter.productId = toObjectId(query.productId);
-    if (query.movementType) filter.movementType = query.movementType;
-    if (query.movementDirection) {
-        filter.movementDirection = query.movementDirection;
+    // Tenant scope: stamped companyId, plus legacy rows (no companyId) whose
+    // warehouse belongs to this company — sales/GRN historically omitted it.
+    const Warehouse = require("../model/warehouse");
+    const whIds = await Warehouse.find({
+        companyId,
+        isDeleted: { $ne: true }
+    })
+        .select("_id")
+        .lean();
+    const companyWarehouseIds = whIds.map((w) => w._id);
+
+    const and = [
+        {
+            $or: [
+                { companyId },
+                {
+                    $and: [
+                        {
+                            $or: [
+                                { companyId: null },
+                                { companyId: { $exists: false } }
+                            ]
+                        },
+                        companyWarehouseIds.length
+                            ? { warehouseId: { $in: companyWarehouseIds } }
+                            : { _id: null }
+                    ]
+                }
+            ]
+        }
+    ];
+
+    if (query.warehouseId) {
+        and.push({ warehouseId: toObjectId(query.warehouseId) });
     }
-    if (query.grnId) filter.grnId = toObjectId(query.grnId);
+    if (query.branchId) and.push({ branchId: toObjectId(query.branchId) });
+    if (query.productId) and.push({ productId: toObjectId(query.productId) });
+    if (query.movementType) and.push({ movementType: query.movementType });
+    if (query.movementDirection) {
+        and.push({ movementDirection: query.movementDirection });
+    }
+    if (query.grnId) and.push({ grnId: toObjectId(query.grnId) });
 
     if (query.from || query.to) {
-        filter.movementDate = {};
-        if (query.from) filter.movementDate.$gte = new Date(query.from);
-        if (query.to) filter.movementDate.$lte = new Date(query.to);
+        const movementDate = {};
+        if (query.from) movementDate.$gte = new Date(query.from);
+        if (query.to) movementDate.$lte = new Date(query.to);
+        and.push({ movementDate });
     }
 
     if (query.search) {
         const search = escapeRegex(String(query.search).trim());
-        filter.$or = [
-            { movementNumber: { $regex: search, $options: "i" } },
-            { productName: { $regex: search, $options: "i" } },
-            { sku: { $regex: search, $options: "i" } }
-        ];
+        and.push({
+            $or: [
+                { movementNumber: { $regex: search, $options: "i" } },
+                { productName: { $regex: search, $options: "i" } },
+                { sku: { $regex: search, $options: "i" } }
+            ]
+        });
     }
+
+    const filter = and.length === 1 ? and[0] : { $and: and };
 
     const [items, total] = await Promise.all([
         populateMovement(
@@ -451,8 +502,49 @@ const getImeiStock = async (query = {}, companyId = null) => {
     };
 };
 
+/** Fill missing averageCost / inventoryValue from product prices. */
+const healInventoryCostsAndValues = async (companyId = null) => {
+    const tenant = companyId ? companyFilter(companyId) : {};
+    const rows = await Inventory.find({
+        isDeleted: { $ne: true },
+        currentStock: { $gt: 0 },
+        $or: [
+            { averageCost: { $lte: 0 } },
+            { averageCost: { $exists: false } },
+            { inventoryValue: { $lte: 0 } },
+            { inventoryValue: { $exists: false } }
+        ],
+        ...tenant
+    }).limit(500);
+
+    let healed = 0;
+    for (const row of rows) {
+        const product = await Product.findById(row.productId)
+            .select("costPrice purchasePrice averagePurchasePrice sellingPrice")
+            .lean();
+        if (!product) continue;
+        const cost =
+            Number(row.averageCost) ||
+            Number(row.lastPurchasePrice) ||
+            Number(product.costPrice) ||
+            Number(product.purchasePrice) ||
+            Number(product.averagePurchasePrice) ||
+            Number(product.sellingPrice) ||
+            0;
+        if (cost <= 0) continue;
+        const qty = Number(row.currentStock) || 0;
+        if (!row.averageCost || row.averageCost <= 0) row.averageCost = cost;
+        row.inventoryValue = (Number(row.averageCost) || cost) * qty;
+        await row.save();
+        healed += 1;
+    }
+    return healed;
+};
+
 /** Push Inventory totals onto Product.totalStock / stockValue */
-const syncProductStockSummaries = async () => {
+const syncProductStockSummaries = async (companyId = null) => {
+    const healedValues = await healInventoryCostsAndValues(companyId);
+
     const productService = require("./productService");
 
     const [fromInventory, fromImei, staleSummaries] = await Promise.all([
@@ -479,7 +571,7 @@ const syncProductStockSummaries = async () => {
             errors.push(`${id}: ${err?.message || err}`);
         }
     }
-    return { updated, total: idSet.size, errors };
+    return { updated, total: idSet.size, errors, healedValues };
 };
 
 const clearProductStock = async (productId, actorId = null, companyId = null) => {
@@ -646,6 +738,7 @@ module.exports = {
     getStockMovements,
     getImeiStock,
     syncProductStockSummaries,
+    healInventoryCostsAndValues,
     clearProductStock,
     computeStockStatus,
     applyStockStatus,

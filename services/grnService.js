@@ -1239,6 +1239,7 @@ const createStockMovement = async ({
     purchasePrice,
     grnId,
     actorId,
+    companyId = null,
     session
 }) => {
     if (!productId || qty <= 0) return null;
@@ -1248,6 +1249,7 @@ const createStockMovement = async ({
             {
                 movementNumber,
                 movementDate: new Date(),
+                companyId: companyId || null,
                 warehouseId,
                 branchId: branchId || null,
                 productId,
@@ -1411,6 +1413,7 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
             purchasePrice: Number(item.purchasePrice) || 0,
             grnId: grn._id,
             actorId,
+            companyId: grn.companyId,
             session
         });
 

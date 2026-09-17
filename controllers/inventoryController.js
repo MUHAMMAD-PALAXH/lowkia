@@ -37,7 +37,7 @@ exports.getImeiStock = asyncHandler(async (req, res) => {
 });
 
 exports.syncProductStock = asyncHandler(async (req, res) => {
-    const data = await inventoryService.syncProductStockSummaries();
+    const data = await inventoryService.syncProductStockSummaries(req.companyId);
     return success(res, "Product stock summaries synced from inventory.", data);
 });
 

@@ -1254,7 +1254,7 @@ const createProduct = async (
         await syncVariants(product, payload.productVariants, actorId);
         if (product.isModified()) await product.save();
         // Persist stock/profit summary from Inventory or Manual opening qty.
-        await seedManualOpeningInventory(product);
+        await seedManualOpeningInventory(product, actorId);
         await syncProductStockSummary(product);
     } catch (err) {
         // Product row was already persisted — soft-delete so the same name
@@ -1595,9 +1595,15 @@ const getLiveProductStock = async (productId) => {
                 reservedQuantity: { $sum: "$reservedStock" },
                 inventoryValue: {
                     $sum: {
-                        $multiply: [
-                            { $ifNull: ["$currentStock", 0] },
-                            { $ifNull: ["$averageCost", 0] }
+                        $cond: [
+                            { $gt: [{ $ifNull: ["$inventoryValue", 0] }, 0] },
+                            { $ifNull: ["$inventoryValue", 0] },
+                            {
+                                $multiply: [
+                                    { $ifNull: ["$currentStock", 0] },
+                                    { $ifNull: ["$averageCost", 0] }
+                                ]
+                            }
                         ]
                     }
                 }
@@ -1673,6 +1679,7 @@ const getLiveProductStock = async (productId) => {
         Number(product?.costPrice) ||
         Number(product?.purchasePrice) ||
         Number(product?.averagePurchasePrice) ||
+        Number(product?.sellingPrice) ||
         0;
 
     return {
@@ -1725,8 +1732,8 @@ const isManualLikeSource = (sourceType) => {
 };
 
 /**
- * Prefer product.warehouseIds; else warehouse linked to product.branchIds;
- * else first Active warehouse in the product's company (opening stock must land somewhere).
+ * Prefer product.warehouseIds; else the company's Default Active warehouse.
+ * Never auto-pick a random / first warehouse — that misroutes stock.
  */
 const resolveOpeningWarehouseId = async (product) => {
     const preferred = (product.warehouseIds || [])
@@ -1734,41 +1741,115 @@ const resolveOpeningWarehouseId = async (product) => {
         .filter(Boolean);
     if (preferred.length) return preferred[0];
 
+    if (!product.companyId) return null;
     const Warehouse = require("../model/warehouse");
     const branchIds = (product.branchIds || [])
         .map((id) => toObjectId(id))
         .filter(Boolean);
+
     if (branchIds.length) {
-        const byBranch = await Warehouse.findOne({
+        const defaultForBranch = await Warehouse.findOne({
             ...NOT_DELETED,
             status: "Active",
-            branchIds: { $in: branchIds },
-            ...(product.companyId ? { companyId: product.companyId } : {}),
+            isDefault: true,
+            companyId: product.companyId,
+            branchIds: { $in: branchIds }
         })
             .select("_id")
             .lean();
-        if (byBranch?._id) return byBranch._id;
+        if (defaultForBranch?._id) return defaultForBranch._id;
     }
 
-    if (!product.companyId) return null;
-    const byCompany = await Warehouse.findOne({
+    const companyDefault = await Warehouse.findOne({
         ...NOT_DELETED,
         status: "Active",
-        companyId: product.companyId,
+        isDefault: true,
+        companyId: product.companyId
     })
         .select("_id")
-        .sort({ createdAt: 1 })
         .lean();
-    return byCompany?._id || null;
+    return companyDefault?._id || null;
 };
 
 /**
  * Manual / ThirdParty opening qty lives on ProductVariant.quantity for the UI,
- * but Sales Order confirm deducts Inventory rows. Materialize opening stock
- * into one warehouse inventory row when none exist yet (never multiply across
- * warehouses; never overwrite GRN / existing stock).
+ * but Sales Order confirm deducts Inventory rows. Keep Inventory in sync with
+ * the opening/live qty the user saves: create rows, apply deltas, log movements,
+ * and keep averageCost / inventoryValue accurate.
  */
-const seedManualOpeningInventory = async (product) => {
+const resolveUnitCost = (product, variant = null) => {
+    const fromVariant =
+        Number(variant?.costPrice) ||
+        Number(variant?.purchasePrice) ||
+        Number(variant?.sellingPrice) ||
+        0;
+    if (fromVariant > 0) return fromVariant;
+    return (
+        Number(product.costPrice) ||
+        Number(product.purchasePrice) ||
+        Number(product.averagePurchasePrice) ||
+        Number(product.sellingPrice) ||
+        0
+    );
+};
+
+const writeStockMovement = async ({
+    warehouseId,
+    branchId,
+    product,
+    variantId,
+    sku,
+    productName,
+    movementType,
+    movementDirection,
+    quantity,
+    previousStock,
+    currentStock,
+    unitCost,
+    remarks,
+    actorId
+}) => {
+    if (!quantity || quantity <= 0) return null;
+    const StockMovement = require("../model/StockMovement");
+    const { generateStockMovementCode } = require("./codeGenerator");
+    const movementNumber = await generateStockMovementCode();
+    const [doc] = await StockMovement.create([
+        stampCompany(
+            {
+                movementNumber,
+                movementDate: new Date(),
+                warehouseId,
+                branchId: branchId || null,
+                productId: product._id,
+                productVariantId: variantId || null,
+                sku: sku || product.sku || "",
+                productName: productName || product.name || "Product",
+                movementType,
+                movementDirection,
+                quantity,
+                previousStock: Math.max(Number(previousStock) || 0, 0),
+                currentStock: Math.max(Number(currentStock) || 0, 0),
+                unitCost: Number(unitCost) || 0,
+                totalCost: (Number(unitCost) || 0) * quantity,
+                referenceType:
+                    movementType === "Opening Stock"
+                        ? "Opening Balance"
+                        : "Stock Adjustment",
+                remarks: remarks || "",
+                createdBy:
+                    actorId ||
+                    product.updatedBy ||
+                    product.createdBy ||
+                    product.vendorId ||
+                    new mongoose.Types.ObjectId()
+            },
+            product.companyId
+        )
+    ]);
+    return doc;
+};
+
+const seedManualOpeningInventory = async (product, actorId = null) => {
     if (!product?._id || !isManualLikeSource(product.productSourceType)) {
         return { seeded: false, reason: "not_manual_like" };
     }
@@ -1776,8 +1857,10 @@ const seedManualOpeningInventory = async (product) => {
     const imeiMode = isImeiTracking(product.trackingType);
     const variants = await ProductVariant.find({
         productId: product._id,
-        isDeleted: { $ne: true },
-    }).select("_id quantity costPrice purchasePrice sellingPrice");
+        isDeleted: { $ne: true }
+    }).select(
+        "_id quantity costPrice purchasePrice sellingPrice sku combinationString"
+    );
 
     let needsOpening = false;
     for (const variant of variants) {
@@ -1785,7 +1868,7 @@ const seedManualOpeningInventory = async (product) => {
             const n = await ItemTrack.countDocuments({
                 productId: product._id,
                 variantId: variant._id,
-                status: "available",
+                status: "available"
             });
             if (n > 0) {
                 needsOpening = true;
@@ -1796,64 +1879,147 @@ const seedManualOpeningInventory = async (product) => {
             break;
         }
     }
-    if (!needsOpening) {
+    // Still allow zeroing / healing stock via edit when inventory already exists.
+    const anyInv = await Inventory.exists({
+        productId: product._id,
+        isDeleted: { $ne: true },
+        $or: [{ availableStock: { $gt: 0 } }, { currentStock: { $gt: 0 } }]
+    });
+    if (!needsOpening && !anyInv) {
         return { seeded: false, reason: "no_opening_qty" };
     }
 
     const warehouseId = await resolveOpeningWarehouseId(product);
     if (!warehouseId) {
         throw new AppError(
-            "Select a warehouse (or create an Active warehouse) so opening stock can be added to Inventory.",
+            "Select a warehouse, or set a Default warehouse, so opening stock can be added to Inventory.",
             400
         );
     }
 
     const branchId =
         toObjectId((product.branchIds || [])[0]) || product.branchId || null;
-    const unitCost =
-        Number(product.costPrice) ||
-        Number(product.purchasePrice) ||
-        Number(product.averagePurchasePrice) ||
-        0;
+    const { applyStockStatus } = require("./inventoryService");
 
     let seededRows = 0;
+    let adjustedRows = 0;
+
     for (const variant of variants) {
-        let opening = 0;
+        let target = 0;
         if (imeiMode) {
-            opening = await ItemTrack.countDocuments({
+            target = await ItemTrack.countDocuments({
                 productId: product._id,
                 variantId: variant._id,
-                status: "available",
+                status: "available"
             });
         } else {
-            opening = Math.max(Number(variant.quantity) || 0, 0);
+            target = Math.max(Number(variant.quantity) || 0, 0);
         }
-        if (opening <= 0) continue;
-
-        const hasLiveInv = await Inventory.exists({
-            productId: product._id,
-            productVariantId: variant._id,
-            isDeleted: { $ne: true },
-            $or: [
-                { availableStock: { $gt: 0 } },
-                { currentStock: { $gt: 0 } },
-            ],
-        });
-        if (hasLiveInv) continue;
 
         let inv = await Inventory.findOne({
             warehouseId,
             productId: product._id,
             productVariantId: variant._id,
-            isDeleted: { $ne: true },
+            isDeleted: { $ne: true }
         });
+
+        if (!inv) {
+            const other = await Inventory.find({
+                productId: product._id,
+                productVariantId: variant._id,
+                isDeleted: { $ne: true },
+                $or: [
+                    { availableStock: { $gt: 0 } },
+                    { currentStock: { $gt: 0 } },
+                    { reservedStock: { $gt: 0 } }
+                ]
+            }).sort({ updatedAt: -1 });
+
+            if (
+                other.length === 1 &&
+                (Number(other[0].reservedStock) || 0) <= 0
+            ) {
+                const src = other[0];
+                const qty = Math.max(Number(src.currentStock) || 0, 0);
+                const avail = Math.max(Number(src.availableStock) || 0, 0);
+                const cost =
+                    Number(src.averageCost) ||
+                    resolveUnitCost(product, variant);
+                if (qty > 0 || avail > 0) {
+                    await writeStockMovement({
+                        warehouseId: src.warehouseId,
+                        branchId: src.branchId || branchId,
+                        product,
+                        variantId: variant._id,
+                        sku: variant.sku,
+                        productName: product.name,
+                        movementType: "Transfer Out",
+                        movementDirection: "OUT",
+                        quantity: qty || avail,
+                        previousStock: qty,
+                        currentStock: 0,
+                        unitCost: cost,
+                        remarks: "Warehouse reassigned on product save",
+                        actorId
+                    });
+                }
+                src.currentStock = 0;
+                src.availableStock = 0;
+                src.inventoryValue = 0;
+                src.stockStatus = "Out Of Stock";
+                src.lastMovementDate = new Date();
+                await src.save();
+
+                inv = new Inventory(
+                    stampCompany(
+                        {
+                            warehouseId,
+                            branchId,
+                            productId: product._id,
+                            productVariantId: variant._id,
+                            currentStock: qty,
+                            availableStock: avail > 0 ? avail : qty,
+                            reservedStock: 0,
+                            averageCost: cost,
+                            inventoryValue: cost * qty,
+                            stockStatus: qty > 0 ? "In Stock" : "Out Of Stock",
+                            lastMovementDate: new Date()
+                        },
+                        product.companyId
+                    )
+                );
+                await inv.save();
+                if (qty > 0 || avail > 0) {
+                    await writeStockMovement({
+                        warehouseId,
+                        branchId,
+                        product,
+                        variantId: variant._id,
+                        sku: variant.sku,
+                        productName: product.name,
+                        movementType: "Transfer In",
+                        movementDirection: "IN",
+                        quantity: qty || avail,
+                        previousStock: 0,
+                        currentStock: qty,
+                        unitCost: cost,
+                        remarks: "Warehouse reassigned on product save",
+                        actorId
+                    });
+                }
+                seededRows += 1;
+            } else if (other.length > 1) {
+                // Multiple warehouses — do not invent duplicates.
+                continue;
+            }
+        }
 
         if (!inv) {
             const soft = await Inventory.findOne({
                 warehouseId,
                 productId: product._id,
                 productVariantId: variant._id,
-                isDeleted: true,
+                isDeleted: true
             });
             if (soft) {
                 soft.isDeleted = false;
@@ -1865,6 +2031,8 @@ const seedManualOpeningInventory = async (product) => {
         }
 
         if (!inv) {
+            if (target <= 0) continue;
+            const cost = resolveUnitCost(product, variant);
             inv = new Inventory(
                 stampCompany(
                     {
@@ -1875,6 +2043,8 @@ const seedManualOpeningInventory = async (product) => {
                         currentStock: 0,
                         availableStock: 0,
                         reservedStock: 0,
+                        averageCost: cost,
+                        inventoryValue: 0
                     },
                     product.companyId
                 )
@@ -1883,31 +2053,73 @@ const seedManualOpeningInventory = async (product) => {
             inv.companyId = product.companyId;
         }
 
+        const previous = Math.max(Number(inv.currentStock) || 0, 0);
+        const reserved = Math.max(Number(inv.reservedStock) || 0, 0);
+        const nextCurrent = Math.max(target, reserved);
+        const delta = nextCurrent - previous;
         const cost =
-            Number(variant.costPrice) ||
-            Number(variant.purchasePrice) ||
-            unitCost;
-        inv.currentStock = opening;
-        inv.availableStock = opening;
-        inv.reservedStock = 0;
-        if (!inv.averageCost || inv.averageCost <= 0) {
-            inv.averageCost = cost;
-        }
-        inv.inventoryValue = (Number(inv.averageCost) || cost) * opening;
-        inv.stockStatus = opening > 0 ? "In Stock" : "Out Of Stock";
+            Number(inv.averageCost) > 0
+                ? Number(inv.averageCost)
+                : resolveUnitCost(product, variant);
+
+        if (!inv.averageCost || inv.averageCost <= 0) inv.averageCost = cost;
+        inv.currentStock = nextCurrent;
+        inv.availableStock = Math.max(nextCurrent - reserved, 0);
+        inv.inventoryValue = (Number(inv.averageCost) || cost) * nextCurrent;
+        applyStockStatus(inv);
         inv.lastMovementDate = new Date();
         if (branchId && !inv.branchId) inv.branchId = branchId;
         await inv.save();
-        seededRows += 1;
+
+        if (delta !== 0) {
+            const absQty = Math.abs(delta);
+            const isFirst = previous <= 0 && delta > 0;
+            await writeStockMovement({
+                warehouseId: inv.warehouseId,
+                branchId: inv.branchId || branchId,
+                product,
+                variantId: variant._id,
+                sku: variant.sku,
+                productName: product.name,
+                movementType: isFirst ? "Opening Stock" : "Adjustment",
+                movementDirection: delta > 0 ? "IN" : "OUT",
+                quantity: absQty,
+                previousStock: previous,
+                currentStock: nextCurrent,
+                unitCost: Number(inv.averageCost) || cost,
+                remarks: isFirst
+                    ? "Opening stock from product save"
+                    : "Stock adjusted from product save",
+                actorId
+            });
+            if (isFirst) seededRows += 1;
+            else adjustedRows += 1;
+        } else if ((Number(inv.inventoryValue) || 0) <= 0 && nextCurrent > 0) {
+            inv.inventoryValue = (Number(inv.averageCost) || cost) * nextCurrent;
+            await inv.save();
+            adjustedRows += 1;
+        }
     }
 
-    return { seeded: seededRows > 0, seededRows, warehouseId };
+    const widStr = String(warehouseId);
+    const hasWh = (product.warehouseIds || []).some(
+        (id) => String(id) === widStr
+    );
+    if (!hasWh) {
+        product.warehouseIds = [warehouseId, ...(product.warehouseIds || [])];
+        if (typeof product.markModified === "function") {
+            product.markModified("warehouseIds");
+        }
+    }
+
+    return {
+        seeded: seededRows > 0 || adjustedRows > 0,
+        seededRows,
+        adjustedRows,
+        warehouseId
+    };
 };
 
-/**
- * Heal Manual / ThirdParty products that have opening qty on variants but no
- * Inventory rows (common when warehouse was optional at create time).
- */
 const backfillManualOpeningInventory = async (companyId = null) => {
     const tenant = companyId ? { companyId } : {};
     const products = await Product.find({
@@ -1923,7 +2135,7 @@ const backfillManualOpeningInventory = async (companyId = null) => {
     let healed = 0;
     for (const product of products) {
         try {
-            const result = await seedManualOpeningInventory(product);
+            const result = await seedManualOpeningInventory(product, null);
             if (result?.seeded) {
                 healed += 1;
                 await syncProductStockSummary(product);
@@ -2327,7 +2539,7 @@ const updateProduct = async (id, payload = {}, actorId = null) => {
 
     await syncVariants(product, payload.productVariants, actorId);
     if (product.isModified()) await product.save();
-    await seedManualOpeningInventory(product);
+    await seedManualOpeningInventory(product, actorId);
     await syncProductStockSummary(product);
 
     return populateProduct(Product.findById(product._id));
