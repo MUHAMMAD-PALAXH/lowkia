@@ -11,7 +11,7 @@ const ItemTrack = require("../model/itemTrack");
 const Product = require("../model/product");
 const AppError = require("../utils/appError");
 const { generateStockMovementCode } = require("./codeGenerator");
-const { companyFilter } = require("../utils/tenantScope");
+const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
 
 const toObjectId = (value) => {
@@ -461,15 +461,19 @@ const syncProductStockSummaries = async () => {
     return { updated, total: idSet.size, errors };
 };
 
-const clearProductStock = async (productId, actorId = null) => {
+const clearProductStock = async (productId, actorId = null, companyId = null) => {
     const id = toObjectId(productId);
     if (!id) throw new AppError("Invalid product id.", 400);
 
+    const tenant = companyFilter(companyId);
+
     const product = await Product.findOne({
         _id: id,
-        isDeleted: { $ne: true }
+        isDeleted: { $ne: true },
+        ...tenant
     });
     if (!product) throw new AppError("Product not found.", 404);
+    assertDocumentCompany(product, companyId, "Product");
 
     const movementActorId = actorId || product.createdBy || product.vendorId || null;
     if (!movementActorId) {
@@ -482,7 +486,8 @@ const clearProductStock = async (productId, actorId = null) => {
     const rows = await Inventory.find({
         productId: id,
         isDeleted: { $ne: true },
-        currentStock: { $gt: 0 }
+        currentStock: { $gt: 0 },
+        ...tenant
     });
 
     const reservedAgg = await Inventory.aggregate([
@@ -490,7 +495,8 @@ const clearProductStock = async (productId, actorId = null) => {
             $match: {
                 productId: id,
                 isDeleted: { $ne: true },
-                reservedStock: { $gt: 0 }
+                reservedStock: { $gt: 0 },
+                ...tenant
             }
         },
         { $group: { _id: null, reserved: { $sum: "$reservedStock" } } }
@@ -504,7 +510,8 @@ const clearProductStock = async (productId, actorId = null) => {
 
     const blockedImeiCount = await ItemTrack.countDocuments({
         productId: id,
-        status: { $in: ["sold", "repairing", "in-transit"] }
+        status: { $in: ["sold", "repairing", "in-transit"] },
+        ...tenant
     });
     if (blockedImeiCount > 0) {
         throw new AppError(
@@ -521,28 +528,38 @@ const clearProductStock = async (productId, actorId = null) => {
         if (qty <= 0) continue;
 
         const movementNumber = await generateStockMovementCode();
-        await StockMovement.create({
-            movementNumber,
-            movementDate: new Date(),
-            warehouseId: row.warehouseId,
-            branchId: row.branchId || null,
-            productId: row.productId,
-            productVariantId: row.productVariantId || null,
-            sku: "",
-            productName: product.name || product.productCode || "Product",
-            movementType: "Adjustment",
-            movementDirection: "OUT",
-            quantity: qty,
-            previousStock: qty,
-            currentStock: 0,
-            unitCost: Number(row.averageCost) || Number(row.lastPurchasePrice) || 0,
-            totalCost:
-                (Number(row.averageCost) || Number(row.lastPurchasePrice) || 0) * qty,
-            referenceType: "Manual",
-            remarks: "Manual clear stock before product delete",
-            adjustmentReason: "Clear Product Stock",
-            createdBy: movementActorId
-        });
+        await StockMovement.create(
+            stampCompany(
+                {
+                    movementNumber,
+                    movementDate: new Date(),
+                    warehouseId: row.warehouseId,
+                    branchId: row.branchId || null,
+                    productId: row.productId,
+                    productVariantId: row.productVariantId || null,
+                    sku: "",
+                    productName: product.name || product.productCode || "Product",
+                    movementType: "Adjustment",
+                    movementDirection: "OUT",
+                    quantity: qty,
+                    previousStock: qty,
+                    currentStock: 0,
+                    unitCost:
+                        Number(row.averageCost) ||
+                        Number(row.lastPurchasePrice) ||
+                        0,
+                    totalCost:
+                        (Number(row.averageCost) ||
+                            Number(row.lastPurchasePrice) ||
+                            0) * qty,
+                    referenceType: "Manual",
+                    remarks: "Manual clear stock before product delete",
+                    adjustmentReason: "Clear Product Stock",
+                    createdBy: movementActorId
+                },
+                companyId
+            )
+        );
 
         row.currentStock = 0;
         row.availableStock = 0;
@@ -557,7 +574,8 @@ const clearProductStock = async (productId, actorId = null) => {
     const imeiResult = await ItemTrack.updateMany(
         {
             productId: id,
-            status: "available"
+            status: "available",
+            ...tenant
         },
         {
             $set: {
@@ -578,7 +596,12 @@ const clearProductStock = async (productId, actorId = null) => {
     // Also zero any leftover catalog opening qty on variants so summaries stay clean
     const ProductVariant = require("../model/productVariant");
     await ProductVariant.updateMany(
-        { productId: id, isDeleted: { $ne: true }, quantity: { $gt: 0 } },
+        {
+            productId: id,
+            isDeleted: { $ne: true },
+            quantity: { $gt: 0 },
+            ...tenant
+        },
         { $set: { quantity: 0 } }
     );
 

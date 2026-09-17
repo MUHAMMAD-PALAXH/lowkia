@@ -622,22 +622,32 @@ const resolveHeaderRefs = async (payload) => {
     };
 };
 
-const findOrderOrFail = async (id) => {
+const findOrderOrFail = async (id, companyId = null) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
         throw new AppError("Invalid sales order id.", 400);
     }
-    const order = await SalesOrder.findOne({ _id: id, ...NOT_DELETED });
+    const tenant = companyFilter(companyId);
+    const order = await SalesOrder.findOne({
+        _id: id,
+        ...NOT_DELETED,
+        ...tenant
+    });
     if (!order) throw new AppError("Sales order not found.", 404);
-    return order;
+    return assertDocumentCompany(order, companyId, "Sales order");
 };
 
-const findDeletedOrderOrFail = async (id) => {
+const findDeletedOrderOrFail = async (id, companyId = null) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
         throw new AppError("Invalid sales order id.", 400);
     }
-    const order = await SalesOrder.findOne({ _id: id, isDeleted: true });
+    const tenant = companyFilter(companyId);
+    const order = await SalesOrder.findOne({
+        _id: id,
+        isDeleted: true,
+        ...tenant
+    });
     if (!order) throw new AppError("Trash sales order not found.", 404);
-    return order;
+    return assertDocumentCompany(order, companyId, "Sales order");
 };
 
 const resolveSort = (query = {}) => {
@@ -748,14 +758,17 @@ const unmarkImeisSold = async ({
     variantId,
     imeis = [],
     salesOrderId,
+    companyId = null,
     session
 }) => {
+    const tenant = companyFilter(companyId);
     for (const imei of imeis) {
         const track = await ItemTrack.findOne({
             productId,
             ...(variantId ? { variantId } : {}),
             imei,
-            status: "sold"
+            status: "sold",
+            ...tenant
         }).session(session || null);
         if (!track) continue;
         const soldOrderId = track.saleInfo?.orderId
@@ -801,6 +814,7 @@ const reverseStockForTrash = async (order, actorId = null) => {
                     variantId: line.productVariantId,
                     imeis: line.imeis || [],
                     salesOrderId: order._id,
+                    companyId: order.companyId,
                     session
                 });
             }
@@ -1000,8 +1014,8 @@ const getSalesOrderById = async (
     return order;
 };
 
-const updateSalesOrder = async (id, payload, actorId = null) => {
-    const order = await findOrderOrFail(id);
+const updateSalesOrder = async (id, payload, actorId = null, companyId = null) => {
+    const order = await findOrderOrFail(id, companyId);
     if (!EDITABLE_STATUSES.includes(order.status)) {
         throw new AppError(
             `Cannot edit a sales order in "${order.status}" status.`,
@@ -1105,8 +1119,8 @@ const updateSalesOrder = async (id, payload, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const deleteSalesOrder = async (id, actorId = null) => {
-    const order = await findOrderOrFail(id);
+const deleteSalesOrder = async (id, actorId = null, companyId = null) => {
+    const order = await findOrderOrFail(id, companyId);
     // Stocked orders: put inventory/IMEI back so active calculations stay correct.
     await reverseStockForTrash(order, actorId);
     order.isDeleted = true;
@@ -1117,8 +1131,8 @@ const deleteSalesOrder = async (id, actorId = null) => {
     return order;
 };
 
-const restoreSalesOrder = async (id, actorId = null) => {
-    const order = await findDeletedOrderOrFail(id);
+const restoreSalesOrder = async (id, actorId = null, companyId = null) => {
+    const order = await findDeletedOrderOrFail(id, companyId);
     order.isDeleted = false;
     order.deletedAt = null;
     order.deletedBy = null;
@@ -1132,8 +1146,8 @@ const restoreSalesOrder = async (id, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const permanentDeleteSalesOrder = async (id, actorId = null) => {
-    const order = await findDeletedOrderOrFail(id);
+const permanentDeleteSalesOrder = async (id, actorId = null, companyId = null) => {
+    const order = await findDeletedOrderOrFail(id, companyId);
     // Must already be in trash. Hard-delete document.
     await SalesOrder.deleteOne({ _id: order._id, isDeleted: true });
     return { id: String(order._id), orderNumber: order.orderNumber };
@@ -1145,9 +1159,10 @@ const permanentDeleteSalesOrder = async (id, actorId = null) => {
  */
 const bulkDeleteSalesOrders = async (
     { ids = [], scope = "ids", status } = {},
-    actorId = null
+    actorId = null,
+    companyId = null
 ) => {
-    const filter = { ...NOT_DELETED };
+    const filter = { ...NOT_DELETED, ...companyFilter(companyId) };
     const scopeKey = String(scope || "ids").toLowerCase();
 
     if (scopeKey === "ids") {
@@ -1204,9 +1219,10 @@ const bulkDeleteSalesOrders = async (
 
 const bulkRestoreSalesOrders = async (
     { ids = [], scope = "ids", status } = {},
-    actorId = null
+    actorId = null,
+    companyId = null
 ) => {
-    const filter = { isDeleted: true };
+    const filter = { isDeleted: true, ...companyFilter(companyId) };
     const scopeKey = String(scope || "ids").toLowerCase();
 
     if (scopeKey === "ids") {
@@ -1250,9 +1266,10 @@ const bulkRestoreSalesOrders = async (
 
 const bulkPermanentDeleteSalesOrders = async (
     { ids = [], scope = "ids" } = {},
-    actorId = null
+    actorId = null,
+    companyId = null
 ) => {
-    const filter = { isDeleted: true };
+    const filter = { isDeleted: true, ...companyFilter(companyId) };
     const scopeKey = String(scope || "ids").toLowerCase();
 
     if (scopeKey === "ids") {
@@ -1276,8 +1293,8 @@ const bulkPermanentDeleteSalesOrders = async (
     return { deleted: result.deletedCount || 0 };
 };
 
-const submitSalesOrder = async (id, actorId = null) => {
-    const order = await findOrderOrFail(id);
+const submitSalesOrder = async (id, actorId = null, companyId = null) => {
+    const order = await findOrderOrFail(id, companyId);
     if (order.status !== "Draft") {
         throw new AppError("Only Draft orders can be submitted.", 400);
     }
@@ -1290,8 +1307,8 @@ const submitSalesOrder = async (id, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const approveSalesOrder = async (id, actorId = null) => {
-    const order = await findOrderOrFail(id);
+const approveSalesOrder = async (id, actorId = null, companyId = null) => {
+    const order = await findOrderOrFail(id, companyId);
     if (!["Draft", "Pending Approval"].includes(order.status)) {
         throw new AppError(
             `Cannot approve a sales order in "${order.status}" status.`,
@@ -1306,8 +1323,8 @@ const approveSalesOrder = async (id, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const cancelSalesOrder = async (id, actorId = null, reason = "") => {
-    const order = await findOrderOrFail(id);
+const cancelSalesOrder = async (id, actorId = null, reason = "", companyId = null) => {
+    const order = await findOrderOrFail(id, companyId);
     if (["Completed", "Cancelled"].includes(order.status)) {
         throw new AppError(
             `Cannot cancel a sales order in "${order.status}" status.`,
@@ -1558,14 +1575,17 @@ const markImeisSold = async ({
     warrantyExpiry,
     warrantyType,
     warrantyPeriod,
+    companyId = null,
     session
 }) => {
+    const tenant = companyFilter(companyId);
     for (const imei of imeis) {
         const track = await ItemTrack.findOne({
             productId,
             ...(variantId ? { variantId } : {}),
             imei,
-            status: "available"
+            status: "available",
+            ...tenant
         }).session(session || null);
 
         if (!track) {
@@ -1610,8 +1630,8 @@ const markImeisSold = async ({
  * Confirm = lock order + deduct warehouse stock (ERP stock OUT).
  * Accepts Draft / Pending Approval / Approved.
  */
-const confirmSalesOrder = async (id, actorId = null) => {
-    const order = await findOrderOrFail(id);
+const confirmSalesOrder = async (id, actorId = null, companyId = null) => {
+    const order = await findOrderOrFail(id, companyId);
 
     if (order.stockUpdated) {
         throw new AppError("Stock already deducted for this order.", 400);
@@ -1712,6 +1732,7 @@ const applyStockOut = async (
                     warrantyExpiry: line.warrantyEndDate || null,
                     warrantyType: line.warrantyType,
                     warrantyPeriod: line.warrantyPeriod,
+                    companyId: order.companyId,
                     session
                 });
             }
@@ -1792,8 +1813,8 @@ const applyStockOut = async (
  * Stock OUT when payment is successful (Paid) OR goods are delivered.
  * Showroom one-shot: mark paid + delivered + stock out.
  */
-const completeSale = async (id, payload = {}, actorId = null) => {
-    const order = await findOrderOrFail(id);
+const completeSale = async (id, payload = {}, actorId = null, companyId = null) => {
+    const order = await findOrderOrFail(id, companyId);
     if (["Cancelled"].includes(order.status)) {
         throw new AppError("Cannot complete a cancelled sales order.", 400);
     }
@@ -1865,8 +1886,8 @@ const completeSale = async (id, payload = {}, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const markPaid = async (id, payload = {}, actorId = null) => {
-    const order = await findOrderOrFail(id);
+const markPaid = async (id, payload = {}, actorId = null, companyId = null) => {
+    const order = await findOrderOrFail(id, companyId);
     if (order.status === "Cancelled") {
         throw new AppError("Cannot pay a cancelled order.", 400);
     }
@@ -1919,8 +1940,8 @@ const markPaid = async (id, payload = {}, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const deliverSalesOrder = async (id, actorId = null) => {
-    const order = await findOrderOrFail(id);
+const deliverSalesOrder = async (id, actorId = null, companyId = null) => {
+    const order = await findOrderOrFail(id, companyId);
     if (order.status === "Cancelled") {
         throw new AppError("Cannot deliver a cancelled order.", 400);
     }
@@ -1942,8 +1963,8 @@ const deliverSalesOrder = async (id, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const completeSalesOrder = async (id, actorId = null) => {
-    return deliverSalesOrder(id, actorId);
+const completeSalesOrder = async (id, actorId = null, companyId = null) => {
+    return deliverSalesOrder(id, actorId, companyId);
 };
 
 const lookupByBarcode = async (
@@ -2534,5 +2555,8 @@ module.exports = {
     lookupByBarcode,
     lookupByImei,
     lookupByOrderCode,
-    getBranchCatalog
+    getBranchCatalog,
+    // Exported for focused tenant unit tests
+    markImeisSold,
+    unmarkImeisSold
 };

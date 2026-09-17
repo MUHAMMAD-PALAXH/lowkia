@@ -99,7 +99,8 @@ exports.permanentDeleteRepairTicket = asyncHandler(async (req, res) => {
 exports.bulkDeleteRepairTickets = asyncHandler(async (req, res) => {
     const result = await repairTicketService.bulkDeleteRepairTickets(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Repair tickets moved to trash.", result);
 });
@@ -107,14 +108,16 @@ exports.bulkDeleteRepairTickets = asyncHandler(async (req, res) => {
 exports.bulkRestoreRepairTickets = asyncHandler(async (req, res) => {
     const result = await repairTicketService.bulkRestoreRepairTickets(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Repair tickets restored from trash.", result);
 });
 
 exports.bulkPermanentDeleteRepairTickets = asyncHandler(async (req, res) => {
     const result = await repairTicketService.bulkPermanentDeleteRepairTickets(
-        req.body || {}
+        req.body || {},
+        req.companyId
     );
     return success(res, "Trash items permanently deleted.", result);
 });

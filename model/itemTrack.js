@@ -2,10 +2,11 @@ const mongoose = require('mongoose');
 const tenantPlugin = require("./plugins/tenant.plugin");
 
 const itemTrackSchema = new mongoose.Schema({
+  // Global unique removed (G-2c Phase A). Live uniqueness is company-scoped
+  // partial unique index companyId_1_imei_1 (Phase D). Do not syncIndexes.
   imei: { 
     type: String, 
     required: true, 
-    unique: true, 
     trim: true,
     index: true 
   },

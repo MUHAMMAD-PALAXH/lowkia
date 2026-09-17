@@ -66,6 +66,14 @@ const storagePaymentQr = new CloudinaryStorage({
     },
 });
 
+const storageProfile = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'admin-profile',
+        allowed_formats: ['jpg', 'png', 'jpeg'],
+    },
+});
+
 // 3. MULTER CONFIGURATION
 
 const uploadCategory = multer({
@@ -98,6 +106,12 @@ const uploadPaymentQr = multer({
     fileFilter: fileFilter,
 });
 
+const uploadProfile = multer({
+    storage: storageProfile,
+    limits: { fileSize: 1024 * 1024 * 5 },
+    fileFilter: fileFilter,
+});
+
 
 module.exports = {
     uploadCategory,
@@ -105,4 +119,5 @@ module.exports = {
     uploadPosters,
     uploadPaymentProof,
     uploadPaymentQr,
+    uploadProfile,
 };

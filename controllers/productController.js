@@ -83,7 +83,8 @@ exports.getProductDeleteCheck = asyncHandler(async (req, res) => {
 exports.prepareAndTrashProduct = asyncHandler(async (req, res) => {
     const data = await productService.prepareAndTrashProduct(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Product blockers cleared and moved to trash.", data);
 });
@@ -104,7 +105,8 @@ exports.bulkPrepareAndTrashProducts = asyncHandler(async (req, res) => {
         try {
             const data = await productService.prepareAndTrashProduct(
                 id,
-                getActorId(req)
+                getActorId(req),
+                req.companyId
             );
             deleted += 1;
             results.push(data);

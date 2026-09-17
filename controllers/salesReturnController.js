@@ -38,7 +38,8 @@ exports.getReturnById = asyncHandler(async (req, res) => {
 exports.receiveReturn = asyncHandler(async (req, res) => {
     const doc = await salesReturnService.receiveReturn(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Return received. Stock restored.", doc);
 });
@@ -59,7 +60,8 @@ exports.getReturnStats = asyncHandler(async (req, res) => {
 exports.deleteSalesReturn = asyncHandler(async (req, res) => {
     const result = await salesReturnService.deleteSalesReturn(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales return moved to trash.", result);
 });
@@ -67,14 +69,16 @@ exports.deleteSalesReturn = asyncHandler(async (req, res) => {
 exports.restoreSalesReturn = asyncHandler(async (req, res) => {
     const doc = await salesReturnService.restoreSalesReturn(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales return restored from trash.", doc);
 });
 
 exports.permanentDeleteSalesReturn = asyncHandler(async (req, res) => {
     const result = await salesReturnService.permanentDeleteSalesReturn(
-        req.params.id
+        req.params.id,
+        req.companyId
     );
     return success(res, "Sales return permanently deleted.", result);
 });
@@ -82,7 +86,8 @@ exports.permanentDeleteSalesReturn = asyncHandler(async (req, res) => {
 exports.bulkDeleteSalesReturns = asyncHandler(async (req, res) => {
     const result = await salesReturnService.bulkDeleteSalesReturns(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales returns moved to trash.", result);
 });
@@ -90,14 +95,16 @@ exports.bulkDeleteSalesReturns = asyncHandler(async (req, res) => {
 exports.bulkRestoreSalesReturns = asyncHandler(async (req, res) => {
     const result = await salesReturnService.bulkRestoreSalesReturns(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales returns restored from trash.", result);
 });
 
 exports.bulkPermanentDeleteSalesReturns = asyncHandler(async (req, res) => {
     const result = await salesReturnService.bulkPermanentDeleteSalesReturns(
-        req.body || {}
+        req.body || {},
+        req.companyId
     );
     return success(res, "Trash sales returns permanently deleted.", result);
 });

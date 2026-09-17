@@ -47,20 +47,26 @@ exports.updateSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.updateSalesOrder(
         req.params.id,
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales order updated successfully.", order);
 });
 
 exports.deleteSalesOrder = asyncHandler(async (req, res) => {
-    await salesOrderService.deleteSalesOrder(req.params.id, getActorId(req));
+    await salesOrderService.deleteSalesOrder(
+        req.params.id,
+        getActorId(req),
+        req.companyId
+    );
     return success(res, "Sales order moved to trash.", null);
 });
 
 exports.restoreSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.restoreSalesOrder(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales order restored from trash.", order);
 });
@@ -68,7 +74,8 @@ exports.restoreSalesOrder = asyncHandler(async (req, res) => {
 exports.permanentDeleteSalesOrder = asyncHandler(async (req, res) => {
     const result = await salesOrderService.permanentDeleteSalesOrder(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales order permanently deleted.", result);
 });
@@ -76,7 +83,8 @@ exports.permanentDeleteSalesOrder = asyncHandler(async (req, res) => {
 exports.bulkDeleteSalesOrders = asyncHandler(async (req, res) => {
     const result = await salesOrderService.bulkDeleteSalesOrders(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales orders moved to trash.", result);
 });
@@ -84,7 +92,8 @@ exports.bulkDeleteSalesOrders = asyncHandler(async (req, res) => {
 exports.bulkRestoreSalesOrders = asyncHandler(async (req, res) => {
     const result = await salesOrderService.bulkRestoreSalesOrders(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales orders restored from trash.", result);
 });
@@ -92,7 +101,8 @@ exports.bulkRestoreSalesOrders = asyncHandler(async (req, res) => {
 exports.bulkPermanentDeleteSalesOrders = asyncHandler(async (req, res) => {
     const result = await salesOrderService.bulkPermanentDeleteSalesOrders(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Trash items permanently deleted.", result);
 });
@@ -100,7 +110,8 @@ exports.bulkPermanentDeleteSalesOrders = asyncHandler(async (req, res) => {
 exports.submitSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.submitSalesOrder(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales order submitted successfully.", order);
 });
@@ -108,7 +119,8 @@ exports.submitSalesOrder = asyncHandler(async (req, res) => {
 exports.approveSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.approveSalesOrder(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales order approved successfully.", order);
 });
@@ -116,7 +128,8 @@ exports.approveSalesOrder = asyncHandler(async (req, res) => {
 exports.confirmSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.confirmSalesOrder(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(
         res,
@@ -129,7 +142,8 @@ exports.completeSale = asyncHandler(async (req, res) => {
     const order = await salesOrderService.completeSale(
         req.params.id,
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(
         res,
@@ -142,7 +156,8 @@ exports.markPaid = asyncHandler(async (req, res) => {
     const order = await salesOrderService.markPaid(
         req.params.id,
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Payment recorded.", order);
 });
@@ -150,7 +165,8 @@ exports.markPaid = asyncHandler(async (req, res) => {
 exports.deliverSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.deliverSalesOrder(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Order delivered. Stock updated if needed.", order);
 });
@@ -158,7 +174,8 @@ exports.deliverSalesOrder = asyncHandler(async (req, res) => {
 exports.completeSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.completeSalesOrder(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.companyId
     );
     return success(res, "Sales order completed successfully.", order);
 });
@@ -201,7 +218,8 @@ exports.cancelSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.cancelSalesOrder(
         req.params.id,
         getActorId(req),
-        req.body?.reason || ""
+        req.body?.reason || "",
+        req.companyId
     );
     return success(res, "Sales order cancelled successfully.", order);
 });

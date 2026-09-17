@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const AppError = require("./appError");
+const { companyFilter } = require("./tenantScope");
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -59,9 +60,16 @@ const clearSoftDeleted = (doc, actorId = null) => {
     return doc;
 };
 
+const applyTenant = (filter, companyId) => {
+    if (companyId == null || companyId === "") return filter;
+    return { ...filter, ...companyFilter(companyId) };
+};
+
 /**
  * Generic soft-delete trash operations for any Mongoose model
  * that uses isDeleted / deletedAt / deletedBy.
+ *
+ * When companyId is provided, all find/bulk ops are tenant-scoped.
  */
 const createTrashOps = (Model, options = {}) => {
     const {
@@ -70,10 +78,10 @@ const createTrashOps = (Model, options = {}) => {
         dateField = "createdAt",
         statusField = "status",
         restoreStatus = "Active",
-        softDeleteExtra = null, // (doc) => void
-        restoreExtra = null, // (doc) => void
-        beforeSoftDelete = null, // async (doc, actorId) => void — throw to block
-        beforePermanent = null, // async (doc) => void
+        softDeleteExtra = null,
+        restoreExtra = null,
+        beforeSoftDelete = null,
+        beforePermanent = null,
         scopeStatusMap = {
             active: "Active",
             inactive: "Inactive",
@@ -83,26 +91,31 @@ const createTrashOps = (Model, options = {}) => {
         }
     } = options;
 
-    const findActiveOrFail = async (id) => {
+    const findActiveOrFail = async (id, companyId = null) => {
         if (!mongoose.Types.ObjectId.isValid(id)) {
             throw new AppError(`Invalid ${label.toLowerCase()} id.`, 400);
         }
-        const doc = await Model.findOne({ _id: id, isDeleted: { $ne: true } });
+        const filter = applyTenant(
+            { _id: id, isDeleted: { $ne: true } },
+            companyId
+        );
+        const doc = await Model.findOne(filter);
         if (!doc) throw new AppError(`${label} not found.`, 404);
         return doc;
     };
 
-    const findTrashOrFail = async (id) => {
+    const findTrashOrFail = async (id, companyId = null) => {
         if (!mongoose.Types.ObjectId.isValid(id)) {
             throw new AppError(`Invalid ${label.toLowerCase()} id.`, 400);
         }
-        const doc = await Model.findOne({ _id: id, isDeleted: true });
+        const filter = applyTenant({ _id: id, isDeleted: true }, companyId);
+        const doc = await Model.findOne(filter);
         if (!doc) throw new AppError(`Trash ${label.toLowerCase()} not found.`, 404);
         return doc;
     };
 
-    const softDelete = async (id, actorId = null) => {
-        const doc = await findActiveOrFail(id);
+    const softDelete = async (id, actorId = null, companyId = null) => {
+        const doc = await findActiveOrFail(id, companyId);
         if (beforeSoftDelete) await beforeSoftDelete(doc, actorId);
         markSoftDeleted(doc, actorId);
         if (softDeleteExtra) softDeleteExtra(doc);
@@ -110,8 +123,8 @@ const createTrashOps = (Model, options = {}) => {
         return doc;
     };
 
-    const restore = async (id, actorId = null) => {
-        const doc = await findTrashOrFail(id);
+    const restore = async (id, actorId = null, companyId = null) => {
+        const doc = await findTrashOrFail(id, companyId);
         clearSoftDeleted(doc, actorId);
         if (restoreStatus && statusField) {
             doc[statusField] = restoreStatus;
@@ -121,17 +134,24 @@ const createTrashOps = (Model, options = {}) => {
         return doc;
     };
 
-    const permanentDelete = async (id) => {
-        const doc = await findTrashOrFail(id);
+    const permanentDelete = async (id, companyId = null) => {
+        const doc = await findTrashOrFail(id, companyId);
         if (beforePermanent) await beforePermanent(doc);
-        await Model.deleteOne({ _id: doc._id, isDeleted: true });
+        await Model.deleteOne(
+            applyTenant({ _id: doc._id, isDeleted: true }, companyId)
+        );
         return { id: String(doc._id) };
     };
 
-    const buildScopeFilter = ({ ids = [], scope = "ids", status } = {}, trash) => {
-        const filter = trash
+    const buildScopeFilter = (
+        { ids = [], scope = "ids", status } = {},
+        trash,
+        companyId = null
+    ) => {
+        let filter = trash
             ? { isDeleted: true }
             : { isDeleted: { $ne: true } };
+        filter = applyTenant(filter, companyId);
         const scopeKey = String(scope || "ids").toLowerCase();
 
         if (scopeKey === "ids") {
@@ -144,7 +164,7 @@ const createTrashOps = (Model, options = {}) => {
             }
             filter._id = { $in: objectIds };
         } else if (scopeKey === "all") {
-            // all matching trash/active
+            // all matching trash/active within tenant
         } else if (scopeStatusMap[scopeKey]) {
             filter[statusField] = scopeStatusMap[scopeKey];
         } else if (status) {
@@ -155,8 +175,12 @@ const createTrashOps = (Model, options = {}) => {
         return filter;
     };
 
-    const bulkSoftDelete = async (payload = {}, actorId = null) => {
-        const filter = buildScopeFilter(payload, false);
+    const bulkSoftDelete = async (
+        payload = {},
+        actorId = null,
+        companyId = null
+    ) => {
+        const filter = buildScopeFilter(payload, false, companyId);
         const docs = await Model.find(filter);
         if (!docs.length) {
             throw new AppError(
@@ -186,8 +210,12 @@ const createTrashOps = (Model, options = {}) => {
         return { deleted, failed: errors.length, errors };
     };
 
-    const bulkRestore = async (payload = {}, actorId = null) => {
-        const filter = buildScopeFilter(payload, true);
+    const bulkRestore = async (
+        payload = {},
+        actorId = null,
+        companyId = null
+    ) => {
+        const filter = buildScopeFilter(payload, true, companyId);
         const docs = await Model.find(filter);
         let restored = 0;
         for (const doc of docs) {
@@ -202,8 +230,8 @@ const createTrashOps = (Model, options = {}) => {
         return { restored };
     };
 
-    const bulkPermanentDelete = async (payload = {}) => {
-        const filter = buildScopeFilter(payload, true);
+    const bulkPermanentDelete = async (payload = {}, companyId = null) => {
+        const filter = buildScopeFilter(payload, true, companyId);
         if (beforePermanent) {
             const docs = await Model.find(filter);
             for (const doc of docs) {
@@ -214,7 +242,8 @@ const createTrashOps = (Model, options = {}) => {
         return { deleted: result.deletedCount || 0 };
     };
 
-    const trashCount = () => Model.countDocuments({ isDeleted: true });
+    const trashCount = (companyId = null) =>
+        Model.countDocuments(applyTenant({ isDeleted: true }, companyId));
 
     return {
         toObjectId,

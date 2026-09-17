@@ -44,7 +44,8 @@ exports.syncProductStock = asyncHandler(async (req, res) => {
 exports.clearProductStock = asyncHandler(async (req, res) => {
     const data = await inventoryService.clearProductStock(
         req.body.productId,
-        req.body.actorId || null
+        req.body.actorId || req.user?._id || null,
+        req.companyId
     );
     return success(res, "Product stock cleared successfully.", data);
 });

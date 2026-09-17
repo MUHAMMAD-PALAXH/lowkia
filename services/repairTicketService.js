@@ -301,10 +301,29 @@ const createRepairTicket = async (
         warrantyExpiry = null;
         itemTrackId = null;
     } else if (trackingType === "IMEI" && device.imei1) {
-        const track = await ItemTrack.findOne({
+        let track = await ItemTrack.findOne({
             imei: device.imei1,
-            isDeleted: { $ne: true }
+            isDeleted: { $ne: true },
+            ...tenant
         });
+        // Transition: unstamped track owned by this company's product.
+        if (!track) {
+            track = await ItemTrack.findOne({
+                imei: device.imei1,
+                isDeleted: { $ne: true },
+                $or: [{ companyId: null }, { companyId: { $exists: false } }]
+            }).populate("productId", "companyId");
+            const productCompany = track?.productId?.companyId;
+            if (
+                !track ||
+                !productCompany ||
+                String(productCompany) !== String(companyId)
+            ) {
+                track = null;
+            } else {
+                track.companyId = companyId;
+            }
+        }
         if (track) {
             itemTrackId = track._id;
             warrantyChecked = true;
@@ -620,7 +639,7 @@ const deleteRepairTicket = async (id, actorId = null, companyId = null) => {
         throw err;
     }
     assertDocumentCompany(existing, companyId, "Repair ticket");
-    const doc = await trash.softDelete(id, actorId);
+    const doc = await trash.softDelete(id, actorId, companyId);
     return { id: String(doc._id) };
 };
 
@@ -637,7 +656,7 @@ const restoreRepairTicket = async (id, actorId = null, companyId = null) => {
         throw err;
     }
     assertDocumentCompany(existing, companyId, "Repair ticket");
-    await trash.restore(id, actorId);
+    await trash.restore(id, actorId, companyId);
     return getRepairTicketById(id, companyId);
 };
 
@@ -654,15 +673,15 @@ const permanentDeleteRepairTicket = async (id, companyId = null) => {
         throw err;
     }
     assertDocumentCompany(existing, companyId, "Repair ticket");
-    return trash.permanentDelete(id);
+    return trash.permanentDelete(id, companyId);
 };
 
-const bulkDeleteRepairTickets = (payload, actorId) =>
-    trash.bulkSoftDelete(payload, actorId);
-const bulkRestoreRepairTickets = (payload, actorId) =>
-    trash.bulkRestore(payload, actorId);
-const bulkPermanentDeleteRepairTickets = (payload) =>
-    trash.bulkPermanentDelete(payload);
+const bulkDeleteRepairTickets = (payload, actorId, companyId = null) =>
+    trash.bulkSoftDelete(payload, actorId, companyId);
+const bulkRestoreRepairTickets = (payload, actorId, companyId = null) =>
+    trash.bulkRestore(payload, actorId, companyId);
+const bulkPermanentDeleteRepairTickets = (payload, companyId = null) =>
+    trash.bulkPermanentDelete(payload, companyId);
 
 const getRepairTicketStats = async (query = {}, companyId = null) => {
     const tenant = companyFilter(companyId);

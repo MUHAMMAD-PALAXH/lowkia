@@ -2,6 +2,7 @@ const express = require('express');
 const asyncHandler = require('express-async-handler');
 const router = express.Router();
 const AdminUser = require('../model/adminUser');
+const Employee = require('../model/employee');
 const CompanySubscription = require('../model/companySubscription');
 const Company = require('../model/company');
 const Product = require('../model/product');
@@ -13,6 +14,7 @@ const { ensureSupplierLoginProfile } = require('../services/supplierService');
 const jwt = require('jsonwebtoken');
 const otpGenerator = require('otp-generator');
 const { Resend } = require('resend');
+const { uploadProfile } = require('../uploadFile');
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const otpStore = {}; // Use Redis in production
@@ -765,6 +767,59 @@ router.post('/update-profile', protect, asyncHandler(async (req, res) => {
     success: true,
     data: { user: req.user, token },
     message: email && email.toLowerCase() !== req.user.email ? 'Email changed – verify new email' : 'Profile updated',
+  });
+}));
+
+const syncLinkedEmployeePhoto = async (userId, photoUrl) => {
+  if (!userId) return;
+  await Employee.updateMany(
+    { userId, isDeleted: { $ne: true } },
+    { $set: { photo: photoUrl || '' } }
+  );
+};
+
+// Upload / replace own profile picture (no OTP — photo-only change)
+router.post('/profile-image', protect, (req, res) => {
+  uploadProfile.single('image')(req, res, async (err) => {
+    try {
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          message: err.message || 'Upload failed',
+        });
+      }
+      if (!req.file?.path) {
+        return res.status(400).json({
+          success: false,
+          message: 'Image file is required (jpeg/jpg/png).',
+        });
+      }
+      req.user.profileImage = req.file.path;
+      await req.user.save();
+      await syncLinkedEmployeePhoto(req.user._id, req.file.path);
+      return res.json({
+        success: true,
+        data: { user: req.user },
+        message: 'Profile photo updated.',
+      });
+    } catch (e) {
+      return res.status(500).json({
+        success: false,
+        message: e.message || 'Failed to save profile photo.',
+      });
+    }
+  });
+});
+
+// Remove own profile picture
+router.delete('/profile-image', protect, asyncHandler(async (req, res) => {
+  req.user.profileImage = '';
+  await req.user.save();
+  await syncLinkedEmployeePhoto(req.user._id, '');
+  res.json({
+    success: true,
+    data: { user: req.user },
+    message: 'Profile photo removed.',
   });
 }));
 

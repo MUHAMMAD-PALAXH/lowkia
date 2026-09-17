@@ -8,6 +8,8 @@
         "seed": "node seeders/index.js",
         "seed:global-admin": "node -e \"require('dotenv').config(); require('mongoose').connect(process.env.MONGO_URL).then(()=>require('./seeders/globalSuperAdminSeeder')()).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)})\"",
         "migrate:tenancy": "node seeders/migrateTenancy.js",
+        "audit:itemtrack-company": "node seeders/auditItemTrackCompany.js",
+        "backfill:itemtrack-company": "node seeders/backfillItemTrackCompany.js",
         "seed:plans": "node seeders/subscriptionPlanSeeder.js",
         "test": "node tests/run.js",
         "test:unit": "node tests/run.js"

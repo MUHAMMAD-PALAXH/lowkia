@@ -267,12 +267,18 @@ const createFromSalesOrder = async (
     return populateReturn(SalesReturn.findById(doc._id));
 };
 
-const receiveReturn = async (id, actorId = null) => {
+const receiveReturn = async (id, actorId = null, companyId = null) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
         throw new AppError("Invalid return id.", 400);
     }
-    const ret = await SalesReturn.findOne({ _id: id, ...NOT_DELETED });
+    const tenant = companyFilter(companyId);
+    const ret = await SalesReturn.findOne({
+        _id: id,
+        ...NOT_DELETED,
+        ...tenant
+    });
     if (!ret) throw new AppError("Sales return not found.", 404);
+    assertDocumentCompany(ret, companyId, "Sales return");
     if (["Received", "Refunded"].includes(ret.status)) {
         throw new AppError(
             "This return was already received. Stock was restored once — cannot receive again.",
@@ -333,40 +339,64 @@ const receiveReturn = async (id, actorId = null) => {
             // IMEI: only restore units that are still marked sold
             if (line.trackingType === "IMEI") {
                 for (const imei of line.imeis || []) {
-                    const track = await ItemTrack.findOne({ imei }).session(
-                        session
-                    );
-                    if (!track) {
+                    const track = await ItemTrack.findOne({
+                        imei,
+                        ...tenant
+                    }).session(session);
+                    // Transition: unstamped sold track for this tenant's product.
+                    let resolved = track;
+                    if (!resolved) {
+                        const orphan = await ItemTrack.findOne({
+                            imei,
+                            $or: [
+                                { companyId: null },
+                                { companyId: { $exists: false } }
+                            ]
+                        })
+                            .populate("productId", "companyId")
+                            .session(session);
+                        const productCompany = orphan?.productId?.companyId;
+                        if (
+                            orphan &&
+                            productCompany &&
+                            String(productCompany) === String(companyId)
+                        ) {
+                            orphan.companyId = companyId;
+                            resolved = orphan;
+                        }
+                    }
+                    if (!resolved) {
                         throw new AppError(`IMEI ${imei} not found.`, 404);
                     }
-                    if (track.status !== "sold") {
+                    if (resolved.status !== "sold") {
                         throw new AppError(
-                            `IMEI ${imei} is already "${track.status}". It cannot be returned to stock again.`,
+                            `IMEI ${imei} is already "${resolved.status}". It cannot be returned to stock again.`,
                             400
                         );
                     }
-                    track.status = "available";
-                    track.warrantyExpiry = undefined;
-                    track.saleInfo = {
-                        ...(track.saleInfo || {}),
+                    resolved.status = "available";
+                    resolved.warrantyExpiry = undefined;
+                    resolved.saleInfo = {
+                        ...(resolved.saleInfo || {}),
                         orderId: undefined,
                         soldDate: undefined,
                         customerPhone: undefined
                     };
-                    track.history = track.history || [];
-                    track.history.push({
+                    resolved.history = resolved.history || [];
+                    resolved.history.push({
                         status: "available",
                         date: new Date(),
                         notes: `Returned via ${ret.returnNumber} — warranty cleared until next sale`
                     });
-                    await track.save({ session });
+                    await resolved.save({ session });
                 }
             }
 
             const filter = {
                 warehouseId: ret.warehouseId,
                 productId: line.productId,
-                isDeleted: { $ne: true }
+                isDeleted: { $ne: true },
+                ...tenant
             };
             if (line.productVariantId) {
                 filter.productVariantId = line.productVariantId;
@@ -381,18 +411,21 @@ const receiveReturn = async (id, actorId = null) => {
             if (!inv) {
                 const [created] = await Inventory.create(
                     [
-                        {
-                            warehouseId: ret.warehouseId,
-                            branchId: ret.branchId,
-                            productId: line.productId,
-                            productVariantId: line.productVariantId || null,
-                            sku: line.sku || "",
-                            productName: line.productName,
-                            currentStock: 0,
-                            availableStock: 0,
-                            reservedStock: 0,
-                            averageCost: line.unitPrice || 0
-                        }
+                        stampCompany(
+                            {
+                                warehouseId: ret.warehouseId,
+                                branchId: ret.branchId,
+                                productId: line.productId,
+                                productVariantId: line.productVariantId || null,
+                                sku: line.sku || "",
+                                productName: line.productName,
+                                currentStock: 0,
+                                availableStock: 0,
+                                reservedStock: 0,
+                                averageCost: line.unitPrice || 0
+                            },
+                            companyId
+                        )
                     ],
                     { session }
                 );
@@ -680,15 +713,18 @@ const getReturnStats = async (companyId = null) => {
     return stats;
 };
 
-const deleteSalesReturn = (id, actorId = null) => trash.softDelete(id, actorId);
-const restoreSalesReturn = (id, actorId = null) => trash.restore(id, actorId);
-const permanentDeleteSalesReturn = (id) => trash.permanentDelete(id);
-const bulkDeleteSalesReturns = (payload, actorId) =>
-    trash.bulkSoftDelete(payload, actorId);
-const bulkRestoreSalesReturns = (payload, actorId) =>
-    trash.bulkRestore(payload, actorId);
-const bulkPermanentDeleteSalesReturns = (payload) =>
-    trash.bulkPermanentDelete(payload);
+const deleteSalesReturn = (id, actorId = null, companyId = null) =>
+    trash.softDelete(id, actorId, companyId);
+const restoreSalesReturn = (id, actorId = null, companyId = null) =>
+    trash.restore(id, actorId, companyId);
+const permanentDeleteSalesReturn = (id, companyId = null) =>
+    trash.permanentDelete(id, companyId);
+const bulkDeleteSalesReturns = (payload, actorId, companyId = null) =>
+    trash.bulkSoftDelete(payload, actorId, companyId);
+const bulkRestoreSalesReturns = (payload, actorId, companyId = null) =>
+    trash.bulkRestore(payload, actorId, companyId);
+const bulkPermanentDeleteSalesReturns = (payload, companyId = null) =>
+    trash.bulkPermanentDelete(payload, companyId);
 
 module.exports = {
     createFromSalesOrder,

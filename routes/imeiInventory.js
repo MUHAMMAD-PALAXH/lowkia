@@ -292,7 +292,8 @@ router.put('/transfer/receive/:id', vendorOrAdmin, asyncHandler(async (req, res)
     {
       imei: { $in: transfer.imeis },
       status: 'in-transit',
-      'transferInfo.transferId': transfer._id
+      'transferInfo.transferId': transfer._id,
+      ...companyFilter(req.companyId)
     },
     {
       $set: {
@@ -571,15 +572,51 @@ router.get('/search/:imei', asyncHandler(async (req, res) => {
 // Optional: Service center updates item status to repairing
 router.put('/repair/issue-ticket', asyncHandler(async (req, res) => {
   const { imei, notes } = req.body;
-  
-  const result = await ItemTrack.findOneAndUpdate(
-    { imei: imei.trim() },
-    { 
+  const raw = String(imei || "").trim();
+  if (!raw) {
+    return res.status(400).json({ success: false, message: "IMEI is required." });
+  }
+
+  const tenant = companyFilter(req.companyId);
+  let result = await ItemTrack.findOneAndUpdate(
+    { imei: raw, ...tenant },
+    {
       $set: { status: 'repairing' },
-      $push: { history: { status: 'repairing', updatedBy: req.user._id, notes: notes || 'Job card issued' } }
+      $push: {
+        history: {
+          status: 'repairing',
+          updatedBy: req.user._id,
+          notes: notes || 'Job card issued'
+        }
+      }
     },
     { new: true }
   );
+
+  // Transition: unstamped track belonging to this company's product.
+  if (!result) {
+    const orphan = await ItemTrack.findOne({
+      imei: raw,
+      $or: [{ companyId: null }, { companyId: { $exists: false } }]
+    }).populate('productId', 'companyId');
+    const productCompany = orphan?.productId?.companyId;
+    if (
+      orphan &&
+      productCompany &&
+      String(productCompany) === String(req.companyId)
+    ) {
+      orphan.companyId = req.companyId;
+      orphan.status = 'repairing';
+      orphan.history = orphan.history || [];
+      orphan.history.push({
+        status: 'repairing',
+        updatedBy: req.user._id,
+        notes: notes || 'Job card issued'
+      });
+      await orphan.save();
+      result = orphan;
+    }
+  }
 
   if (!result) return res.status(404).json({ success: false, message: "IMEI not found." });
   res.json({ success: true, message: "Item status changed to 'repairing'. Ticket issued.", data: result });

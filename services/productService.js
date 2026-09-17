@@ -477,8 +477,8 @@ const unlinkProductFromPurchaseOrders = async (productId, actorId = null) => {
  * Clears resolvable blockers (stock + draft/open POs) then soft-deletes.
  * Used by the friendly "Resolve & trash" product UI.
  */
-const prepareAndTrashProduct = async (id, actorId = null) => {
-    const product = await findProductOrFail(id);
+const prepareAndTrashProduct = async (id, actorId = null, companyId = null) => {
+    const product = await findProductOrFail(id, companyId);
     const steps = [];
     const inventoryService = require("./inventoryService");
     const live = await inventoryService.getLiveWarehouseStock(product._id);
@@ -500,7 +500,8 @@ const prepareAndTrashProduct = async (id, actorId = null) => {
     if (live.invTotal > 0 || live.availableImei > 0) {
         const cleared = await inventoryService.clearProductStock(
             product._id,
-            actorId
+            actorId,
+            companyId
         );
         steps.push({
             action: "clearStock",

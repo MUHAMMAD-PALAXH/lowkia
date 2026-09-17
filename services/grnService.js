@@ -1106,9 +1106,17 @@ const validateDraftLines = (grn) => {
     }
 };
 
-const assertImeiUnique = async (imeis, session) => {
+/**
+ * Tenant-scoped IMEI uniqueness (application layer).
+ * Excludes soft-deleted tracks so IMEI may be reused after clear/trash.
+ * Fail-closed: requires trusted companyId (never client body/query).
+ * Note: live MongoDB imei_1 remains until G-2c Phase D.
+ */
+const assertImeiUnique = async (companyId, imeis, session) => {
+    const tenant = companyFilter(companyId);
     if (!imeis.length) return;
     const existing = await ItemTrack.find({
+        ...tenant,
         imei: { $in: imeis },
         status: { $ne: "deleted" }
     })
@@ -1131,9 +1139,13 @@ const upsertInventory = async ({
     qty,
     purchasePrice,
     grnId,
+    companyId = null,
     session
 }) => {
     if (!productId || qty <= 0) return null;
+
+    // Trusted tenant context required for every Inventory create/update from GRN.
+    companyFilter(companyId);
 
     const filter = {
         warehouseId,
@@ -1160,17 +1172,30 @@ const upsertInventory = async ({
         }
     }
     if (!inv) {
-        inv = new Inventory({
-            warehouseId,
-            branchId: branchId || null,
-            productId,
-            productVariantId: productVariantId || null,
-            currentStock: 0,
-            availableStock: 0,
-            reservedStock: 0
-        });
-    } else if (branchId && !inv.branchId) {
-        inv.branchId = branchId;
+        inv = new Inventory(
+            stampCompany(
+                {
+                    warehouseId,
+                    branchId: branchId || null,
+                    productId,
+                    productVariantId: productVariantId || null,
+                    currentStock: 0,
+                    availableStock: 0,
+                    reservedStock: 0
+                },
+                companyId
+            )
+        );
+    } else {
+        // Never overwrite a foreign company's ownership; stamp only when missing.
+        if (inv.companyId) {
+            assertDocumentCompany(inv, companyId, "Inventory");
+        } else {
+            inv.companyId = companyId;
+        }
+        if (branchId && !inv.branchId) {
+            inv.branchId = branchId;
+        }
     }
 
     const previous = Number(inv.currentStock) || 0;
@@ -1353,7 +1378,7 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
         }
     }
 
-    await assertImeiUnique(allImeis, session);
+    await assertImeiUnique(grn.companyId, allImeis, session);
 
     for (const item of grn.items || []) {
         const accepted = Math.max(Number(item.acceptedQuantity) || 0, 0);
@@ -1369,6 +1394,7 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
             qty: accepted,
             purchasePrice: Number(item.purchasePrice) || 0,
             grnId: grn._id,
+            companyId: grn.companyId,
             session
         });
 
@@ -2361,7 +2387,9 @@ const scanImei = async (id, payload = {}, actorId = null) => {
         );
     }
 
+    const tenant = companyFilter(grn.companyId);
     const exists = await ItemTrack.findOne({
+        ...tenant,
         imei,
         status: { $ne: "deleted" }
     })
@@ -2464,7 +2492,7 @@ const bulkAddImeis = async (id, payload = {}, actorId = null) => {
         );
     }
 
-    await assertImeiUnique(normalized, null);
+    await assertImeiUnique(grn.companyId, normalized, null);
 
     const alreadyOnGrn = new Set();
     for (const item of grn.items || []) {
@@ -2956,5 +2984,8 @@ module.exports = {
     bulkRestoreGrns,
     bulkPermanentDeleteGrns,
     syncOpenDraftGrnLinesForPo,
-    RECEIVABLE_PO
+    RECEIVABLE_PO,
+    // Exported for focused tenant unit tests
+    upsertInventory,
+    assertImeiUnique
 };

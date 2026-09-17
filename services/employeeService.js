@@ -64,7 +64,7 @@ const populateEmployee = (q) =>
         .populate("departmentId", "departmentCode departmentName")
         .populate("designationId", "designationCode designationName")
         .populate("shiftId", "shiftCode shiftName startTime endTime shiftType weeklyOff status")
-        .populate("userId", "firstName lastName email username role status")
+        .populate("userId", "firstName lastName email username role status profileImage")
         .populate("reportingManager", "employeeCode fullName")
         .populate(
             "salaryStructureId",
