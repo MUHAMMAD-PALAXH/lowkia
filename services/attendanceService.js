@@ -1217,6 +1217,137 @@ const getAttendanceById = async (id, managedBranchIds = null, companyId = null) 
     return doc;
 };
 
+/**
+ * Full filtered Attendance Excel export (records + optional daily roster).
+ */
+const exportAttendanceExcel = async (
+    query = {},
+    managedBranchIds = null,
+    companyId = null,
+    actor = null
+) => {
+    const {
+        buildAttendanceWorkbook,
+        buildExportFilename,
+        MAX_EXPORT_ATTENDANCE
+    } = require("./export/attendanceExcelExporter");
+
+    const tenant = companyFilter(companyId);
+    const filter = { ...NOT_DELETED, ...tenant };
+
+    const { applyBranchScopeFilter } = require("../middleware/hrAccess");
+    applyBranchScopeFilter(
+        filter,
+        managedBranchIds,
+        query.branchId && toObjectId(query.branchId)
+            ? toObjectId(query.branchId)
+            : null
+    );
+
+    if (query.employeeId && toObjectId(query.employeeId)) {
+        filter.employeeId = toObjectId(query.employeeId);
+    }
+    if (query.shiftId && toObjectId(query.shiftId)) {
+        filter.shiftId = toObjectId(query.shiftId);
+    }
+    if (query.status) filter.attendanceStatus = query.status;
+    if (query.workDate) filter.workDate = String(query.workDate);
+    if (query.date) filter.workDate = String(query.date);
+    if (query.month) filter.month = Number(query.month);
+    if (query.year) filter.year = Number(query.year);
+
+    const total = await Attendance.countDocuments(filter);
+    if (total > MAX_EXPORT_ATTENDANCE) {
+        throw new AppError(
+            `Too many matching attendance records (${total}). Narrow filters (max ${MAX_EXPORT_ATTENDANCE}).`,
+            400
+        );
+    }
+
+    const records =
+        total === 0
+            ? []
+            : await populateAttendance(
+                  Attendance.find(filter).sort({
+                      attendanceDate: -1,
+                      checkIn: -1
+                  })
+              ).lean();
+
+    let dailyRows = [];
+    let cards = {};
+    const dateKey = String(query.date || query.workDate || "").trim();
+    if (dateKey) {
+        try {
+            const reportService = require("./attendanceReportService");
+            const daily = await reportService.getDailyReport(
+                query,
+                managedBranchIds,
+                companyId
+            );
+            dailyRows = Array.isArray(daily?.employees) ? daily.employees : [];
+            cards = daily?.cards || {};
+        } catch (_) {
+            dailyRows = [];
+        }
+    }
+
+    const filename = buildExportFilename(query);
+    const buffer = await buildAttendanceWorkbook({
+        records,
+        dailyRows,
+        meta: {
+            exportedAt: new Date(),
+            exportedBy:
+                [actor?.firstName, actor?.lastName].filter(Boolean).join(" ") ||
+                actor?.name ||
+                actor?.email ||
+                actor?.username ||
+                "",
+            companyId: companyId ? String(companyId) : "",
+            filters: {
+                date: dateKey,
+                month: query.month || "",
+                year: query.year || "",
+                branchId: query.branchId || "",
+                status: query.status || "",
+                employeeId: query.employeeId || ""
+            },
+            cards
+        }
+    });
+
+    await writeActivityLog({
+        user: actor,
+        companyId,
+        activityType: "Export",
+        module: "Attendance",
+        subModule: "Attendance",
+        description: `Exported attendance Excel (${filename}): ${records.length} record(s)${dailyRows.length ? `, ${dailyRows.length} roster row(s)` : ""}.`,
+        shortDescription: `Attendance Excel export (${records.length})`,
+        referenceType: "Attendance",
+        referenceId: null,
+        newData: {
+            filename,
+            recordCount: records.length,
+            rosterCount: dailyRows.length,
+            filters: {
+                date: dateKey,
+                status: query.status || "",
+                branchId: query.branchId || ""
+            }
+        },
+        securityLevel: "Medium"
+    });
+
+    return {
+        buffer,
+        filename,
+        recordCount: records.length,
+        rosterCount: dailyRows.length
+    };
+};
+
 module.exports = {
     getMyEmployee,
     getMyToday,
@@ -1229,5 +1360,6 @@ module.exports = {
     getAttendanceById,
     listAttendance,
     recomputeDurations,
-    findTodayAttendance
+    findTodayAttendance,
+    exportAttendanceExcel
 };

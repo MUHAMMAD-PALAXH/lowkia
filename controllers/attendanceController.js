@@ -76,6 +76,25 @@ exports.listAttendance = asyncHandler(async (req, res) => {
     return success(res, "Attendance list retrieved.", data);
 });
 
+exports.exportAttendanceExcel = asyncHandler(async (req, res) => {
+    const { buffer, filename } = await attendanceService.exportAttendanceExcel(
+        req.query,
+        req.managedBranchIds ?? null,
+        req.companyId,
+        req.user
+    );
+    res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+    );
+    res.setHeader("Content-Length", buffer.length);
+    return res.status(200).send(buffer);
+});
+
 exports.getAttendanceById = asyncHandler(async (req, res) => {
     const doc = await attendanceService.getAttendanceById(
         req.params.id,

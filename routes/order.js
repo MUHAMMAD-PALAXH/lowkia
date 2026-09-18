@@ -15,6 +15,7 @@ const { protect } = require('../middleware/auth');
 const { resolveTenant, requireCompany } = require('../middleware/tenant');
 const { companyFilter, stampCompany } = require('../utils/tenantScope');
 const { assertDocumentCompany } = require('../services/companyService');
+const { exportOnlineOrdersExcel } = require('../services/onlineOrderService');
 
 router.use(protect, resolveTenant, requireCompany);
 
@@ -253,6 +254,21 @@ router.get('/daily-profit-by-status', asyncHandler(async (req, res) => {
 // ────────────────────────────────────────────────
 // STANDARD CRUD ROUTES
 // ────────────────────────────────────────────────
+
+router.get('/export/excel', asyncHandler(async (req, res) => {
+  const { buffer, filename } = await exportOnlineOrdersExcel(
+    req.query,
+    req.companyId,
+    req.user
+  );
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Length', buffer.length);
+  return res.status(200).send(buffer);
+}));
 
 router.get('/', asyncHandler(async (req, res) => {
   const { userId } = req.query;

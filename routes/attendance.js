@@ -115,6 +115,14 @@ router.get(
 
 // ---- Admin list / detail ----
 router.get(
+    "/export/excel",
+    attendanceAdminOnly,
+    attachBranchScope,
+    listValidator,
+    validate,
+    controller.exportAttendanceExcel
+);
+router.get(
     "/",
     attendanceAdminOnly,
     attachBranchScope,
