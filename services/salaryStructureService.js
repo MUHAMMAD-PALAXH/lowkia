@@ -561,9 +561,20 @@ const moneyPack = (minor, currency = DEFAULT_CURRENCY) => ({
 
 const asCalendarDay = (value) => {
     if (!value) return null;
+    if (typeof value === "string") {
+        const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (m) {
+            return new Date(
+                Number(m[1]),
+                Number(m[2]) - 1,
+                Number(m[3])
+            );
+        }
+    }
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return null;
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    // Prefer UTC Y-M-D so ISO midnight dates do not shift a day in local TZ.
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 };
 
 const formatCalendarDay = (value) => {
@@ -621,19 +632,10 @@ const buildPeriodCalculation = async ({
 
     let employees = await Employee.find(empMatch)
         .select(
-            "fullName employeeCode salaryType basicSalary salaryStructureId joiningDate createdAt"
+            "fullName employeeCode salaryType basicSalary salaryStructureId joiningDate createdAt companyId"
         )
         .lean();
-    if (!employees.length) {
-        employees = await Employee.find({
-            ...NOT_DELETED,
-            isActive: { $ne: false },
-        })
-            .select(
-                "fullName employeeCode salaryType basicSalary salaryStructureId joiningDate createdAt"
-            )
-            .lean();
-    }
+    // Never fall back to another company's employees — empty means empty.
 
     const structureIds = employees
         .map((e) => e.salaryStructureId)
@@ -700,18 +702,14 @@ const buildPeriodCalculation = async ({
         const type = normalizeSalaryType(structure.salaryType);
         const hoursPerDay = Number(structure.workingHoursPerDay) || 8;
         const workingDays = Number(structure.workingDaysPerMonth) || 22;
-        const daysForCalc = day
-            ? 1
-            : fromJoin
-              ? Math.max(
-                    1,
-                    Math.round((workingDays * payableCalendarDays) / daysInMonth)
-                )
-              : workingDays;
+        // Single-day preview uses one day; full-month Daily/Hourly use contracted
+        // working days. Monthly always uses the full month once the employee has
+        // joined (no calendar-day proration — that was understating Month total).
+        const daysForCalc = day ? 1 : workingDays;
         let attendance = {};
         let factor = 1;
         let formula = "";
-        const fromNote = fromJoin ? ` from ${joinLabel}` : "";
+        const fromNote = fromJoin ? ` (joined ${joinLabel})` : "";
 
         if (type === "Hourly") {
             const hours = daysForCalc * hoursPerDay;
@@ -720,12 +718,12 @@ const buildPeriodCalculation = async ({
         } else if (type === "Daily") {
             attendance = { presentDays: daysForCalc };
             formula = `${formatMoney(structure.dailyRateMinor || 0)} × ${daysForCalc} days${fromNote}`;
+        } else if (day) {
+            factor = 1 / daysInMonth;
+            formula = `${formatMoney(structure.basicSalaryMinor || 0)} × 1/${daysInMonth} day${fromNote}`;
         } else {
-            factor = payableCalendarDays / daysInMonth;
-            formula =
-                factor >= 0.999
-                    ? `monthly basic ${formatMoney(structure.basicSalaryMinor || 0)}`
-                    : `${formatMoney(structure.basicSalaryMinor || 0)} × ${payableCalendarDays}/${daysInMonth} days${fromNote}`;
+            factor = 1;
+            formula = `monthly basic ${formatMoney(structure.basicSalaryMinor || 0)}${fromNote}`;
         }
 
         let preview;
@@ -802,7 +800,7 @@ const buildPeriodCalculation = async ({
             ? `${periodLabel} · 1 of ${daysInMonth} calendar days`
             : `${periodLabel} · ${daysInMonth} calendar days`,
         formula:
-            "Pay starts on each employee's joining date. Days before that date are not counted.",
+            "Employees who have joined by the period end are included. Monthly pay is the full monthly structure (not calendar-day prorated).",
         lines: [
             {
                 title: "Calendar window",
@@ -812,10 +810,10 @@ const buildPeriodCalculation = async ({
                     : `${daysInMonth} calendar days in this month`,
             },
             {
-                title: "Proration rule",
-                detail: `Monthly = basic × days on payroll ÷ ${daysInMonth}`,
+                title: "Pay rule",
+                detail: "Monthly = full structure net · Daily/Hourly = contracted working days × rate",
                 formula:
-                    "Daily / hourly use remaining working days after the join date",
+                    "Joining after the period end excludes the employee; mid-month join still receives full monthly once active",
             },
         ],
     });
@@ -848,7 +846,7 @@ const buildPeriodCalculation = async ({
         if (!rows.length) continue;
         const sum = rows.reduce((s, r) => s + (r.preview.basicMinor || 0), 0);
         const full = rows.filter((r) => !r.fromJoin).length;
-        const prorated = rows.filter((r) => r.fromJoin).length;
+        const midJoin = rows.filter((r) => r.fromJoin).length;
         steps.push({
             n: n++,
             key: `base_${type.toLowerCase()}`,
@@ -856,16 +854,16 @@ const buildPeriodCalculation = async ({
             detail: [
                 `${rows.length} employee${rows.length === 1 ? "" : "s"} on ${type.toLowerCase()} templates`,
                 full ? `${full} full period` : null,
-                prorated ? `${prorated} prorated from joining date` : null,
+                midJoin ? `${midJoin} joined mid-period` : null,
             ]
                 .filter(Boolean)
                 .join(" · "),
             formula:
                 type === "Monthly"
-                    ? `basic × days on payroll ÷ ${daysInMonth}`
+                    ? "full monthly structure basic"
                     : type === "Daily"
-                      ? "daily rate × payable working days"
-                      : "hourly rate × payable hours",
+                      ? "daily rate × contracted working days"
+                      : "hourly rate × contracted hours",
             amount: moneyPack(sum),
             kind: "add",
             lines: rows.map((r) => ({
@@ -873,7 +871,7 @@ const buildPeriodCalculation = async ({
                 detail: [
                     r.structure.structureName,
                     r.joinLabel ? `joined ${r.joinLabel}` : null,
-                    `${r.payableCalendarDays}/${daysInMonth} days`,
+                    type === "Monthly" ? "full month" : `${r.daysForCalc} units`,
                 ]
                     .filter(Boolean)
                     .join(" · "),
@@ -1041,58 +1039,6 @@ const getSalarySummary = async (companyId, query = {}) => {
     };
     if (companyId) lineMatch.companyId = companyId;
 
-    let [employeeCount, contracted, allTime] = await Promise.all([
-        Employee.countDocuments(empMatch),
-        Employee.aggregate([
-            { $match: empMatch },
-            {
-                $group: {
-                    _id: null,
-                    basic: { $sum: { $ifNull: ["$basicSalary", 0] } },
-                },
-            },
-        ]),
-        sumPayrollNets(lineMatch),
-    ]);
-
-    if (employeeCount === 0) {
-        const openEmp = { ...NOT_DELETED, isActive: { $ne: false } };
-        [employeeCount, contracted] = await Promise.all([
-            Employee.countDocuments(openEmp),
-            Employee.aggregate([
-                { $match: openEmp },
-                {
-                    $group: {
-                        _id: null,
-                        basic: { $sum: { $ifNull: ["$basicSalary", 0] } },
-                    },
-                },
-            ]),
-        ]);
-    }
-
-    const contractedMajor = Number(contracted[0]?.basic) || 0;
-    const contractedMinor = Math.round(contractedMajor * 100);
-    const totalsTotal = allTime.total > 0 ? allTime.total : contractedMinor;
-    const totalsPaid = allTime.paid;
-    const totalsDue = Math.max(0, totalsTotal - totalsPaid);
-
-    const periodMatch = {
-        ...lineMatch,
-        payrollYear: year,
-        payrollMonth: month,
-    };
-    if (day) {
-        const start = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
-        const end = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
-        periodMatch.$or = [
-            { paidAt: { $gte: start, $lte: end } },
-            { createdAt: { $gte: start, $lte: end } },
-        ];
-    }
-    const periodPayroll = await sumPayrollNets(periodMatch);
-    const periodPaid = periodPayroll.paid;
-
     const months = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -1101,17 +1047,92 @@ const getSalarySummary = async (companyId, query = {}) => {
         ? `${String(day).padStart(2, "0")} ${months[month - 1]} ${year}`
         : `${months[month - 1]} ${year}`;
 
-    const calculation = await buildPeriodCalculation({
-        empMatch,
-        year,
-        month,
-        day,
-        periodLabel,
-        periodPaidMinor: periodPaid,
-    });
+    const [employeeCount, allTime, periodPayroll, contractedCalc, periodCalc] =
+        await Promise.all([
+            Employee.countDocuments(empMatch),
+            sumPayrollNets(lineMatch),
+            sumPayrollNets({
+                ...lineMatch,
+                payrollYear: year,
+                payrollMonth: month,
+                ...(day
+                    ? {
+                          $or: [
+                              {
+                                  paidAt: {
+                                      $gte: new Date(
+                                          Date.UTC(year, month - 1, day, 0, 0, 0)
+                                      ),
+                                      $lte: new Date(
+                                          Date.UTC(
+                                              year,
+                                              month - 1,
+                                              day,
+                                              23,
+                                              59,
+                                              59,
+                                              999
+                                          )
+                                      ),
+                                  },
+                              },
+                              {
+                                  createdAt: {
+                                      $gte: new Date(
+                                          Date.UTC(year, month - 1, day, 0, 0, 0)
+                                      ),
+                                      $lte: new Date(
+                                          Date.UTC(
+                                              year,
+                                              month - 1,
+                                              day,
+                                              23,
+                                              59,
+                                              59,
+                                              999
+                                          )
+                                      ),
+                                  },
+                              },
+                          ],
+                      }
+                    : {}),
+            }),
+            // Contracted monthly obligation from assigned structures (full month).
+            buildPeriodCalculation({
+                empMatch,
+                year: now.getFullYear(),
+                month: now.getMonth() + 1,
+                day: null,
+                periodLabel: "Contracted",
+                periodPaidMinor: 0,
+            }),
+            buildPeriodCalculation({
+                empMatch,
+                year,
+                month,
+                day,
+                periodLabel,
+                periodPaidMinor: 0,
+            }),
+        ]);
 
-    const periodTotal = calculation.totals.net.amountMinor;
-    const periodDue = calculation.totals.due.amountMinor;
+    const totalsTotal = Number(contractedCalc?.totals?.net?.amountMinor) || 0;
+    const totalsPaid = allTime.paid;
+    const totalsDue = Math.max(0, totalsTotal - totalsPaid);
+
+    const periodPaid = periodPayroll.paid;
+    // Recompute period due against actual period paid.
+    const periodTotal = Number(periodCalc?.totals?.net?.amountMinor) || 0;
+    const periodDue = Math.max(0, periodTotal - periodPaid);
+    const calculation = {
+        ...periodCalc,
+        totals: {
+            ...(periodCalc.totals || {}),
+            paid: moneyPack(periodPaid),
+            due: moneyPack(periodDue),
+        },
+    };
 
     return {
         employeeCount,
