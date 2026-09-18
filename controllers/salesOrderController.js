@@ -25,6 +25,24 @@ exports.getSalesOrders = asyncHandler(async (req, res) => {
     return success(res, "Sales orders retrieved successfully.", result);
 });
 
+exports.exportSalesOrdersExcel = asyncHandler(async (req, res) => {
+    const { buffer, filename } = await salesOrderService.exportSalesOrdersExcel(
+        req.query,
+        req.companyId,
+        req.user
+    );
+    res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+    );
+    res.setHeader("Content-Length", buffer.length);
+    return res.status(200).send(buffer);
+});
+
 exports.getSalesOrderStats = asyncHandler(async (req, res) => {
     const stats = await salesOrderService.getSalesOrderStats(req.companyId);
     return success(res, "Sales order stats retrieved successfully.", stats);

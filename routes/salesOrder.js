@@ -23,6 +23,12 @@ router.use(
 );
 
 router.get("/", listValidator, validate, salesOrderController.getSalesOrders);
+router.get(
+    "/export/excel",
+    listValidator,
+    validate,
+    salesOrderController.exportSalesOrdersExcel
+);
 router.get("/stats", salesOrderController.getSalesOrderStats);
 router.get("/lookup/barcode/:code", salesOrderController.lookupByBarcode);
 router.get("/lookup/imei/:imei", salesOrderController.lookupByImei);

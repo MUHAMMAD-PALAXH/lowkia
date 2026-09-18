@@ -8,6 +8,13 @@ const Branch = require("../model/branch");
 const Inventory = require("../model/inventory");
 const StockMovement = require("../model/StockMovement");
 const ItemTrack = require("../model/itemTrack");
+const Payment = require("../model/payment");
+const {
+    buildSalesOrderWorkbook,
+    buildExportFilename,
+    MAX_EXPORT_ORDERS
+} = require("./export/salesOrderExcelExporter");
+const { writeActivityLog } = require("./activityLogService");
 const {
     generateSalesOrderCode,
     generateStockMovementCode,
@@ -1086,10 +1093,8 @@ const createSalesOrder = async (payload, actorId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const getSalesOrders = async (query = {}, companyId = null) => {
-    const page = Math.max(parseInt(query.page, 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
-    const skip = (page - 1) * limit;
+/** Shared list/export match filter (tenant + UI filters). */
+const buildSalesOrderListFilter = (query = {}, companyId = null) => {
     const trash =
         query.deleted === "true" ||
         query.trash === "true" ||
@@ -1129,6 +1134,20 @@ const getSalesOrders = async (query = {}, companyId = null) => {
         if (dateFrom) filter.orderDate.$gte = dateFrom;
         if (dateTo) filter.orderDate.$lte = dateTo;
     }
+
+    return {
+        filter,
+        trash,
+        dateFrom,
+        dateTo,
+    };
+};
+
+const getSalesOrders = async (query = {}, companyId = null) => {
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
+    const skip = (page - 1) * limit;
+    const { filter, trash } = buildSalesOrderListFilter(query, companyId);
 
     const sort = resolveSort(query);
     const [rawItems, total] = await Promise.all([
@@ -2748,6 +2767,142 @@ const getSalesOrderStats = async (companyId = null) => {
     };
 };
 
+/**
+ * Full filtered Sales Order Excel export (all matching rows, not page-limited).
+ * @returns {{ buffer: Buffer, filename: string, orderCount: number }}
+ */
+const exportSalesOrdersExcel = async (
+    query = {},
+    companyId = null,
+    actor = null
+) => {
+    const { filter, trash } = buildSalesOrderListFilter(query, companyId);
+    const total = await SalesOrder.countDocuments(filter);
+    if (total > MAX_EXPORT_ORDERS) {
+        throw new AppError(
+            `Too many matching orders (${total}). Narrow filters (max ${MAX_EXPORT_ORDERS}).`,
+            400
+        );
+    }
+
+    const sort = resolveSort(query);
+    const needsItemCount =
+        Object.prototype.hasOwnProperty.call(sort, "itemCount");
+
+    let ids;
+    if (needsItemCount) {
+        const raw = await SalesOrder.aggregate([
+            { $match: filter },
+            {
+                $addFields: {
+                    itemCount: { $size: { $ifNull: ["$items", []] } }
+                }
+            },
+            { $sort: sort },
+            { $project: { _id: 1 } }
+        ]);
+        ids = raw.map((r) => r._id);
+    } else {
+        const raw = await SalesOrder.find(filter)
+            .select("_id")
+            .sort(sort)
+            .lean();
+        ids = raw.map((r) => r._id);
+    }
+
+    const orders =
+        ids.length === 0
+            ? []
+            : await (async () => {
+                  const docs = await populateSo(
+                      SalesOrder.find({ _id: { $in: ids } })
+                  ).lean();
+                  const byId = new Map(
+                      docs.map((d) => [String(d._id), d])
+                  );
+                  return ids
+                      .map((id) => byId.get(String(id)))
+                      .filter(Boolean);
+              })();
+
+    const orderIds = orders.map((o) => o._id);
+    const payments =
+        orderIds.length === 0
+            ? []
+            : await Payment.find({
+                  ...companyFilter(companyId),
+                  isDeleted: { $ne: true },
+                  $or: [
+                      { salesOrderId: { $in: orderIds } },
+                      {
+                          referenceType: "SalesOrder",
+                          referenceId: { $in: orderIds }
+                      }
+                  ]
+              })
+                  .select(
+                      "salesOrderId referenceId paymentNumber paymentDate paymentMethod paymentMethodReference providerReference amount status"
+                  )
+                  .sort({ paymentDate: 1 })
+                  .lean();
+
+    const filename = buildExportFilename(query);
+    const buffer = await buildSalesOrderWorkbook({
+        orders,
+        payments,
+        meta: {
+            exportedAt: new Date(),
+            exportedBy:
+                [actor?.firstName, actor?.lastName].filter(Boolean).join(" ") ||
+                actor?.name ||
+                actor?.email ||
+                actor?.username ||
+                "",
+            companyId: companyId ? String(companyId) : "",
+            filters: {
+                trash,
+                search: query.search || "",
+                status: query.status || "",
+                dateFrom:
+                    query.dateFrom ||
+                    query.fromDate ||
+                    query.startDate ||
+                    "",
+                dateTo: query.dateTo || query.toDate || query.endDate || "",
+                sort: query.sort || query.sortBy || "newest",
+                branchId: query.branchId || "",
+                warehouseId: query.warehouseId || "",
+                customerId: query.customerId || ""
+            }
+        }
+    });
+
+    await writeActivityLog({
+        user: actor,
+        companyId,
+        activityType: "Export",
+        module: "Sales",
+        subModule: "SalesOrder",
+        description: `Exported ${orders.length} sales order(s) to Excel (${filename}).`,
+        shortDescription: `SO Excel export (${orders.length})`,
+        referenceType: "SalesOrder",
+        referenceId: null,
+        newData: {
+            filename,
+            orderCount: orders.length,
+            paymentCount: payments.length,
+            filters: {
+                search: query.search || "",
+                status: query.status || "",
+                trash
+            }
+        },
+        securityLevel: "Medium"
+    });
+
+    return { buffer, filename, orderCount: orders.length };
+};
+
 module.exports = {
     createSalesOrder,
     getSalesOrders,
@@ -2772,6 +2927,7 @@ module.exports = {
     lookupByImei,
     lookupByOrderCode,
     getBranchCatalog,
+    exportSalesOrdersExcel,
     // Exported for focused tenant unit tests
     markImeisSold,
     unmarkImeisSold

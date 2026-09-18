@@ -3,17 +3,17 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-    "scripts": {
-        "start": "node index.js",
-        "seed": "node seeders/index.js",
-        "seed:global-admin": "node -e \"require('dotenv').config(); require('mongoose').connect(process.env.MONGO_URL).then(()=>require('./seeders/globalSuperAdminSeeder')()).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)})\"",
-        "migrate:tenancy": "node seeders/migrateTenancy.js",
-        "audit:itemtrack-company": "node seeders/auditItemTrackCompany.js",
-        "backfill:itemtrack-company": "node seeders/backfillItemTrackCompany.js",
-        "seed:plans": "node seeders/subscriptionPlanSeeder.js",
-        "test": "node tests/run.js",
-        "test:unit": "node tests/run.js"
-    },
+  "scripts": {
+    "start": "node index.js",
+    "seed": "node seeders/index.js",
+    "seed:global-admin": "node -e \"require('dotenv').config(); require('mongoose').connect(process.env.MONGO_URL).then(()=>require('./seeders/globalSuperAdminSeeder')()).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)})\"",
+    "migrate:tenancy": "node seeders/migrateTenancy.js",
+    "audit:itemtrack-company": "node seeders/auditItemTrackCompany.js",
+    "backfill:itemtrack-company": "node seeders/backfillItemTrackCompany.js",
+    "seed:plans": "node seeders/subscriptionPlanSeeder.js",
+    "test": "node tests/run.js",
+    "test:unit": "node tests/run.js"
+  },
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -24,6 +24,7 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "express-async-handler": "^1.2.0",
     "express-validator": "^7.3.2",
