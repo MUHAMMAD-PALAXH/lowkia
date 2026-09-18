@@ -30,6 +30,13 @@ router.get(
 
 router.get("/stats", grnController.getGrnStats);
 
+router.get(
+    "/export/excel",
+    listValidator,
+    validate,
+    grnController.exportGrnsExcel
+);
+
 router.post("/bulk-delete", grnController.bulkDeleteGrns);
 router.post("/bulk-restore", grnController.bulkRestoreGrns);
 router.post("/bulk-permanent-delete", grnController.bulkPermanentDeleteGrns);

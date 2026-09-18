@@ -37,7 +37,27 @@ const listValidator = [
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
     query("status").optional().isString(),
-    query("purchaseOrderId").optional().isMongoId()
+    query("purchaseOrderId").optional().isMongoId(),
+    query("warehouseId").optional().isMongoId(),
+    query("supplierId").optional().isMongoId(),
+    query("search").optional().isString().trim(),
+    query("deleted").optional().isIn(["true", "false"]),
+    query("trash").optional().isIn(["true", "false"]),
+    query("sort")
+        .optional()
+        .isIn([
+            "newest",
+            "oldest",
+            "alpha",
+            "alphabetical",
+            "name",
+            "items_asc",
+            "items_desc",
+            "count_asc",
+            "count_desc",
+            "low",
+            "high"
+        ])
 ];
 
 module.exports = {

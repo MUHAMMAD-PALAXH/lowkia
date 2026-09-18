@@ -35,6 +35,12 @@ const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const fulfillmentCycle = require("./fulfillmentCycleService");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const { writeActivityLog } = require("./activityLogService");
+const {
+    buildGrnWorkbook,
+    buildExportFilename,
+    MAX_EXPORT_GRNS
+} = require("./export/grnExcelExporter");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const RECEIVABLE_PO = [
@@ -2964,6 +2970,92 @@ const bulkDeleteGrns = (payload, actorId) => trash.bulkSoftDelete(payload, actor
 const bulkRestoreGrns = (payload, actorId) => trash.bulkRestore(payload, actorId);
 const bulkPermanentDeleteGrns = (payload) => trash.bulkPermanentDelete(payload);
 
+/**
+ * Full filtered GRN Excel export (all matching rows).
+ */
+const exportGrnsExcel = async (query = {}, companyId = null, actor = null) => {
+    const trashMode = isTrashQuery(query);
+    const tenant = companyFilter(companyId);
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
+
+    if (query.status) filter.status = query.status;
+    if (query.purchaseOrderId) {
+        filter.purchaseOrderId = toObjectId(query.purchaseOrderId);
+    }
+    if (query.warehouseId) filter.warehouseId = toObjectId(query.warehouseId);
+    if (query.supplierId) filter.supplierId = toObjectId(query.supplierId);
+
+    if (query.search) {
+        const search = escapeRegex(String(query.search).trim());
+        filter.$or = [
+            { grnNumber: { $regex: search, $options: "i" } },
+            { supplierInvoiceNo: { $regex: search, $options: "i" } },
+            { referenceNumber: { $regex: search, $options: "i" } }
+        ];
+    }
+
+    const total = await GRN.countDocuments(filter);
+    if (total > MAX_EXPORT_GRNS) {
+        throw new AppError(
+            `Too many matching GRNs (${total}). Narrow filters (max ${MAX_EXPORT_GRNS}).`,
+            400
+        );
+    }
+
+    const sort = trash.resolveEntitySort(query);
+    const grns =
+        total === 0
+            ? []
+            : await populateGrn(GRN.find(filter).sort(sort)).lean();
+
+    const filename = buildExportFilename(query);
+    const buffer = await buildGrnWorkbook({
+        grns,
+        meta: {
+            exportedAt: new Date(),
+            exportedBy:
+                [actor?.firstName, actor?.lastName].filter(Boolean).join(" ") ||
+                actor?.name ||
+                actor?.email ||
+                actor?.username ||
+                "",
+            companyId: companyId ? String(companyId) : "",
+            filters: {
+                trash: trashMode,
+                search: query.search || "",
+                status: query.status || "",
+                sort: query.sort || "newest"
+            }
+        }
+    });
+
+    await writeActivityLog({
+        user: actor,
+        companyId,
+        activityType: "Export",
+        module: "Inventory",
+        subModule: "GRN",
+        description: `Exported ${grns.length} GRN(s) to Excel (${filename}).`,
+        shortDescription: `GRN Excel export (${grns.length})`,
+        referenceType: "StockMovement",
+        referenceId: null,
+        newData: {
+            filename,
+            grnCount: grns.length,
+            filters: {
+                search: query.search || "",
+                status: query.status || "",
+                trash: trashMode
+            }
+        },
+        securityLevel: "Medium"
+    });
+
+    return { buffer, filename, grnCount: grns.length };
+};
+
 module.exports = {
     listReceivablePurchaseOrders,
     createGrnFromPurchaseOrder,
@@ -2988,7 +3080,7 @@ module.exports = {
     bulkPermanentDeleteGrns,
     syncOpenDraftGrnLinesForPo,
     RECEIVABLE_PO,
-    // Exported for focused tenant unit tests
     upsertInventory,
-    assertImeiUnique
+    assertImeiUnique,
+    exportGrnsExcel
 };

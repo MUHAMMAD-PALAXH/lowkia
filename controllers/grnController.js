@@ -29,6 +29,24 @@ exports.getGrns = asyncHandler(async (req, res) => {
     return success(res, "GRNs retrieved successfully.", result);
 });
 
+exports.exportGrnsExcel = asyncHandler(async (req, res) => {
+    const { buffer, filename } = await grnService.exportGrnsExcel(
+        req.query,
+        req.companyId,
+        req.user
+    );
+    res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+    );
+    res.setHeader("Content-Length", buffer.length);
+    return res.status(200).send(buffer);
+});
+
 exports.getGrnById = asyncHandler(async (req, res) => {
     const grn = await grnService.getGrnById(
         req.params.id,
