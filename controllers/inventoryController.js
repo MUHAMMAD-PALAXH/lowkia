@@ -10,6 +10,24 @@ exports.getInventoryList = asyncHandler(async (req, res) => {
     return success(res, "Inventory retrieved successfully.", data);
 });
 
+exports.exportInventoryExcel = asyncHandler(async (req, res) => {
+    const { buffer, filename } = await inventoryService.exportInventoryExcel(
+        req.query,
+        req.companyId,
+        req.user
+    );
+    res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+    );
+    res.setHeader("Content-Length", buffer.length);
+    return res.status(200).send(buffer);
+});
+
 exports.getInventoryStats = asyncHandler(async (req, res) => {
     const data = await inventoryService.getInventoryStats(
         req.query,

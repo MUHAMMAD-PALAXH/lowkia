@@ -17,6 +17,13 @@ router.use(protect, resolveTenant);
 router.get("/stats", inventoryController.getInventoryStats);
 
 router.get(
+    "/export/excel",
+    listValidator,
+    validate,
+    inventoryController.exportInventoryExcel
+);
+
+router.get(
     "/low-stock",
     listValidator,
     validate,

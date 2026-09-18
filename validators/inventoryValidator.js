@@ -8,7 +8,9 @@ const listValidator = [
     query("productId").optional({ checkFalsy: true }).isMongoId(),
     query("stockStatus").optional().isString(),
     query("movementType").optional().isString(),
-    query("status").optional().isString()
+    query("status").optional().isString(),
+    query("imeiStatus").optional().isString(),
+    query("search").optional().isString().trim()
 ];
 
 const idValidator = [

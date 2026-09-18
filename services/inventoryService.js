@@ -13,6 +13,12 @@ const AppError = require("../utils/appError");
 const { generateStockMovementCode } = require("./codeGenerator");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const { writeActivityLog } = require("./activityLogService");
+const {
+    buildInventoryWorkbook,
+    buildExportFilename,
+    MAX_EXPORT_INVENTORY
+} = require("./export/inventoryExcelExporter");
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -746,6 +752,234 @@ const clearProductStock = async (productId, actorId = null, companyId = null) =>
     };
 };
 
+/**
+ * Full filtered Stock Management Excel export (balances, low stock,
+ * movements, IMEIs — not page-limited).
+ */
+const exportInventoryExcel = async (
+    query = {},
+    companyId = null,
+    actor = null
+) => {
+    await ensureManualOpeningStockHealed(companyId);
+
+    const tenant = companyFilter(companyId);
+    const stockFilter = { isDeleted: { $ne: true }, ...tenant };
+
+    if (query.warehouseId) {
+        stockFilter.warehouseId = toObjectId(query.warehouseId);
+    }
+    if (query.branchId) stockFilter.branchId = toObjectId(query.branchId);
+    if (query.productId) stockFilter.productId = toObjectId(query.productId);
+    if (query.stockStatus) stockFilter.stockStatus = query.stockStatus;
+
+    if (query.search) {
+        const search = escapeRegex(String(query.search).trim());
+        const productIds = await resolveSearchProductIds(query.search);
+        const searchOr = [{ batchNumber: { $regex: search, $options: "i" } }];
+        if (productIds && productIds.length) {
+            searchOr.push({ productId: { $in: productIds } });
+        }
+        stockFilter.$or = searchOr;
+    }
+
+    const stockTotal = await Inventory.countDocuments(stockFilter);
+    if (stockTotal > MAX_EXPORT_INVENTORY) {
+        throw new AppError(
+            `Too many matching stock rows (${stockTotal}). Narrow filters (max ${MAX_EXPORT_INVENTORY}).`,
+            400
+        );
+    }
+
+    const stockRows =
+        stockTotal === 0
+            ? []
+            : await populateInventory(
+                  Inventory.find(stockFilter).sort({ updatedAt: -1 })
+              ).lean();
+
+    // Low stock (same warehouse filter; ignore stockStatus so sheet stays useful)
+    const lowFilter = {
+        isDeleted: { $ne: true },
+        ...tenant,
+        $or: [
+            { stockStatus: { $in: ["Low Stock", "Out Of Stock"] } },
+            {
+                $expr: {
+                    $and: [
+                        { $gt: ["$reorderLevel", 0] },
+                        { $lte: ["$availableStock", "$reorderLevel"] }
+                    ]
+                }
+            },
+            { availableStock: { $lte: 0 } }
+        ]
+    };
+    if (query.warehouseId) {
+        lowFilter.warehouseId = toObjectId(query.warehouseId);
+    }
+    const lowStockRaw = await populateInventory(
+        Inventory.find(lowFilter).sort({ availableStock: 1 })
+    ).lean();
+    const lowStockRows = lowStockRaw.filter((row) => {
+        const p = row.productId;
+        if (p && typeof p === "object" && p.isDeleted === true) return false;
+        return true;
+    });
+
+    // Movements — reuse tenant-aware warehouse scope from getStockMovements
+    const Warehouse = require("../model/warehouse");
+    const whIds = await Warehouse.find({
+        companyId,
+        isDeleted: { $ne: true }
+    })
+        .select("_id")
+        .lean();
+    const companyWarehouseIds = whIds.map((w) => w._id);
+
+    const movAnd = [
+        {
+            $or: [
+                { companyId },
+                {
+                    $and: [
+                        {
+                            $or: [
+                                { companyId: null },
+                                { companyId: { $exists: false } }
+                            ]
+                        },
+                        companyWarehouseIds.length
+                            ? { warehouseId: { $in: companyWarehouseIds } }
+                            : { _id: null }
+                    ]
+                }
+            ]
+        }
+    ];
+    if (query.warehouseId) {
+        movAnd.push({ warehouseId: toObjectId(query.warehouseId) });
+    }
+    if (query.movementType) {
+        movAnd.push({ movementType: query.movementType });
+    }
+    if (query.search) {
+        const search = escapeRegex(String(query.search).trim());
+        movAnd.push({
+            $or: [
+                { movementNumber: { $regex: search, $options: "i" } },
+                { productName: { $regex: search, $options: "i" } },
+                { sku: { $regex: search, $options: "i" } }
+            ]
+        });
+    }
+    const movFilter = movAnd.length === 1 ? movAnd[0] : { $and: movAnd };
+    const movTotal = await StockMovement.countDocuments(movFilter);
+    if (movTotal > MAX_EXPORT_INVENTORY) {
+        throw new AppError(
+            `Too many matching movements (${movTotal}). Narrow filters (max ${MAX_EXPORT_INVENTORY}).`,
+            400
+        );
+    }
+    const movements =
+        movTotal === 0
+            ? []
+            : await populateMovement(
+                  StockMovement.find(movFilter).sort({
+                      movementDate: -1,
+                      createdAt: -1
+                  })
+              ).lean();
+
+    // IMEIs
+    const imeiFilter = { ...tenant };
+    if (query.imeiStatus || query.status) {
+        imeiFilter.status = query.imeiStatus || query.status;
+    } else {
+        imeiFilter.status = { $ne: "deleted" };
+    }
+    if (query.search) {
+        const search = escapeRegex(String(query.search).trim());
+        imeiFilter.imei = { $regex: search, $options: "i" };
+    }
+    const imeiTotal = await ItemTrack.countDocuments(imeiFilter);
+    if (imeiTotal > MAX_EXPORT_INVENTORY) {
+        throw new AppError(
+            `Too many matching IMEIs (${imeiTotal}). Narrow filters (max ${MAX_EXPORT_INVENTORY}).`,
+            400
+        );
+    }
+    const imeis =
+        imeiTotal === 0
+            ? []
+            : await ItemTrack.find(imeiFilter)
+                  .sort({ updatedAt: -1 })
+                  .populate("productId", "name productCode trackingType sku")
+                  .populate("variantId", "sku combinationString")
+                  .populate("currentBranchId", "branchCode name")
+                  .lean();
+
+    const stats = await getInventoryStats(query, companyId);
+    const filename = buildExportFilename(query);
+    const buffer = await buildInventoryWorkbook({
+        stockRows,
+        lowStockRows,
+        movements,
+        imeis,
+        stats,
+        meta: {
+            exportedAt: new Date(),
+            exportedBy:
+                [actor?.firstName, actor?.lastName].filter(Boolean).join(" ") ||
+                actor?.name ||
+                actor?.email ||
+                actor?.username ||
+                "",
+            companyId: companyId ? String(companyId) : "",
+            filters: {
+                search: query.search || "",
+                warehouseId: query.warehouseId || "",
+                stockStatus: query.stockStatus || "",
+                movementType: query.movementType || "",
+                imeiStatus: query.imeiStatus || query.status || ""
+            }
+        }
+    });
+
+    await writeActivityLog({
+        user: actor,
+        companyId,
+        activityType: "Export",
+        module: "Inventory",
+        subModule: "Stock",
+        description: `Exported stock Excel (${filename}): ${stockRows.length} balances, ${movements.length} movements, ${imeis.length} IMEIs.`,
+        shortDescription: `Stock Excel export (${stockRows.length} rows)`,
+        referenceType: "StockMovement",
+        referenceId: null,
+        newData: {
+            filename,
+            stockCount: stockRows.length,
+            lowStockCount: lowStockRows.length,
+            movementCount: movements.length,
+            imeiCount: imeis.length,
+            filters: {
+                search: query.search || "",
+                warehouseId: query.warehouseId || "",
+                stockStatus: query.stockStatus || ""
+            }
+        },
+        securityLevel: "Medium"
+    });
+
+    return {
+        buffer,
+        filename,
+        stockCount: stockRows.length,
+        movementCount: movements.length,
+        imeiCount: imeis.length
+    };
+};
+
 module.exports = {
     getInventoryList,
     getInventoryById,
@@ -758,5 +992,6 @@ module.exports = {
     clearProductStock,
     computeStockStatus,
     applyStockStatus,
-    getLiveWarehouseStock
+    getLiveWarehouseStock,
+    exportInventoryExcel
 };
