@@ -7,6 +7,14 @@ const { generateProductBarcode } = require("./barcodeGenerator");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
+const { writeActivityLog } = require("./activityLogService");
+const {
+    buildRepairTicketWorkbook,
+    buildExportFilename,
+    MAX_EXPORT_REPAIR_TICKETS
+} = require("./export/repairTicketExcelExporter");
+
+const AppError = require("../utils/appError");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -877,6 +885,112 @@ const lookupImeiWarranty = async (imei, companyId = null) => {
     };
 };
 
+/**
+ * Full filtered Repair Ticket Excel export (all matching rows).
+ */
+const exportRepairTicketsExcel = async (
+    query = {},
+    companyId = null,
+    actor = null
+) => {
+    const trashMode = isTrashQuery(query);
+    const tenant = companyFilter(companyId);
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
+
+    if (query.branchId) filter.branchId = toObjectId(query.branchId);
+    if (query.customerId && toObjectId(query.customerId)) {
+        filter.customerId = toObjectId(query.customerId);
+    }
+    if (query.status) filter.status = String(query.status).trim();
+    if (query.ticketSource) {
+        filter.ticketSource = resolveTicketSource(query.ticketSource);
+    }
+    if (query.paymentMethod) {
+        filter.paymentMethod = resolvePaymentMethod(query.paymentMethod);
+    }
+    if (query.trackingType) {
+        filter.trackingType = resolveTrackingType(query.trackingType);
+    }
+
+    const search = String(query.search || "").trim();
+    if (search) {
+        filter.$or = [
+            { ticketNumber: { $regex: search, $options: "i" } },
+            { repairCode: { $regex: search, $options: "i" } },
+            { barcode: { $regex: search, $options: "i" } },
+            { customerName: { $regex: search, $options: "i" } },
+            { phone: { $regex: search, $options: "i" } },
+            { serviceDetails: { $regex: search, $options: "i" } },
+            { "device.productName": { $regex: search, $options: "i" } },
+            { "device.imei1": { $regex: search, $options: "i" } },
+            { repairedBy: { $regex: search, $options: "i" } }
+        ];
+    }
+
+    const sort = trash.resolveEntitySort(query);
+    const total = await RepairTicket.countDocuments(filter);
+    if (total > MAX_EXPORT_REPAIR_TICKETS) {
+        throw new AppError(
+            `Too many matching repair tickets (${total}). Narrow filters (max ${MAX_EXPORT_REPAIR_TICKETS}).`,
+            400
+        );
+    }
+
+    const tickets =
+        total === 0
+            ? []
+            : await populateTicket(
+                  RepairTicket.find(filter).sort(sort)
+              ).lean();
+
+    const filename = buildExportFilename(query);
+    const buffer = await buildRepairTicketWorkbook({
+        tickets,
+        meta: {
+            exportedAt: new Date(),
+            exportedBy:
+                [actor?.firstName, actor?.lastName].filter(Boolean).join(" ") ||
+                actor?.name ||
+                actor?.email ||
+                actor?.username ||
+                "",
+            companyId: companyId ? String(companyId) : "",
+            filters: {
+                trash: trashMode,
+                search: query.search || "",
+                status: query.status || "",
+                sort: query.sort || "newest"
+            }
+        }
+    });
+
+    await writeActivityLog({
+        user: actor,
+        companyId,
+        activityType: "Export",
+        module: "Inventory",
+        subModule: "Repair",
+        description: `Exported ${tickets.length} repair ticket(s) to Excel (${filename}).`,
+        shortDescription: `Repair Excel export (${tickets.length})`,
+        referenceType: "System",
+        referenceId: null,
+        newData: {
+            filename,
+            ticketCount: tickets.length,
+            filters: {
+                search: query.search || "",
+                status: query.status || "",
+                trash: trashMode
+            }
+        },
+        securityLevel: "Medium"
+    });
+
+    return { buffer, filename, ticketCount: tickets.length };
+};
+
 module.exports = {
     createRepairTicket,
     getRepairTickets,
@@ -891,5 +1005,6 @@ module.exports = {
     bulkRestoreRepairTickets,
     bulkPermanentDeleteRepairTickets,
     getRepairTicketStats,
-    lookupImeiWarranty
+    lookupImeiWarranty,
+    exportRepairTicketsExcel
 };

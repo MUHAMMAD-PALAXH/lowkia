@@ -22,6 +22,25 @@ exports.getRepairTickets = asyncHandler(async (req, res) => {
     return success(res, "Repair tickets retrieved.", result);
 });
 
+exports.exportRepairTicketsExcel = asyncHandler(async (req, res) => {
+    const { buffer, filename } =
+        await repairTicketService.exportRepairTicketsExcel(
+            req.query,
+            req.companyId,
+            req.user
+        );
+    res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+    );
+    res.setHeader("Content-Length", buffer.length);
+    return res.status(200).send(buffer);
+});
+
 exports.getRepairTicketStats = asyncHandler(async (req, res) => {
     const stats = await repairTicketService.getRepairTicketStats(
         req.query,

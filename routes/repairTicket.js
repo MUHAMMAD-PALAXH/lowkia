@@ -9,6 +9,10 @@ router.use(protect, resolveTenant);
 
 router.get("/stats", repairTicketController.getRepairTicketStats);
 router.get(
+    "/export/excel",
+    repairTicketController.exportRepairTicketsExcel
+);
+router.get(
     "/lookup-imei/:imei",
     repairTicketController.lookupImeiWarranty
 );
