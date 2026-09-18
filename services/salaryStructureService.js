@@ -23,6 +23,11 @@ const {
     previewStructurePay,
     defaultComponentTemplates,
 } = require("./salaryStructureCalculator");
+const {
+    calculateEmployeePayroll,
+    mapAttendanceForCalc,
+} = require("./payrollCalculator");
+const { getMonthlyReport } = require("./attendanceReportService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -623,6 +628,7 @@ const buildPeriodCalculation = async ({
     day,
     periodLabel,
     periodPaidMinor,
+    companyId = null,
 }) => {
     const daysInMonth = new Date(year, month, 0).getDate();
     const payableDays = day ? 1 : daysInMonth;
@@ -646,6 +652,23 @@ const buildPeriodCalculation = async ({
     }).lean();
     const byId = new Map(structures.map((s) => [String(s._id), s]));
 
+    // Real attendance for month-scope accuracy (Daily/Hourly + OT).
+    const attendanceByEmp = new Map();
+    if (!day) {
+        try {
+            const report = await getMonthlyReport(
+                { year, month },
+                null,
+                companyId || empMatch.companyId || null
+            );
+            for (const row of report.employees || []) {
+                attendanceByEmp.set(String(row.employeeId), row);
+            }
+        } catch (_) {
+            // Attendance is best-effort; fall back to contracted units.
+        }
+    }
+
     const typeBuckets = { Monthly: [], Daily: [], Hourly: [] };
     const employeeRows = [];
     let unassigned = 0;
@@ -655,6 +678,12 @@ const buildPeriodCalculation = async ({
     let deductionMinor = 0;
     let grossMinor = 0;
     let netMinor = 0;
+
+    const hasPunches = (row) =>
+        (Number(row?.present) || 0) > 0 ||
+        (Number(row?.punched) || 0) > 0 ||
+        (Number(row?.totalWorkingMinutes) || 0) > 0 ||
+        (Number(row?.approvedOvertimeMinutes) || 0) > 0;
 
     for (const emp of employees) {
         const joinDate = resolveJoinDate(emp);
@@ -699,37 +728,156 @@ const buildPeriodCalculation = async ({
             daysInclusive(payStart, periodEnd)
         );
         const fromJoin = Boolean(joinDate && joinDate > periodStart);
+        const joinFactor = fromJoin
+            ? Math.min(1, payableCalendarDays / daysInMonth)
+            : 1;
         const type = normalizeSalaryType(structure.salaryType);
         const hoursPerDay = Number(structure.workingHoursPerDay) || 8;
         const workingDays = Number(structure.workingDaysPerMonth) || 22;
-        // Single-day preview uses one day; full-month Daily/Hourly use contracted
-        // working days. Monthly always uses the full month once the employee has
-        // joined (no calendar-day proration — that was understating Month total).
-        const daysForCalc = day ? 1 : workingDays;
-        let attendance = {};
-        let factor = 1;
-        let formula = "";
         const fromNote = fromJoin ? ` (joined ${joinLabel})` : "";
-
-        if (type === "Hourly") {
-            const hours = daysForCalc * hoursPerDay;
-            attendance = { workedHours: hours };
-            formula = `${formatMoney(structure.hourlyRateMinor || 0)} × ${hours} hrs${fromNote}`;
-        } else if (type === "Daily") {
-            attendance = { presentDays: daysForCalc };
-            formula = `${formatMoney(structure.dailyRateMinor || 0)} × ${daysForCalc} days${fromNote}`;
-        } else if (day) {
-            factor = 1 / daysInMonth;
-            formula = `${formatMoney(structure.basicSalaryMinor || 0)} × 1/${daysInMonth} day${fromNote}`;
-        } else {
-            factor = 1;
-            formula = `monthly basic ${formatMoney(structure.basicSalaryMinor || 0)}${fromNote}`;
-        }
+        const attRow = attendanceByEmp.get(String(emp._id)) || {};
 
         let preview;
+        let formula = "";
+        let daysForCalc = day ? 1 : workingDays;
+
         try {
-            preview = previewStructurePay(structure, attendance);
-            if (factor !== 1) preview = scalePreview(preview, factor);
+            if (day) {
+                // Single-day slice of structure (all types scaled).
+                let attendance = {};
+                if (type === "Hourly") {
+                    attendance = { workedHours: hoursPerDay };
+                    formula = `${formatMoney(structure.hourlyRateMinor || 0)} × ${hoursPerDay} hrs × 1 day${fromNote}`;
+                } else if (type === "Daily") {
+                    attendance = { presentDays: 1 };
+                    formula = `${formatMoney(structure.dailyRateMinor || 0)} × 1 day${fromNote}`;
+                } else {
+                    formula = `${formatMoney(structure.basicSalaryMinor || 0)} × 1/${daysInMonth} day${fromNote}`;
+                }
+                preview = previewStructurePay(structure, attendance);
+                const factor =
+                    type === "Monthly" ? 1 / daysInMonth : 1;
+                // Daily/Hourly already use 1 unit; Monthly needs calendar fraction.
+                // Scale fixed components for all types on a single-day view.
+                if (type === "Monthly") {
+                    preview = scalePreview(preview, factor);
+                } else {
+                    // Keep 1-day base; scale only fixed recurring components via full factor of 1/days for fixed? 
+                    // Simpler: scale entire preview by 1 for day-of Daily/Hourly (already 1 unit).
+                    preview = preview;
+                }
+            } else {
+                // Full month: payroll calculator + attendance / contracted fallback.
+                let attendanceRow = attRow;
+                const punched = hasPunches(attRow);
+
+                if (type === "Daily" || type === "Hourly") {
+                    if (!punched) {
+                        daysForCalc = Math.max(
+                            1,
+                            Math.round(workingDays * joinFactor)
+                        );
+                        if (type === "Daily") {
+                            attendanceRow = {
+                                present: daysForCalc,
+                                workingDaysPresent: daysForCalc,
+                                payroll: {
+                                    presentDays: daysForCalc,
+                                    workingDays: daysForCalc,
+                                    approvedOvertimeMinutes: 0,
+                                },
+                            };
+                            formula = `${formatMoney(structure.dailyRateMinor || 0)} × ${daysForCalc} days (contracted)${fromNote}`;
+                        } else {
+                            const hours = daysForCalc * hoursPerDay;
+                            attendanceRow = {
+                                totalWorkingMinutes: Math.round(hours * 60),
+                                totalWorkingHours: hours,
+                                payroll: {
+                                    presentDays: daysForCalc,
+                                    workingDays: daysForCalc,
+                                    approvedOvertimeMinutes: 0,
+                                },
+                            };
+                            formula = `${formatMoney(structure.hourlyRateMinor || 0)} × ${hours} hrs (contracted)${fromNote}`;
+                        }
+                    } else {
+                        const mapped = mapAttendanceForCalc(attRow);
+                        daysForCalc = mapped.presentDays || mapped.rawPresentDays || 0;
+                        formula =
+                            type === "Daily"
+                                ? `${formatMoney(structure.dailyRateMinor || 0)} × ${mapped.rawPresentDays} present days + OT${fromNote}`
+                                : `${formatMoney(structure.hourlyRateMinor || 0)} × ${mapped.workedHours.toFixed(2)} hrs + OT${fromNote}`;
+                    }
+                } else {
+                    formula = fromJoin
+                        ? `${formatMoney(structure.basicSalaryMinor || 0)} × ${payableCalendarDays}/${daysInMonth} days${fromNote}`
+                        : `monthly structure net${fromNote}`;
+                }
+
+                const calc = calculateEmployeePayroll({
+                    structure,
+                    attendanceRow,
+                });
+                if (calc.skipped) {
+                    throw new Error(calc.skipReason || "Skipped");
+                }
+
+                // Monthly mid-join: prorate structure amounts; keep earned OT full.
+                const otMinor = calc.overtimeAmountMinor || 0;
+                let structurePreview = {
+                    currency: calc.currency,
+                    basicMinor: calc.basicSalaryMinor,
+                    earningMinor: Math.max(0, (calc.earningMinor || 0) - otMinor),
+                    deductionMinor: calc.deductionMinor,
+                    grossMinor: Math.max(0, (calc.grossSalaryMinor || 0) - otMinor),
+                    netMinor: Math.max(
+                        0,
+                        (calc.netSalaryMinor || 0) - otMinor
+                    ),
+                    lines: (calc.salaryComponents || [])
+                        .filter((c) => c.code !== "OT" && c.code !== "ADJ")
+                        .map((c) => ({
+                            code: c.code,
+                            componentName: c.name,
+                            componentType: c.componentType,
+                            calculationType: c.calculationType,
+                            computedMinor: c.amountMinor,
+                            percentage: c.percentage,
+                            basedOn: c.basedOn,
+                        })),
+                };
+
+                if (type === "Monthly" && joinFactor < 1) {
+                    structurePreview = scalePreview(structurePreview, joinFactor);
+                }
+
+                const grossWithOt =
+                    (structurePreview.grossMinor || 0) + otMinor;
+                const netWithOt = Math.max(
+                    0,
+                    grossWithOt - (structurePreview.deductionMinor || 0)
+                );
+                preview = {
+                    ...structurePreview,
+                    earningMinor:
+                        (structurePreview.earningMinor || 0) + otMinor,
+                    grossMinor: grossWithOt,
+                    netMinor: netWithOt,
+                };
+                if (otMinor > 0) {
+                    preview.lines = [
+                        ...(preview.lines || []),
+                        {
+                            code: "OT",
+                            componentName: "Approved Overtime",
+                            componentType: "Earning",
+                            calculationType: "Manual",
+                            computedMinor: otMinor,
+                        },
+                    ];
+                }
+            }
         } catch (_) {
             unassigned += 1;
             employeeRows.push({
@@ -800,7 +948,7 @@ const buildPeriodCalculation = async ({
             ? `${periodLabel} · 1 of ${daysInMonth} calendar days`
             : `${periodLabel} · ${daysInMonth} calendar days`,
         formula:
-            "Employees who have joined by the period end are included. Monthly pay is the full monthly structure (not calendar-day prorated).",
+            "Monthly pay is calendar-prorated from join date. Daily/Hourly use attendance when punched, otherwise contracted working days (join-aware). Approved OT is included.",
         lines: [
             {
                 title: "Calendar window",
@@ -811,9 +959,10 @@ const buildPeriodCalculation = async ({
             },
             {
                 title: "Pay rule",
-                detail: "Monthly = full structure net · Daily/Hourly = contracted working days × rate",
+                detail:
+                    "Monthly = structure × days-on-payroll / days-in-month · Daily/Hourly = attendance or contracted units · + approved OT",
                 formula:
-                    "Joining after the period end excludes the employee; mid-month join still receives full monthly once active",
+                    "Joining after the period end excludes the employee; mid-month join prorates monthly pay",
             },
         ],
     });
@@ -860,10 +1009,10 @@ const buildPeriodCalculation = async ({
                 .join(" · "),
             formula:
                 type === "Monthly"
-                    ? "full monthly structure basic"
+                    ? "monthly structure × join-day fraction"
                     : type === "Daily"
-                      ? "daily rate × contracted working days"
-                      : "hourly rate × contracted hours",
+                      ? "daily rate × present/contracted days + OT"
+                      : "hourly rate × worked/contracted hours + OT",
             amount: moneyPack(sum),
             kind: "add",
             lines: rows.map((r) => ({
@@ -871,7 +1020,11 @@ const buildPeriodCalculation = async ({
                 detail: [
                     r.structure.structureName,
                     r.joinLabel ? `joined ${r.joinLabel}` : null,
-                    type === "Monthly" ? "full month" : `${r.daysForCalc} units`,
+                    type === "Monthly"
+                        ? r.fromJoin
+                            ? `${r.payableCalendarDays}/${daysInMonth} days`
+                            : "full month"
+                        : `${r.daysForCalc} units`,
                 ]
                     .filter(Boolean)
                     .join(" · "),
@@ -1047,7 +1200,7 @@ const getSalarySummary = async (companyId, query = {}) => {
         ? `${String(day).padStart(2, "0")} ${months[month - 1]} ${year}`
         : `${months[month - 1]} ${year}`;
 
-    const [employeeCount, allTime, periodPayroll, contractedCalc, periodCalc] =
+    const [employeeCount, allTime, periodPayroll, periodCalc] =
         await Promise.all([
             Employee.countDocuments(empMatch),
             sumPayrollNets(lineMatch),
@@ -1098,15 +1251,6 @@ const getSalarySummary = async (companyId, query = {}) => {
                       }
                     : {}),
             }),
-            // Contracted monthly obligation from assigned structures (full month).
-            buildPeriodCalculation({
-                empMatch,
-                year: now.getFullYear(),
-                month: now.getMonth() + 1,
-                day: null,
-                periodLabel: "Contracted",
-                periodPaidMinor: 0,
-            }),
             buildPeriodCalculation({
                 empMatch,
                 year,
@@ -1114,15 +1258,42 @@ const getSalarySummary = async (companyId, query = {}) => {
                 day,
                 periodLabel,
                 periodPaidMinor: 0,
+                companyId,
             }),
         ]);
 
-    const totalsTotal = Number(contractedCalc?.totals?.net?.amountMinor) || 0;
-    const totalsPaid = allTime.paid;
+    // YTD expected (Jan → selected month, full months) using same attendance rules.
+    const ytdCalcs = await Promise.all(
+        Array.from({ length: month }, (_, index) => {
+            const m = index + 1;
+            if (m === month && !day) return Promise.resolve(periodCalc);
+            return buildPeriodCalculation({
+                empMatch,
+                year,
+                month: m,
+                day: null,
+                periodLabel: `${months[m - 1]} ${year}`,
+                periodPaidMinor: 0,
+                companyId,
+            });
+        })
+    );
+    const ytdExpected = ytdCalcs.reduce(
+        (sum, calc) => sum + (Number(calc?.totals?.net?.amountMinor) || 0),
+        0
+    );
+    const ytdPayroll = await sumPayrollNets({
+        ...lineMatch,
+        payrollYear: year,
+        payrollMonth: { $gte: 1, $lte: month },
+    });
+
+    // Prefer YTD expected; if somehow empty, fall back to all-time ledger.
+    const totalsTotal = ytdExpected > 0 ? ytdExpected : allTime.total;
+    const totalsPaid = ytdPayroll.paid;
     const totalsDue = Math.max(0, totalsTotal - totalsPaid);
 
     const periodPaid = periodPayroll.paid;
-    // Recompute period due against actual period paid.
     const periodTotal = Number(periodCalc?.totals?.net?.amountMinor) || 0;
     const periodDue = Math.max(0, periodTotal - periodPaid);
     const calculation = {
