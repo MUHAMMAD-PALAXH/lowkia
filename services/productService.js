@@ -15,6 +15,12 @@ const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
 const { hasAdminPower } = require("../utils/roleAccess");
+const {
+    buildProductWorkbook,
+    buildExportFilename,
+    MAX_EXPORT_PRODUCTS
+} = require("./export/productExcelExporter");
+const { writeActivityLog } = require("./activityLogService");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -3056,6 +3062,143 @@ const getCompletedPurchaseOrderSourceLines = async (query = {}) => {
     return rows;
 };
 
+/**
+ * Full filtered Product Excel export (all matching rows, not page-limited).
+ */
+const exportProductsExcel = async (
+    query = {},
+    companyId = null,
+    actor = null
+) => {
+    const trashMode = isTrashQuery(query);
+    const tenant = companyFilter(companyId);
+    const filter = trashMode
+        ? { isDeleted: true, ...tenant }
+        : { ...NOT_DELETED, ...tenant };
+
+    if (query.status) filter.status = query.status;
+    if (query.approvalStatus) filter.approvalStatus = query.approvalStatus;
+    if (query.trackingType) filter.trackingType = query.trackingType;
+    if (query.uploadedByType) filter.uploadedByType = query.uploadedByType;
+    if (query.isLowStock === "true" || query.isLowStock === true) {
+        filter.isLowStock = true;
+    }
+
+    const categoryId = toObjectId(query.proCategoryId || query.categoryId);
+    if (categoryId) filter.proCategoryId = categoryId;
+
+    const subCategoryId = toObjectId(query.proSubCategoryId);
+    if (subCategoryId) filter.proSubCategoryId = subCategoryId;
+
+    const brandId = toObjectId(query.proBrandId || query.brandId);
+    if (brandId) filter.proBrandId = brandId;
+
+    const supplierId = toObjectId(query.supplierId);
+    if (supplierId) filter["suppliers.supplierId"] = supplierId;
+
+    if (query.search) {
+        const search = escapeRegex(String(query.search).trim());
+        filter.$or = [
+            { name: { $regex: search, $options: "i" } },
+            { productCode: { $regex: search, $options: "i" } },
+            { sku: { $regex: search, $options: "i" } },
+            { barcode: { $regex: search, $options: "i" } },
+            { description: { $regex: search, $options: "i" } }
+        ];
+    }
+
+    let sort;
+    if (query.sort) {
+        sort = trash.resolveEntitySort(query);
+    } else {
+        const sortBy = query.sortBy || "createdAt";
+        const sortOrder = query.order === "asc" ? 1 : -1;
+        sort = { [sortBy]: sortOrder };
+    }
+
+    const total = await Product.countDocuments(filter);
+    if (total > MAX_EXPORT_PRODUCTS) {
+        throw new AppError(
+            `Too many matching products (${total}). Narrow filters (max ${MAX_EXPORT_PRODUCTS}).`,
+            400
+        );
+    }
+
+    const products =
+        total === 0
+            ? []
+            : await populateProduct(Product.find(filter).sort(sort)).lean();
+
+    await hydrateListStockFromVariants(products);
+    await attachSoldQty(products);
+    await enrichListVariantFlags(products);
+
+    const productIds = products.map((p) => p._id);
+    const variants =
+        productIds.length === 0
+            ? []
+            : await ProductVariant.find({
+                  productId: { $in: productIds },
+                  isDeleted: { $ne: true },
+                  ...tenant
+              })
+                  .populate("attributes.variantTypeId", "type name")
+                  .populate("attributes.variantId", "name")
+                  .lean();
+
+    const filename = buildExportFilename(query);
+    const buffer = await buildProductWorkbook({
+        products,
+        variants,
+        meta: {
+            exportedAt: new Date(),
+            exportedBy:
+                [actor?.firstName, actor?.lastName].filter(Boolean).join(" ") ||
+                actor?.name ||
+                actor?.email ||
+                actor?.username ||
+                "",
+            companyId: companyId ? String(companyId) : "",
+            filters: {
+                trash: trashMode,
+                search: query.search || "",
+                status: query.status || "",
+                approvalStatus: query.approvalStatus || "",
+                trackingType: query.trackingType || "",
+                sort: query.sort || "newest",
+                isLowStock: query.isLowStock || "",
+                categoryId: query.proCategoryId || query.categoryId || "",
+                brandId: query.proBrandId || query.brandId || ""
+            }
+        }
+    });
+
+    await writeActivityLog({
+        user: actor,
+        companyId,
+        activityType: "Export",
+        module: "Inventory",
+        subModule: "Product",
+        description: `Exported ${products.length} product(s) to Excel (${filename}).`,
+        shortDescription: `Product Excel export (${products.length})`,
+        referenceType: "Product",
+        referenceId: null,
+        newData: {
+            filename,
+            productCount: products.length,
+            variantCount: variants.length,
+            filters: {
+                search: query.search || "",
+                status: query.status || "",
+                trash: trashMode
+            }
+        },
+        securityLevel: "Medium"
+    });
+
+    return { buffer, filename, productCount: products.length };
+};
+
 module.exports = {
     createProduct,
     getProducts,
@@ -3084,5 +3227,6 @@ module.exports = {
     getCompletedPurchaseOrderSourceLines,
     seedManualOpeningInventory,
     backfillManualOpeningInventory,
-    materializeOpeningInventoryForWarehouse
+    materializeOpeningInventoryForWarehouse,
+    exportProductsExcel
 };

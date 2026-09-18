@@ -29,6 +29,13 @@ router.use(protect, resolveTenant);
 
 router.get("/", listProductValidator, validate, productController.getProducts);
 
+router.get(
+    "/export/excel",
+    listProductValidator,
+    validate,
+    productController.exportProductsExcel
+);
+
 router.get("/stats", productController.getProductStats);
 
 router.post("/bulk-delete", productController.bulkDeleteProducts);

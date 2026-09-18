@@ -27,6 +27,24 @@ exports.getProducts = asyncHandler(async (req, res) => {
     return success(res, "Products retrieved successfully.", result);
 });
 
+exports.exportProductsExcel = asyncHandler(async (req, res) => {
+    const { buffer, filename } = await productService.exportProductsExcel(
+        req.query,
+        req.companyId,
+        req.user
+    );
+    res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+    );
+    res.setHeader("Content-Length", buffer.length);
+    return res.status(200).send(buffer);
+});
+
 exports.getProductStats = asyncHandler(async (req, res) => {
     const stats = await productService.getProductStats(req.companyId);
     return success(res, "Product stats retrieved successfully.", stats);
