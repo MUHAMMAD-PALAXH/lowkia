@@ -2,38 +2,63 @@ const ExcelJS = require("exceljs");
 
 const MAX_EXPORT_ORDERS = 25000;
 
-/** Lowkia-aligned professional palette (teal / slate — not flashy). */
+/**
+ * Soft professional palette — airy, high contrast headers, calm body.
+ * Spacer columns create visual breathing room between field groups.
+ */
 const C = {
-    brand: "FF0F766E", // deep teal
-    brandSoft: "FFCCFBF1",
-    headerBg: "FF134E4A",
-    headerFg: "FFFFFFFF",
-    zebra: "FFF0FDFA",
-    white: "FFFFFFFF",
-    border: "FFCBD5E1",
-    text: "FF0F172A",
+    ink: "FF1E293B",
     muted: "FF64748B",
-    money: "FF0F172A",
+    softMuted: "FF94A3B8",
+    paper: "FFFFFFFF",
+    canvas: "FFF8FAFC",
+    zebra: "FFF1F5F9",
+    line: "FFE2E8F0",
+    lineSoft: "FFF1F5F9",
+
+    // Brand accents (teal family)
+    brand: "FF0D9488",
+    brandDeep: "FF0F766E",
+    brandInk: "FFFFFFFF",
+    brandMist: "FFF0FDFA",
+    brandWash: "FFCCFBF1",
+
+    // Group header tints (subtle, distinct)
+    gOrder: "FF0F766E",
+    gCustomer: "FF0369A1",
+    gPlace: "FF4338CA",
+    gPay: "FFB45309",
+    gMoney: "FF047857",
+    gMeta: "FF475569",
+
+    okBg: "FFECFDF5",
+    okFg: "FF065F46",
+    warnBg: "FFFFFBEB",
+    warnFg: "FF92400E",
+    badBg: "FFFEF2F2",
+    badFg: "FF991B1B",
+    infoBg: "FFF0F9FF",
+    infoFg: "FF075985",
+
     totalBg: "FFECFDF5",
-    totalFg: "FF065F46",
-    sectionBg: "FFE2E8F0",
-    kpiLabel: "FF475569",
-    ok: "FFDCFCE7",
-    okText: "FF166534",
-    warn: "FFFEF3C7",
-    warnText: "FF92400E",
-    danger: "FFFEE2E2",
-    dangerText: "FF991B1B",
-    info: "FFE0F2FE",
-    infoText: "FF075985",
-    titleBand: "FF0F766E",
+    totalFg: "FF134E4A",
+    spacer: "FFF8FAFC",
 };
 
-const thinBorder = {
-    top: { style: "thin", color: { argb: C.border } },
-    left: { style: "thin", color: { argb: C.border } },
-    bottom: { style: "thin", color: { argb: C.border } },
-    right: { style: "thin", color: { argb: C.border } },
+const SPACER = ""; // empty spacer column marker
+
+const borderHair = {
+    top: { style: "hair", color: { argb: C.line } },
+    left: { style: "hair", color: { argb: C.line } },
+    bottom: { style: "hair", color: { argb: C.line } },
+    right: { style: "hair", color: { argb: C.line } },
+};
+
+const borderSoft = {
+    top: { style: "thin", color: { argb: C.line } },
+    left: { style: "thin", color: { argb: C.line } },
+    bottom: { style: "thin", color: { argb: C.line } },
+    right: { style: "thin", color: { argb: C.line } },
 };
 
 const num = (v) => {
@@ -44,6 +69,11 @@ const num = (v) => {
 const str = (v) => {
     if (v == null) return "";
     return String(v).trim();
+};
+
+const dash = (v) => {
+    const s = str(v);
+    return s === "" ? "—" : s;
 };
 
 const fmtDate = (d) => {
@@ -74,176 +104,259 @@ const refName = (ref, fallbacks = []) => {
 
 const setWidths = (sheet, widths) => {
     widths.forEach((w, i) => {
-        sheet.getColumn(i + 1).width = w;
+        const col = sheet.getColumn(i + 1);
+        col.width = w;
+        // Extra visual padding feel via default alignment on spacer cols
+        if (w <= 2.5) {
+            col.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: C.spacer },
+            };
+        }
     });
 };
 
-const paintRange = (sheet, row, fromCol, toCol, fillArgb) => {
-    for (let c = fromCol; c <= toCol; c++) {
-        const cell = sheet.getRow(row).getCell(c);
-        cell.fill = {
+const fillRow = (sheet, rowNum, from, to, argb) => {
+    for (let c = from; c <= to; c++) {
+        sheet.getRow(rowNum).getCell(c).fill = {
             type: "pattern",
             pattern: "solid",
-            fgColor: { argb: fillArgb },
+            fgColor: { argb },
         };
     }
 };
 
-const addTitleBlock = (sheet, colCount, title, subtitle) => {
-    sheet.mergeCells(1, 1, 1, colCount);
-    const titleCell = sheet.getCell(1, 1);
-    titleCell.value = title;
-    titleCell.font = {
-        name: "Calibri",
-        size: 16,
-        bold: true,
-        color: { argb: C.headerFg },
-    };
-    titleCell.alignment = { vertical: "middle", horizontal: "left" };
-    titleCell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: C.titleBand },
-    };
-    sheet.getRow(1).height = 28;
-    paintRange(sheet, 1, 1, colCount, C.titleBand);
+/**
+ * Column definition:
+ * { h, k, w, g? }  header, kind, width, group color
+ * { spacer: true, w }  breathing gap between groups
+ */
+const buildSheetChrome = (workbook, name, tabArgb, colDefs, title, subtitle) => {
+    const sheet = workbook.addWorksheet(name, {
+        properties: {
+            defaultRowHeight: 22,
+            tabColor: { argb: tabArgb },
+        },
+        pageSetup: {
+            orientation: "landscape",
+            fitToPage: true,
+            fitToWidth: 1,
+            horizontalCentered: true,
+            margins: {
+                left: 0.4,
+                right: 0.4,
+                top: 0.5,
+                bottom: 0.5,
+                header: 0.2,
+                footer: 0.2,
+            },
+        },
+        views: [{ showGridLines: false }],
+    });
 
+    const colCount = colDefs.length;
+    const widths = colDefs.map((d) => (d.spacer ? d.w || 2.2 : d.w));
+    setWidths(sheet, widths);
+
+    // Row 1 — brand title
+    sheet.mergeCells(1, 1, 1, colCount);
+    const t = sheet.getCell(1, 1);
+    t.value = title;
+    t.font = {
+        name: "Calibri",
+        size: 18,
+        bold: true,
+        color: { argb: C.brandInk },
+    };
+    t.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+    sheet.getRow(1).height = 34;
+    fillRow(sheet, 1, 1, colCount, C.brandDeep);
+
+    // Row 2 — soft accent strip
     sheet.mergeCells(2, 1, 2, colCount);
-    const sub = sheet.getCell(2, 1);
+    sheet.getRow(2).height = 6;
+    fillRow(sheet, 2, 1, colCount, C.brand);
+
+    // Row 3 — subtitle / meta
+    sheet.mergeCells(3, 1, 3, colCount);
+    const sub = sheet.getCell(3, 1);
     sub.value = subtitle;
     sub.font = {
         name: "Calibri",
         size: 10,
-        italic: true,
         color: { argb: C.muted },
+        italic: true,
     };
-    sub.alignment = { vertical: "middle", horizontal: "left" };
-    sub.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: C.brandSoft },
-    };
-    sheet.getRow(2).height = 20;
-    paintRange(sheet, 2, 1, colCount, C.brandSoft);
+    sub.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+    sheet.getRow(3).height = 24;
+    fillRow(sheet, 3, 1, colCount, C.brandMist);
 
-    return 3; // next data header row
-};
+    // Row 4 — spacer air
+    sheet.getRow(4).height = 10;
+    fillRow(sheet, 4, 1, colCount, C.canvas);
 
-const styleColumnHeader = (row, colCount) => {
-    row.height = 24;
-    for (let c = 1; c <= colCount; c++) {
-        const cell = row.getCell(c);
+    // Row 5 — column headers (group-colored)
+    const headerRow = 5;
+    sheet.getRow(headerRow).height = 28;
+    colDefs.forEach((def, i) => {
+        const cell = sheet.getRow(headerRow).getCell(i + 1);
+        if (def.spacer) {
+            cell.value = "";
+            cell.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: C.canvas },
+            };
+            cell.border = {
+                top: { style: "hair", color: { argb: C.canvas } },
+                bottom: { style: "hair", color: { argb: C.canvas } },
+                left: { style: "hair", color: { argb: C.canvas } },
+                right: { style: "hair", color: { argb: C.canvas } },
+            };
+            return;
+        }
+        cell.value = def.h;
         cell.font = {
             name: "Calibri",
-            size: 11,
+            size: 10,
             bold: true,
-            color: { argb: C.headerFg },
+            color: { argb: C.brandInk },
         };
         cell.fill = {
             type: "pattern",
             pattern: "solid",
-            fgColor: { argb: C.headerBg },
+            fgColor: { argb: def.g || C.brandDeep },
         };
         cell.alignment = {
             vertical: "middle",
             horizontal: "center",
             wrapText: true,
         };
-        cell.border = thinBorder;
-    }
+        cell.border = {
+            top: { style: "thin", color: { argb: def.g || C.brandDeep } },
+            bottom: { style: "medium", color: { argb: C.brand } },
+            left: { style: "hair", color: { argb: "40FFFFFF" } },
+            right: { style: "hair", color: { argb: "40FFFFFF" } },
+        };
+    });
+
+    return { sheet, headerRow, colCount, colDefs, widths };
 };
 
-const alignCell = (cell, kind) => {
-    const base = { vertical: "middle", wrapText: false };
-    if (kind === "money" || kind === "qty") {
-        cell.alignment = { ...base, horizontal: "right" };
-    } else if (kind === "center") {
-        cell.alignment = { ...base, horizontal: "center" };
-    } else {
-        cell.alignment = { ...base, horizontal: "left" };
-    }
-    cell.font = {
-        name: "Calibri",
-        size: 10,
-        color: { argb: kind === "money" ? C.money : C.text },
-    };
-    cell.border = thinBorder;
-};
-
-const statusFill = (raw) => {
+const statusTone = (raw) => {
     const s = str(raw).toLowerCase();
     if (
-        s.includes("paid") ||
-        s.includes("completed") ||
-        s.includes("approved") ||
-        s.includes("confirmed") ||
-        s.includes("success")
+        /paid|completed|approved|confirmed|success|active|received/.test(s)
     ) {
-        return { bg: C.ok, fg: C.okText };
+        return { bg: C.okBg, fg: C.okFg };
     }
-    if (
-        s.includes("partial") ||
-        s.includes("pending") ||
-        s.includes("processing") ||
-        s.includes("draft")
-    ) {
-        return { bg: C.warn, fg: C.warnText };
+    if (/partial|pending|processing|draft|hold/.test(s)) {
+        return { bg: C.warnBg, fg: C.warnFg };
     }
-    if (
-        s.includes("cancel") ||
-        s.includes("refund") ||
-        s.includes("fail") ||
-        s.includes("void")
-    ) {
-        return { bg: C.danger, fg: C.dangerText };
+    if (/cancel|refund|fail|void|reject|delete/.test(s)) {
+        return { bg: C.badBg, fg: C.badFg };
     }
-    return { bg: C.info, fg: C.infoText };
+    return { bg: C.infoBg, fg: C.infoFg };
 };
 
-const applyStatusChip = (cell, value) => {
-    const v = str(value);
-    cell.value = v || "—";
-    const { bg, fg } = statusFill(v);
+const paintCell = (cell, kind, zebra, isSpacer) => {
+    if (isSpacer) {
+        cell.value = "";
+        cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: C.canvas },
+        };
+        cell.border = {
+            top: { style: "hair", color: { argb: C.canvas } },
+            bottom: { style: "hair", color: { argb: C.canvas } },
+            left: { style: "hair", color: { argb: C.canvas } },
+            right: { style: "hair", color: { argb: C.canvas } },
+        };
+        return;
+    }
+
+    cell.border = borderHair;
+
+    if (kind === "status") {
+        const tone = statusTone(cell.value);
+        cell.value = dash(cell.value);
+        cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: tone.bg },
+        };
+        cell.font = {
+            name: "Calibri",
+            size: 10,
+            bold: true,
+            color: { argb: tone.fg },
+        };
+        cell.alignment = { vertical: "middle", horizontal: "center" };
+        cell.border = borderSoft;
+        return;
+    }
+
+    const bg = zebra ? C.zebra : C.paper;
     cell.fill = {
         type: "pattern",
         pattern: "solid",
         fgColor: { argb: bg },
     };
-    cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: fg } };
-    cell.alignment = { vertical: "middle", horizontal: "center" };
-    cell.border = thinBorder;
-};
+    cell.font = {
+        name: "Calibri",
+        size: 10,
+        color: { argb: C.ink },
+    };
 
-const styleDataRow = (row, colKinds, zebra) => {
-    row.height = 20;
-    for (let c = 1; c <= colKinds.length; c++) {
-        const cell = row.getCell(c);
-        const kind = colKinds[c - 1];
-        if (kind === "status") {
-            applyStatusChip(cell, cell.value);
-        } else {
-            alignCell(cell, kind);
-            if (zebra) {
-                cell.fill = {
-                    type: "pattern",
-                    pattern: "solid",
-                    fgColor: { argb: C.zebra },
-                };
-            }
-        }
-        if (kind === "money") cell.numFmt = '#,##0.00';
-        if (kind === "qty") cell.numFmt = '#,##0.####';
-        if (cell.value === "" || cell.value == null) {
-            if (kind !== "status") cell.value = "—";
-        }
+    if (kind === "money") {
+        if (cell.value === "" || cell.value == null) cell.value = 0;
+        cell.numFmt = '#,##0.00';
+        cell.alignment = { vertical: "middle", horizontal: "right" };
+    } else if (kind === "qty") {
+        if (cell.value === "" || cell.value == null) cell.value = 0;
+        cell.numFmt = "#,##0.####";
+        cell.alignment = { vertical: "middle", horizontal: "right" };
+    } else if (kind === "center") {
+        cell.value = dash(cell.value);
+        cell.alignment = { vertical: "middle", horizontal: "center" };
+    } else {
+        cell.value = dash(cell.value);
+        cell.alignment = {
+            vertical: "middle",
+            horizontal: "left",
+            indent: 1,
+        };
     }
 };
 
-const styleTotalsRow = (row, colKinds) => {
-    row.height = 22;
-    for (let c = 1; c <= colKinds.length; c++) {
-        const cell = row.getCell(c);
-        const kind = colKinds[c - 1];
+const appendDataRow = (sheet, rowNum, colDefs, values, zebra) => {
+    const row = sheet.getRow(rowNum);
+    row.height = 24;
+    let vi = 0;
+    colDefs.forEach((def, i) => {
+        const cell = row.getCell(i + 1);
+        if (def.spacer) {
+            paintCell(cell, null, false, true);
+            return;
+        }
+        cell.value = values[vi++];
+        paintCell(cell, def.k, zebra, false);
+    });
+};
+
+const appendTotalsRow = (sheet, rowNum, colDefs, values) => {
+    const row = sheet.getRow(rowNum);
+    row.height = 26;
+    let vi = 0;
+    colDefs.forEach((def, i) => {
+        const cell = row.getCell(i + 1);
+        if (def.spacer) {
+            paintCell(cell, null, false, true);
+            return;
+        }
+        cell.value = values[vi++];
         cell.fill = {
             type: "pattern",
             pattern: "solid",
@@ -255,21 +368,43 @@ const styleTotalsRow = (row, colKinds) => {
             bold: true,
             color: { argb: C.totalFg },
         };
-        cell.border = thinBorder;
-        alignCell(cell, kind === "text" ? "text" : kind);
-        cell.font = {
-            name: "Calibri",
-            size: 10,
-            bold: true,
-            color: { argb: C.totalFg },
+        cell.border = {
+            top: { style: "medium", color: { argb: C.brand } },
+            bottom: { style: "medium", color: { argb: C.brandDeep } },
+            left: { style: "hair", color: { argb: C.line } },
+            right: { style: "hair", color: { argb: C.line } },
         };
-        if (kind === "money") cell.numFmt = '#,##0.00';
-        if (kind === "qty") cell.numFmt = '#,##0.####';
-    }
+        if (def.k === "money") {
+            if (cell.value === "" || cell.value == null) cell.value = 0;
+            cell.numFmt = '#,##0.00';
+            cell.alignment = { vertical: "middle", horizontal: "right" };
+        } else if (def.k === "qty") {
+            if (cell.value === "" || cell.value == null) cell.value = 0;
+            cell.numFmt = "#,##0.####";
+            cell.alignment = { vertical: "middle", horizontal: "right" };
+        } else if (def.k === "center" || def.k === "status") {
+            cell.alignment = { vertical: "middle", horizontal: "center" };
+        } else {
+            cell.alignment = {
+                vertical: "middle",
+                horizontal: "left",
+                indent: 1,
+            };
+        }
+    });
 };
 
-const freezeAndFilter = (sheet, headerRow, colCount, lastDataRow) => {
-    sheet.views = [{ state: "frozen", ySplit: headerRow, showGridLines: false }];
+const freezeFilter = (sheet, headerRow, colCount, lastDataRow) => {
+    sheet.views = [
+        {
+            state: "frozen",
+            ySplit: headerRow,
+            showGridLines: false,
+            activeCell: "A6",
+        },
+    ];
+    // AutoFilter only on non-spacer continuous ranges is awkward;
+    // apply full range — spacer cols stay empty and look like gaps.
     if (lastDataRow >= headerRow) {
         sheet.autoFilter = {
             from: { row: headerRow, column: 1 },
@@ -278,9 +413,6 @@ const freezeAndFilter = (sheet, headerRow, colCount, lastDataRow) => {
     }
 };
 
-/**
- * @returns {Promise<Buffer>}
- */
 const buildSalesOrderWorkbook = async ({
     orders = [],
     payments = [],
@@ -304,15 +436,15 @@ const buildSalesOrderWorkbook = async ({
     const exportedBy = str(meta.exportedBy || "System");
     const filterLines = meta.filters || {};
     const filterHint = [
-        filterLines.status ? `Status: ${filterLines.status}` : null,
+        filterLines.status ? `Status ${filterLines.status}` : null,
         filterLines.dateFrom || filterLines.dateTo
-            ? `Dates: ${filterLines.dateFrom || "…"} → ${filterLines.dateTo || "…"}`
+            ? `${filterLines.dateFrom || "…"} → ${filterLines.dateTo || "…"}`
             : null,
-        filterLines.search ? `Search: ${filterLines.search}` : null,
-        filterLines.trash ? "Trash view" : null,
+        filterLines.search ? `"${filterLines.search}"` : null,
+        filterLines.trash ? "Trash" : null,
     ]
         .filter(Boolean)
-        .join("  ·  ");
+        .join("   ·   ");
 
     let totalSales = 0;
     let totalDiscount = 0;
@@ -324,75 +456,55 @@ const buildSalesOrderWorkbook = async ({
     let totalOther = 0;
     let totalSubtotal = 0;
 
-    // ═══════════════════════════════════════════════════════
-    // Sheet 1 — Sales Orders
-    // ═══════════════════════════════════════════════════════
-    const soSheet = workbook.addWorksheet("Sales Orders", {
-        properties: { defaultRowHeight: 18, tabColor: { argb: C.brand } },
-        pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1 },
-    });
-
-    const soHeaders = [
-        "Order Number",
-        "Order Date",
-        "Status",
-        "Sales Type",
-        "Customer Name",
-        "Customer Phone",
-        "Customer Email",
-        "Branch",
-        "Warehouse",
-        "Payment Status",
-        "Payment Method",
-        "Subtotal",
-        "Discount",
-        "Tax",
-        "Shipping",
-        "Other Charges",
-        "Grand Total",
-        "Paid Amount",
-        "Due Amount",
-        "Reference Number",
-        "Created By",
-        "Item Count",
-    ];
-    const soKinds = [
-        "text",
-        "center",
-        "status",
-        "center",
-        "text",
-        "center",
-        "text",
-        "text",
-        "text",
-        "status",
-        "center",
-        "money",
-        "money",
-        "money",
-        "money",
-        "money",
-        "money",
-        "money",
-        "money",
-        "text",
-        "text",
-        "qty",
+    // ── Sales Orders (grouped + spacers) ──────────────────
+    const soDefs = [
+        // Order
+        { h: "Order No.", k: "text", w: 14, g: C.gOrder },
+        { h: "Date", k: "center", w: 12, g: C.gOrder },
+        { h: "Status", k: "status", w: 14, g: C.gOrder },
+        { h: "Type", k: "center", w: 11, g: C.gOrder },
+        { spacer: true, w: 2.4 },
+        // Customer
+        { h: "Customer", k: "text", w: 22, g: C.gCustomer },
+        { h: "Phone", k: "center", w: 14, g: C.gCustomer },
+        { h: "Email", k: "text", w: 22, g: C.gCustomer },
+        { spacer: true, w: 2.4 },
+        // Place
+        { h: "Branch", k: "text", w: 14, g: C.gPlace },
+        { h: "Warehouse", k: "text", w: 14, g: C.gPlace },
+        { spacer: true, w: 2.4 },
+        // Payment
+        { h: "Pay Status", k: "status", w: 12, g: C.gPay },
+        { h: "Method", k: "center", w: 13, g: C.gPay },
+        { spacer: true, w: 2.4 },
+        // Money
+        { h: "Subtotal", k: "money", w: 12, g: C.gMoney },
+        { h: "Discount", k: "money", w: 11, g: C.gMoney },
+        { h: "Tax", k: "money", w: 10, g: C.gMoney },
+        { h: "Shipping", k: "money", w: 11, g: C.gMoney },
+        { h: "Other", k: "money", w: 10, g: C.gMoney },
+        { h: "Grand Total", k: "money", w: 13, g: C.gMoney },
+        { h: "Paid", k: "money", w: 12, g: C.gMoney },
+        { h: "Due", k: "money", w: 11, g: C.gMoney },
+        { spacer: true, w: 2.4 },
+        // Meta
+        { h: "Reference", k: "text", w: 14, g: C.gMeta },
+        { h: "Created By", k: "text", w: 16, g: C.gMeta },
+        { h: "Items", k: "qty", w: 8, g: C.gMeta },
     ];
 
-    const soHeaderRow = addTitleBlock(
-        soSheet,
-        soHeaders.length,
-        "LOWKIA ERP  ·  Sales Orders",
-        `Exported ${fmtDateTime(exportedAt)}  ·  By ${exportedBy}${
-            filterHint ? "  ·  " + filterHint : ""
-        }`
+    const so = buildSheetChrome(
+        workbook,
+        "Sales Orders",
+        C.brandDeep,
+        soDefs,
+        "  Lowkia ERP   ·   Sales Orders",
+        `  ${fmtDateTime(exportedAt)}    ·    ${exportedBy}${
+            filterHint ? "    ·    " + filterHint : ""
+        }    ·    ${orders.length} order(s)`
     );
-    soSheet.getRow(soHeaderRow).values = [null, ...soHeaders];
-    styleColumnHeader(soSheet.getRow(soHeaderRow), soHeaders.length);
 
-    let soRowIdx = soHeaderRow;
+    let r = so.headerRow;
     orders.forEach((o, i) => {
         const itemCount = Array.isArray(o.items) ? o.items.length : 0;
         totalItems += itemCount;
@@ -405,42 +517,51 @@ const buildSalesOrderWorkbook = async ({
         totalOther += num(o.otherCharges);
         totalSubtotal += num(o.subtotal);
 
-        soRowIdx += 1;
-        const row = soSheet.getRow(soRowIdx);
-        row.values = [
-            null,
-            str(o.orderNumber),
-            fmtDate(o.orderDate),
-            str(o.status),
-            str(o.salesType),
-            str(o.customerName) ||
-                refName(o.customerId, ["name", "companyName"]),
-            str(o.customerPhone) || refName(o.customerId, ["phone"]),
-            str(o.customerEmail) || refName(o.customerId, ["email"]),
-            refName(o.branchId, ["name", "code", "branchCode"]),
-            refName(o.warehouseId, ["warehouseName", "warehouseCode", "name"]),
-            str(o.paymentStatus),
-            str(o.paymentMethod),
-            num(o.subtotal),
-            num(o.discount),
-            num(o.tax),
-            num(o.shippingCost),
-            num(o.otherCharges),
-            num(o.grandTotal),
-            num(o.paidAmount),
-            num(o.dueAmount),
-            str(o.referenceNumber),
-            refName(o.createdBy, ["name", "email"]),
-            itemCount,
-        ];
-        styleDataRow(row, soKinds, i % 2 === 1);
+        r += 1;
+        appendDataRow(
+            so.sheet,
+            r,
+            soDefs,
+            [
+                str(o.orderNumber),
+                fmtDate(o.orderDate),
+                str(o.status),
+                str(o.salesType),
+                str(o.customerName) ||
+                    refName(o.customerId, ["name", "companyName"]),
+                str(o.customerPhone) || refName(o.customerId, ["phone"]),
+                str(o.customerEmail) || refName(o.customerId, ["email"]),
+                refName(o.branchId, ["name", "code", "branchCode"]),
+                refName(o.warehouseId, [
+                    "warehouseName",
+                    "warehouseCode",
+                    "name",
+                ]),
+                str(o.paymentStatus),
+                str(o.paymentMethod),
+                num(o.subtotal),
+                num(o.discount),
+                num(o.tax),
+                num(o.shippingCost),
+                num(o.otherCharges),
+                num(o.grandTotal),
+                num(o.paidAmount),
+                num(o.dueAmount),
+                str(o.referenceNumber),
+                refName(o.createdBy, ["name", "email"]),
+                itemCount,
+            ],
+            i % 2 === 1
+        );
     });
 
-    // Totals footer
-    soRowIdx += 1;
-    const soTotal = soSheet.getRow(soRowIdx);
-    soTotal.values = [
-        null,
+    // Air before totals
+    r += 1;
+    so.sheet.getRow(r).height = 8;
+    fillRow(so.sheet, r, 1, so.colCount, C.canvas);
+
+    r += 1;
+    appendTotalsRow(so.sheet, r, soDefs, [
         "TOTALS",
         "",
         "",
@@ -463,90 +584,69 @@ const buildSalesOrderWorkbook = async ({
         "",
         "",
         totalItems,
-    ];
-    styleTotalsRow(soTotal, soKinds);
-
-    setWidths(soSheet, [
-        15, 12, 14, 11, 22, 14, 22, 14, 14, 13, 13, 11, 11, 10, 11, 12, 12, 12,
-        11, 14, 16, 10,
     ]);
-    freezeAndFilter(soSheet, soHeaderRow, soHeaders.length, soRowIdx - 1);
+    freezeFilter(so.sheet, so.headerRow, so.colCount, r - 2);
 
-    // ═══════════════════════════════════════════════════════
-    // Sheet 2 — Order Items
-    // ═══════════════════════════════════════════════════════
-    const itemSheet = workbook.addWorksheet("Order Items", {
-        properties: { defaultRowHeight: 18, tabColor: { argb: "FF0EA5E9" } },
-        pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1 },
-    });
-    const itemHeaders = [
-        "Order Number",
-        "Order Date",
-        "Product",
-        "SKU",
-        "Variant",
-        "Qty",
-        "Unit Price",
-        "Discount",
-        "Tax",
-        "Line Total",
-        "Tracking Type",
-        "IMEIs",
-        "Stock Warehouse",
-    ];
-    const itemKinds = [
-        "text",
-        "center",
-        "text",
-        "text",
-        "text",
-        "qty",
-        "money",
-        "money",
-        "money",
-        "money",
-        "center",
-        "text",
-        "text",
+    // ── Order Items ───────────────────────────────────────
+    const itemDefs = [
+        { h: "Order No.", k: "text", w: 14, g: C.gOrder },
+        { h: "Date", k: "center", w: 12, g: C.gOrder },
+        { spacer: true, w: 2.4 },
+        { h: "Product", k: "text", w: 28, g: C.gCustomer },
+        { h: "SKU", k: "text", w: 14, g: C.gCustomer },
+        { h: "Variant", k: "text", w: 16, g: C.gCustomer },
+        { spacer: true, w: 2.4 },
+        { h: "Qty", k: "qty", w: 8, g: C.gMoney },
+        { h: "Unit Price", k: "money", w: 12, g: C.gMoney },
+        { h: "Discount", k: "money", w: 11, g: C.gMoney },
+        { h: "Tax", k: "money", w: 10, g: C.gMoney },
+        { h: "Line Total", k: "money", w: 12, g: C.gMoney },
+        { spacer: true, w: 2.4 },
+        { h: "Tracking", k: "center", w: 12, g: C.gMeta },
+        { h: "IMEIs", k: "text", w: 28, g: C.gMeta },
+        { h: "Stock WH", k: "text", w: 14, g: C.gMeta },
     ];
 
-    const itemHeaderRow = addTitleBlock(
-        itemSheet,
-        itemHeaders.length,
-        "LOWKIA ERP  ·  Order Line Items",
-        `One row per product line  ·  IMEIs joined when multiple  ·  ${fmtDateTime(exportedAt)}`
+    const items = buildSheetChrome(
+        workbook,
+        "Order Items",
+        "FF0369A1",
+        itemDefs,
+        "  Lowkia ERP   ·   Order Line Items",
+        `  One row per product line    ·    IMEIs joined when multiple    ·    ${fmtDateTime(exportedAt)}`
     );
-    itemSheet.getRow(itemHeaderRow).values = [null, ...itemHeaders];
-    styleColumnHeader(itemSheet.getRow(itemHeaderRow), itemHeaders.length);
 
-    let itemRowIdx = itemHeaderRow;
+    let ir = items.headerRow;
     let itemLineCount = 0;
     let itemQtySum = 0;
     let itemTotalSum = 0;
-    let itemZebra = 0;
+    let zi = 0;
 
     for (const o of orders) {
         const lines = Array.isArray(o.items) ? o.items : [];
         if (lines.length === 0) {
-            itemRowIdx += 1;
-            const row = itemSheet.getRow(itemRowIdx);
-            row.values = [
-                null,
-                str(o.orderNumber),
-                fmtDate(o.orderDate),
-                "(no lines)",
-                "",
-                "",
-                0,
-                0,
-                0,
-                0,
-                0,
-                "",
-                "",
-                "",
-            ];
-            styleDataRow(row, itemKinds, itemZebra++ % 2 === 1);
+            ir += 1;
+            appendDataRow(
+                items.sheet,
+                ir,
+                itemDefs,
+                [
+                    str(o.orderNumber),
+                    fmtDate(o.orderDate),
+                    "(no lines)",
+                    "",
+                    "",
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    "",
+                    "",
+                    "",
+                ],
+                zi++ % 2 === 1
+            );
             continue;
         }
         for (const line of lines) {
@@ -563,38 +663,42 @@ const buildSalesOrderWorkbook = async ({
             const imeis = Array.isArray(line.imeis)
                 ? line.imeis.map(str).filter(Boolean).join(", ")
                 : "";
-            itemRowIdx += 1;
-            const row = itemSheet.getRow(itemRowIdx);
-            row.values = [
-                null,
-                str(o.orderNumber),
-                fmtDate(o.orderDate),
-                str(line.productName) ||
-                    refName(line.productId, ["name", "productCode"]),
-                str(line.sku) ||
-                    (variant && str(variant.sku)) ||
-                    refName(line.productId, ["productCode"]),
-                variantLabel,
-                num(line.quantity),
-                num(line.unitPrice),
-                num(line.discount),
-                num(line.tax),
-                num(line.total),
-                str(line.trackingType),
-                imeis,
-                refName(line.stockWarehouseId, [
-                    "warehouseName",
-                    "warehouseCode",
-                ]),
-            ];
-            styleDataRow(row, itemKinds, itemZebra++ % 2 === 1);
+            ir += 1;
+            appendDataRow(
+                items.sheet,
+                ir,
+                itemDefs,
+                [
+                    str(o.orderNumber),
+                    fmtDate(o.orderDate),
+                    str(line.productName) ||
+                        refName(line.productId, ["name", "productCode"]),
+                    str(line.sku) ||
+                        (variant && str(variant.sku)) ||
+                        refName(line.productId, ["productCode"]),
+                    variantLabel,
+                    num(line.quantity),
+                    num(line.unitPrice),
+                    num(line.discount),
+                    num(line.tax),
+                    num(line.total),
+                    str(line.trackingType),
+                    imeis,
+                    refName(line.stockWarehouseId, [
+                        "warehouseName",
+                        "warehouseCode",
+                    ]),
+                ],
+                zi++ % 2 === 1
+            );
         }
     }
 
-    itemRowIdx += 1;
-    const itemTotal = itemSheet.getRow(itemRowIdx);
-    itemTotal.values = [
-        null,
+    ir += 1;
+    items.sheet.getRow(ir).height = 8;
+    fillRow(items.sheet, ir, 1, items.colCount, C.canvas);
+    ir += 1;
+    appendTotalsRow(items.sheet, ir, itemDefs, [
         "TOTALS",
         "",
         `${itemLineCount} lines`,
@@ -608,58 +712,36 @@ const buildSalesOrderWorkbook = async ({
         "",
         "",
         "",
-    ];
-    styleTotalsRow(itemTotal, itemKinds);
-
-    setWidths(itemSheet, [
-        15, 12, 28, 14, 16, 8, 11, 10, 10, 12, 12, 26, 16,
     ]);
-    freezeAndFilter(
-        itemSheet,
-        itemHeaderRow,
-        itemHeaders.length,
-        itemRowIdx - 1
-    );
+    freezeFilter(items.sheet, items.headerRow, items.colCount, ir - 2);
 
-    // ═══════════════════════════════════════════════════════
-    // Sheet 3 — Payments
-    // ═══════════════════════════════════════════════════════
-    const paySheet = workbook.addWorksheet("Payments", {
-        properties: { defaultRowHeight: 18, tabColor: { argb: "FF059669" } },
-    });
-    const payHeaders = [
-        "Order Number",
-        "Payment Number",
-        "Payment Date",
-        "Method",
-        "Reference",
-        "Amount",
-        "Status",
-    ];
-    const payKinds = [
-        "text",
-        "text",
-        "center",
-        "center",
-        "text",
-        "money",
-        "status",
+    // ── Payments ──────────────────────────────────────────
+    const payDefs = [
+        { h: "Order No.", k: "text", w: 14, g: C.gOrder },
+        { spacer: true, w: 2.4 },
+        { h: "Payment No.", k: "text", w: 16, g: C.gPay },
+        { h: "Date", k: "center", w: 12, g: C.gPay },
+        { h: "Method", k: "center", w: 13, g: C.gPay },
+        { h: "Reference", k: "text", w: 20, g: C.gPay },
+        { spacer: true, w: 2.4 },
+        { h: "Amount", k: "money", w: 13, g: C.gMoney },
+        { h: "Status", k: "status", w: 12, g: C.gMoney },
     ];
 
-    const payHeaderRow = addTitleBlock(
-        paySheet,
-        payHeaders.length,
-        "LOWKIA ERP  ·  Payments",
-        `Ledger payments linked to exported sales orders  ·  ${fmtDateTime(exportedAt)}`
+    const pays = buildSheetChrome(
+        workbook,
+        "Payments",
+        "FF047857",
+        payDefs,
+        "  Lowkia ERP   ·   Payments",
+        `  Ledger payments for exported sales orders    ·    ${fmtDateTime(exportedAt)}`
     );
-    paySheet.getRow(payHeaderRow).values = [null, ...payHeaders];
-    styleColumnHeader(paySheet.getRow(payHeaderRow), payHeaders.length);
 
     const orderNumById = new Map(
         orders.map((o) => [String(o._id), str(o.orderNumber)])
     );
 
-    let payRowIdx = payHeaderRow;
+    let pr = pays.headerRow;
     let payAmountSum = 0;
     payments.forEach((p, i) => {
         const soId = p.salesOrderId
@@ -668,25 +750,29 @@ const buildSalesOrderWorkbook = async ({
               ? String(p.referenceId)
               : "";
         payAmountSum += num(p.amount);
-        payRowIdx += 1;
-        const row = paySheet.getRow(payRowIdx);
-        row.values = [
-            null,
-            orderNumById.get(soId) || "",
-            str(p.paymentNumber),
-            fmtDate(p.paymentDate),
-            str(p.paymentMethod),
-            str(p.paymentMethodReference || p.providerReference || ""),
-            num(p.amount),
-            str(p.status),
-        ];
-        styleDataRow(row, payKinds, i % 2 === 1);
+        pr += 1;
+        appendDataRow(
+            pays.sheet,
+            pr,
+            payDefs,
+            [
+                orderNumById.get(soId) || "",
+                str(p.paymentNumber),
+                fmtDate(p.paymentDate),
+                str(p.paymentMethod),
+                str(p.paymentMethodReference || p.providerReference || ""),
+                num(p.amount),
+                str(p.status),
+            ],
+            i % 2 === 1
+        );
     });
 
-    payRowIdx += 1;
-    const payTotal = paySheet.getRow(payRowIdx);
-    payTotal.values = [
-        null,
+    pr += 1;
+    pays.sheet.getRow(pr).height = 8;
+    fillRow(pays.sheet, pr, 1, pays.colCount, C.canvas);
+    pr += 1;
+    appendTotalsRow(pays.sheet, pr, payDefs, [
         "TOTALS",
         `${payments.length} payments`,
         "",
@@ -694,163 +780,176 @@ const buildSalesOrderWorkbook = async ({
         "",
         payAmountSum,
         "",
-    ];
-    styleTotalsRow(payTotal, payKinds);
-
-    setWidths(paySheet, [15, 18, 12, 14, 22, 12, 12]);
-    freezeAndFilter(
-        paySheet,
-        payHeaderRow,
-        payHeaders.length,
-        Math.max(payHeaderRow, payRowIdx - 1)
+    ]);
+    freezeFilter(
+        pays.sheet,
+        pays.headerRow,
+        pays.colCount,
+        Math.max(pays.headerRow, pr - 2)
     );
 
-    // ═══════════════════════════════════════════════════════
-    // Sheet 4 — Export Summary (structured dashboard)
-    // ═══════════════════════════════════════════════════════
-    const sumSheet = workbook.addWorksheet("Export Summary", {
-        properties: { tabColor: { argb: "FF64748B" } },
+    // ── Summary (card layout) ─────────────────────────────
+    const sum = workbook.addWorksheet("Export Summary", {
+        properties: { tabColor: { argb: "FF64748B" }, defaultRowHeight: 22 },
+        views: [{ showGridLines: false }],
     });
-    setWidths(sumSheet, [28, 42, 18, 18]);
+    setWidths(sum, [3, 26, 3, 22, 3, 18, 3, 18, 3]);
 
-    sumSheet.mergeCells(1, 1, 1, 4);
-    const sTitle = sumSheet.getCell(1, 1);
-    sTitle.value = "LOWKIA ERP  ·  Export Summary";
-    sTitle.font = {
+    // Full-bleed title across used cols
+    sum.mergeCells(1, 1, 1, 9);
+    const st = sum.getCell(1, 1);
+    st.value = "  Lowkia ERP   ·   Export Summary";
+    st.font = {
         name: "Calibri",
-        size: 16,
+        size: 18,
         bold: true,
-        color: { argb: C.headerFg },
+        color: { argb: C.brandInk },
     };
-    sTitle.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: C.titleBand },
-    };
-    sTitle.alignment = { vertical: "middle", horizontal: "left" };
-    sumSheet.getRow(1).height = 30;
-    paintRange(sumSheet, 1, 1, 4, C.titleBand);
+    st.alignment = { vertical: "middle", horizontal: "left" };
+    sum.getRow(1).height = 36;
+    fillRow(sum, 1, 1, 9, C.brandDeep);
 
-    const addSection = (row, label) => {
-        sumSheet.mergeCells(row, 1, row, 4);
-        const cell = sumSheet.getCell(row, 1);
-        cell.value = label;
-        cell.font = {
+    sum.getRow(2).height = 6;
+    fillRow(sum, 2, 1, 9, C.brand);
+
+    sum.mergeCells(3, 1, 3, 9);
+    sum.getCell(3, 1).value = `  Generated ${fmtDateTime(exportedAt)}    ·    ${exportedBy}`;
+    sum.getCell(3, 1).font = {
+        name: "Calibri",
+        size: 10,
+        italic: true,
+        color: { argb: C.muted },
+    };
+    sum.getCell(3, 1).alignment = { vertical: "middle", indent: 1 };
+    sum.getRow(3).height = 24;
+    fillRow(sum, 3, 1, 9, C.brandMist);
+
+    sum.getRow(4).height = 14;
+
+    const card = (row, col, label, value, money = false) => {
+        const a = sum.getCell(row, col);
+        const b = sum.getCell(row + 1, col);
+        a.value = label;
+        a.font = {
+            name: "Calibri",
+            size: 9,
+            bold: true,
+            color: { argb: C.softMuted },
+        };
+        a.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: C.brandMist },
+        };
+        a.alignment = { horizontal: "center", vertical: "middle" };
+        a.border = borderSoft;
+        b.value = value;
+        b.font = {
+            name: "Calibri",
+            size: 16,
+            bold: true,
+            color: { argb: C.brandDeep },
+        };
+        b.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: C.paper },
+        };
+        b.alignment = { horizontal: "center", vertical: "middle" };
+        b.border = borderSoft;
+        if (money) b.numFmt = '#,##0.00';
+        sum.getRow(row).height = 18;
+        sum.getRow(row + 1).height = 32;
+    };
+
+    card(5, 2, "ORDERS", orders.length);
+    card(5, 4, "LINE ITEMS", totalItems);
+    card(5, 6, "PAYMENTS", payments.length);
+    card(5, 8, "GRAND TOTAL", totalSales, true);
+
+    const section = (row, label) => {
+        sum.mergeCells(row, 2, row, 8);
+        const c = sum.getCell(row, 2);
+        c.value = `  ${label}`;
+        c.font = {
             name: "Calibri",
             size: 11,
             bold: true,
-            color: { argb: C.text },
+            color: { argb: C.ink },
         };
-        cell.fill = {
+        c.fill = {
             type: "pattern",
             pattern: "solid",
-            fgColor: { argb: C.sectionBg },
+            fgColor: { argb: C.zebra },
         };
-        cell.alignment = { vertical: "middle", horizontal: "left" };
-        sumSheet.getRow(row).height = 22;
-        paintRange(sumSheet, row, 1, 4, C.sectionBg);
+        c.alignment = { vertical: "middle" };
+        sum.getRow(row).height = 26;
+        // paint side spacers
+        [1, 3, 5, 7, 9].forEach((sc) => {
+            sum.getCell(row, sc).fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: C.canvas },
+            };
+        });
         return row + 1;
     };
 
-    const addKV = (row, label, value, money = false) => {
-        const a = sumSheet.getCell(row, 1);
-        const b = sumSheet.getCell(row, 2);
+    const kv = (row, label, value, money = false) => {
+        const a = sum.getCell(row, 2);
+        const b = sum.getCell(row, 4);
+        sum.mergeCells(row, 4, row, 8);
         a.value = label;
         a.font = {
             name: "Calibri",
             size: 10,
             bold: true,
-            color: { argb: C.kpiLabel },
+            color: { argb: C.muted },
         };
-        a.border = thinBorder;
-        a.alignment = { vertical: "middle", horizontal: "left" };
+        a.alignment = { vertical: "middle", indent: 1 };
+        a.border = borderHair;
+        a.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: C.paper },
+        };
         b.value = value;
-        b.font = { name: "Calibri", size: 10, color: { argb: C.text } };
-        b.border = thinBorder;
+        b.font = { name: "Calibri", size: 10, color: { argb: C.ink } };
         b.alignment = {
             vertical: "middle",
             horizontal: money ? "right" : "left",
+            indent: money ? 0 : 1,
+        };
+        b.border = borderHair;
+        b.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: C.paper },
         };
         if (money) b.numFmt = '#,##0.00';
-        sumSheet.getRow(row).height = 20;
+        sum.getRow(row).height = 22;
         return row + 1;
     };
 
-    const addKpi = (row, col, label, value, money = false) => {
-        const labelCell = sumSheet.getCell(row, col);
-        const valueCell = sumSheet.getCell(row + 1, col);
-        labelCell.value = label;
-        labelCell.font = {
-            name: "Calibri",
-            size: 9,
-            bold: true,
-            color: { argb: C.kpiLabel },
-        };
-        labelCell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: C.brandSoft },
-        };
-        labelCell.alignment = { horizontal: "center", vertical: "middle" };
-        labelCell.border = thinBorder;
-        valueCell.value = value;
-        valueCell.font = {
-            name: "Calibri",
-            size: 14,
-            bold: true,
-            color: { argb: C.brand },
-        };
-        valueCell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: C.white },
-        };
-        valueCell.alignment = { horizontal: "center", vertical: "middle" };
-        valueCell.border = thinBorder;
-        if (money) valueCell.numFmt = '#,##0.00';
-        sumSheet.getRow(row).height = 18;
-        sumSheet.getRow(row + 1).height = 26;
-    };
-
-    let r = 3;
-    r = addSection(r, "EXPORT META");
-    r = addKV(r, "Export Date", fmtDateTime(exportedAt));
-    r = addKV(r, "Exported By", exportedBy);
-    r = addKV(r, "Company", str(meta.companyName || meta.companyId || "—"));
-    r += 1;
-
-    r = addSection(r, "APPLIED FILTERS");
-    r = addKV(r, "Trash Mode", filterLines.trash ? "Yes" : "No");
-    r = addKV(r, "Search", str(filterLines.search || "—"));
-    r = addKV(r, "Status", str(filterLines.status || "All"));
-    r = addKV(r, "Date From", str(filterLines.dateFrom || "—"));
-    r = addKV(r, "Date To", str(filterLines.dateTo || "—"));
-    r = addKV(r, "Sort", str(filterLines.sort || "newest"));
-    r = addKV(r, "Branch ID", str(filterLines.branchId || "—"));
-    r = addKV(r, "Warehouse ID", str(filterLines.warehouseId || "—"));
-    r = addKV(r, "Customer ID", str(filterLines.customerId || "—"));
-    r += 1;
-
-    r = addSection(r, "KEY METRICS");
-    const kpiRow = r;
-    addKpi(kpiRow, 1, "ORDERS", orders.length);
-    addKpi(kpiRow, 2, "LINE ITEMS", totalItems);
-    addKpi(kpiRow, 3, "PAYMENTS", payments.length);
-    addKpi(kpiRow, 4, "GRAND TOTAL", totalSales, true);
-    r = kpiRow + 3;
-
-    r = addSection(r, "FINANCIAL TOTALS (from stored Sales Order values)");
-    r = addKV(r, "Subtotal", totalSubtotal, true);
-    r = addKV(r, "Discount", totalDiscount, true);
-    r = addKV(r, "Tax", totalTax, true);
-    r = addKV(r, "Shipping", totalShipping, true);
-    r = addKV(r, "Other Charges", totalOther, true);
-    r = addKV(r, "Grand Total", totalSales, true);
-    r = addKV(r, "Paid Amount", totalPaid, true);
-    r = addKV(r, "Due Amount", totalDue, true);
-    r = addKV(r, "Payment Ledger Sum", payAmountSum, true);
-
-    sumSheet.views = [{ showGridLines: false }];
+    let sr = 9;
+    sr = section(sr, "FILTERS");
+    sr = kv(sr, "Trash mode", filterLines.trash ? "Yes" : "No");
+    sr = kv(sr, "Search", str(filterLines.search || "—"));
+    sr = kv(sr, "Status", str(filterLines.status || "All"));
+    sr = kv(sr, "Date from", str(filterLines.dateFrom || "—"));
+    sr = kv(sr, "Date to", str(filterLines.dateTo || "—"));
+    sr = kv(sr, "Sort", str(filterLines.sort || "newest"));
+    sr += 1;
+    sr = section(sr, "FINANCIALS (stored Sales Order values)");
+    sr = kv(sr, "Subtotal", totalSubtotal, true);
+    sr = kv(sr, "Discount", totalDiscount, true);
+    sr = kv(sr, "Tax", totalTax, true);
+    sr = kv(sr, "Shipping", totalShipping, true);
+    sr = kv(sr, "Other charges", totalOther, true);
+    sr = kv(sr, "Grand total", totalSales, true);
+    sr = kv(sr, "Paid", totalPaid, true);
+    sr = kv(sr, "Due", totalDue, true);
+    sr = kv(sr, "Payment ledger sum", payAmountSum, true);
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
