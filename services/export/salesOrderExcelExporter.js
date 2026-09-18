@@ -4,7 +4,7 @@ const MAX_EXPORT_ORDERS = 25000;
 
 /**
  * Soft professional palette — airy, high contrast headers, calm body.
- * Spacer columns create visual breathing room between field groups.
+ * Group separation via header colors + left accent on group starts.
  */
 const C = {
     ink: "FF1E293B",
@@ -41,11 +41,8 @@ const C = {
     infoFg: "FF075985",
 
     totalBg: "FFECFDF5",
-    totalFg: "FF134E4A",
-    spacer: "FFF8FAFC",
-};
+    totalFg: "FF134E4A",};
 
-const SPACER = ""; // empty spacer column marker
 
 const borderHair = {
     top: { style: "hair", color: { argb: C.line } },
@@ -104,16 +101,7 @@ const refName = (ref, fallbacks = []) => {
 
 const setWidths = (sheet, widths) => {
     widths.forEach((w, i) => {
-        const col = sheet.getColumn(i + 1);
-        col.width = w;
-        // Extra visual padding feel via default alignment on spacer cols
-        if (w <= 2.5) {
-            col.fill = {
-                type: "pattern",
-                pattern: "solid",
-                fgColor: { argb: C.spacer },
-            };
-        }
+        sheet.getColumn(i + 1).width = w;
     });
 };
 
@@ -129,8 +117,7 @@ const fillRow = (sheet, rowNum, from, to, argb) => {
 
 /**
  * Column definition:
- * { h, k, w, g? }  header, kind, width, group color
- * { spacer: true, w }  breathing gap between groups
+ * { h, k, w, g?, groupStart? }  header, kind, width, group color, group edge
  */
 const buildSheetChrome = (workbook, name, tabArgb, colDefs, title, subtitle) => {
     const sheet = workbook.addWorksheet(name, {
@@ -156,7 +143,7 @@ const buildSheetChrome = (workbook, name, tabArgb, colDefs, title, subtitle) => 
     });
 
     const colCount = colDefs.length;
-    const widths = colDefs.map((d) => (d.spacer ? d.w || 2.2 : d.w));
+    const widths = colDefs.map((d) => d.w);
     setWidths(sheet, widths);
 
     // Row 1 — brand title
@@ -201,21 +188,6 @@ const buildSheetChrome = (workbook, name, tabArgb, colDefs, title, subtitle) => 
     sheet.getRow(headerRow).height = 28;
     colDefs.forEach((def, i) => {
         const cell = sheet.getRow(headerRow).getCell(i + 1);
-        if (def.spacer) {
-            cell.value = "";
-            cell.fill = {
-                type: "pattern",
-                pattern: "solid",
-                fgColor: { argb: C.canvas },
-            };
-            cell.border = {
-                top: { style: "hair", color: { argb: C.canvas } },
-                bottom: { style: "hair", color: { argb: C.canvas } },
-                left: { style: "hair", color: { argb: C.canvas } },
-                right: { style: "hair", color: { argb: C.canvas } },
-            };
-            return;
-        }
         cell.value = def.h;
         cell.font = {
             name: "Calibri",
@@ -236,7 +208,10 @@ const buildSheetChrome = (workbook, name, tabArgb, colDefs, title, subtitle) => 
         cell.border = {
             top: { style: "thin", color: { argb: def.g || C.brandDeep } },
             bottom: { style: "medium", color: { argb: C.brand } },
-            left: { style: "hair", color: { argb: "40FFFFFF" } },
+            left: {
+                style: def.groupStart ? "medium" : "hair",
+                color: { argb: def.groupStart ? "FFFFFFFF" : "40FFFFFF" },
+            },
             right: { style: "hair", color: { argb: "40FFFFFF" } },
         };
     });
@@ -260,24 +235,16 @@ const statusTone = (raw) => {
     return { bg: C.infoBg, fg: C.infoFg };
 };
 
-const paintCell = (cell, kind, zebra, isSpacer) => {
-    if (isSpacer) {
-        cell.value = "";
-        cell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: C.canvas },
-        };
-        cell.border = {
-            top: { style: "hair", color: { argb: C.canvas } },
-            bottom: { style: "hair", color: { argb: C.canvas } },
-            left: { style: "hair", color: { argb: C.canvas } },
-            right: { style: "hair", color: { argb: C.canvas } },
-        };
-        return;
-    }
-
-    cell.border = borderHair;
+const paintCell = (cell, kind, zebra, _u, groupStart = false) => {
+    cell.border = {
+        top: { style: "hair", color: { argb: C.line } },
+        bottom: { style: "hair", color: { argb: C.line } },
+        left: {
+            style: groupStart ? "medium" : "hair",
+            color: { argb: groupStart ? C.brand : C.line },
+        },
+        right: { style: "hair", color: { argb: C.line } },
+    };
 
     if (kind === "status") {
         const tone = statusTone(cell.value);
@@ -337,12 +304,8 @@ const appendDataRow = (sheet, rowNum, colDefs, values, zebra) => {
     let vi = 0;
     colDefs.forEach((def, i) => {
         const cell = row.getCell(i + 1);
-        if (def.spacer) {
-            paintCell(cell, null, false, true);
-            return;
-        }
         cell.value = values[vi++];
-        paintCell(cell, def.k, zebra, false);
+        paintCell(cell, def.k, zebra, false, !!def.groupStart);
     });
 };
 
@@ -352,10 +315,6 @@ const appendTotalsRow = (sheet, rowNum, colDefs, values) => {
     let vi = 0;
     colDefs.forEach((def, i) => {
         const cell = row.getCell(i + 1);
-        if (def.spacer) {
-            paintCell(cell, null, false, true);
-            return;
-        }
         cell.value = values[vi++];
         cell.fill = {
             type: "pattern",
@@ -403,8 +362,6 @@ const freezeFilter = (sheet, headerRow, colCount, lastDataRow) => {
             activeCell: "A6",
         },
     ];
-    // AutoFilter only on non-spacer continuous ranges is awkward;
-    // apply full range — spacer cols stay empty and look like gaps.
     if (lastDataRow >= headerRow) {
         sheet.autoFilter = {
             from: { row: headerRow, column: 1 },
@@ -456,29 +413,25 @@ const buildSalesOrderWorkbook = async ({
     let totalOther = 0;
     let totalSubtotal = 0;
 
-    // ── Sales Orders (grouped + spacers) ──────────────────
+    // ── Sales Orders ─────────────────────────────────────
     const soDefs = [
         // Order
-        { h: "Order No.", k: "text", w: 14, g: C.gOrder },
+        { h: "Order No.", k: "text", w: 15, g: C.gOrder, groupStart: true },
         { h: "Date", k: "center", w: 12, g: C.gOrder },
         { h: "Status", k: "status", w: 14, g: C.gOrder },
         { h: "Type", k: "center", w: 11, g: C.gOrder },
-        { spacer: true, w: 2.4 },
         // Customer
-        { h: "Customer", k: "text", w: 22, g: C.gCustomer },
+        { h: "Customer", k: "text", w: 24, g: C.gCustomer, groupStart: true },
         { h: "Phone", k: "center", w: 14, g: C.gCustomer },
         { h: "Email", k: "text", w: 22, g: C.gCustomer },
-        { spacer: true, w: 2.4 },
         // Place
-        { h: "Branch", k: "text", w: 14, g: C.gPlace },
+        { h: "Branch", k: "text", w: 15, g: C.gPlace, groupStart: true },
         { h: "Warehouse", k: "text", w: 14, g: C.gPlace },
-        { spacer: true, w: 2.4 },
         // Payment
-        { h: "Pay Status", k: "status", w: 12, g: C.gPay },
+        { h: "Pay Status", k: "status", w: 13, g: C.gPay, groupStart: true },
         { h: "Method", k: "center", w: 13, g: C.gPay },
-        { spacer: true, w: 2.4 },
         // Money
-        { h: "Subtotal", k: "money", w: 12, g: C.gMoney },
+        { h: "Subtotal", k: "money", w: 13, g: C.gMoney, groupStart: true },
         { h: "Discount", k: "money", w: 11, g: C.gMoney },
         { h: "Tax", k: "money", w: 10, g: C.gMoney },
         { h: "Shipping", k: "money", w: 11, g: C.gMoney },
@@ -486,9 +439,8 @@ const buildSalesOrderWorkbook = async ({
         { h: "Grand Total", k: "money", w: 13, g: C.gMoney },
         { h: "Paid", k: "money", w: 12, g: C.gMoney },
         { h: "Due", k: "money", w: 11, g: C.gMoney },
-        { spacer: true, w: 2.4 },
         // Meta
-        { h: "Reference", k: "text", w: 14, g: C.gMeta },
+        { h: "Reference", k: "text", w: 15, g: C.gMeta, groupStart: true },
         { h: "Created By", k: "text", w: 16, g: C.gMeta },
         { h: "Items", k: "qty", w: 8, g: C.gMeta },
     ];
@@ -589,20 +541,17 @@ const buildSalesOrderWorkbook = async ({
 
     // ── Order Items ───────────────────────────────────────
     const itemDefs = [
-        { h: "Order No.", k: "text", w: 14, g: C.gOrder },
+        { h: "Order No.", k: "text", w: 15, g: C.gOrder, groupStart: true },
         { h: "Date", k: "center", w: 12, g: C.gOrder },
-        { spacer: true, w: 2.4 },
-        { h: "Product", k: "text", w: 28, g: C.gCustomer },
+        { h: "Product", k: "text", w: 30, g: C.gCustomer, groupStart: true },
         { h: "SKU", k: "text", w: 14, g: C.gCustomer },
         { h: "Variant", k: "text", w: 16, g: C.gCustomer },
-        { spacer: true, w: 2.4 },
-        { h: "Qty", k: "qty", w: 8, g: C.gMoney },
+        { h: "Qty", k: "qty", w: 9, g: C.gMoney, groupStart: true },
         { h: "Unit Price", k: "money", w: 12, g: C.gMoney },
         { h: "Discount", k: "money", w: 11, g: C.gMoney },
         { h: "Tax", k: "money", w: 10, g: C.gMoney },
         { h: "Line Total", k: "money", w: 12, g: C.gMoney },
-        { spacer: true, w: 2.4 },
-        { h: "Tracking", k: "center", w: 12, g: C.gMeta },
+        { h: "Tracking", k: "center", w: 12, g: C.gMeta, groupStart: true },
         { h: "IMEIs", k: "text", w: 28, g: C.gMeta },
         { h: "Stock WH", k: "text", w: 14, g: C.gMeta },
     ];
@@ -717,14 +666,12 @@ const buildSalesOrderWorkbook = async ({
 
     // ── Payments ──────────────────────────────────────────
     const payDefs = [
-        { h: "Order No.", k: "text", w: 14, g: C.gOrder },
-        { spacer: true, w: 2.4 },
-        { h: "Payment No.", k: "text", w: 16, g: C.gPay },
+        { h: "Order No.", k: "text", w: 15, g: C.gOrder, groupStart: true },
+        { h: "Payment No.", k: "text", w: 17, g: C.gPay, groupStart: true },
         { h: "Date", k: "center", w: 12, g: C.gPay },
         { h: "Method", k: "center", w: 13, g: C.gPay },
         { h: "Reference", k: "text", w: 20, g: C.gPay },
-        { spacer: true, w: 2.4 },
-        { h: "Amount", k: "money", w: 13, g: C.gMoney },
+        { h: "Amount", k: "money", w: 14, g: C.gMoney, groupStart: true },
         { h: "Status", k: "status", w: 12, g: C.gMoney },
     ];
 
