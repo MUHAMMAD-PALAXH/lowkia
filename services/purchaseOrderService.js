@@ -12,6 +12,12 @@ const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const fulfillmentCycle = require("./fulfillmentCycleService");
 const { companyFilter } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const { writeActivityLog } = require("./activityLogService");
+const {
+    buildPurchaseOrderWorkbook,
+    buildExportFilename,
+    MAX_EXPORT_PURCHASE_ORDERS
+} = require("./export/purchaseOrderExcelExporter");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const OPEN_GRN_STATUSES = ["Draft", "Pending Approval"];
@@ -3833,6 +3839,119 @@ const getProductPurchaseContext = async (productId, companyId = null) => {
     };
 };
 
+/**
+ * Full filtered Purchase Order Excel export (all matching rows).
+ */
+const exportPurchaseOrdersExcel = async (query = {}, actor = null) => {
+    const trashMode = isTrashQuery(query);
+    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    Object.assign(filter, companyFilter(query.companyId));
+
+    if (query.status) {
+        if (query.status === "Completed") {
+            filter.status = { $in: ["Completed", "Received"] };
+        } else {
+            filter.status = query.status;
+        }
+    }
+    if (query.purchaseType) filter.purchaseType = query.purchaseType;
+
+    const supplierId = toObjectId(query.supplierId || query.supplier);
+    if (supplierId) filter.supplierId = supplierId;
+
+    const warehouseId = toObjectId(query.warehouseId || query.warehouse);
+    if (warehouseId) filter.warehouseId = warehouseId;
+
+    const branchId = toObjectId(query.branchId || query.branch);
+    if (branchId) filter.branchId = branchId;
+
+    if (query.search) {
+        const search = escapeRegex(String(query.search).trim());
+        filter.$or = [
+            { purchaseOrderNo: { $regex: search, $options: "i" } },
+            { referenceNo: { $regex: search, $options: "i" } },
+            { "items.productName": { $regex: search, $options: "i" } },
+            { "items.sku": { $regex: search, $options: "i" } }
+        ];
+    }
+
+    const dateFrom = parseOrderDateBound(
+        query.dateFrom || query.fromDate || query.startDate,
+        false
+    );
+    const dateTo = parseOrderDateBound(
+        query.dateTo || query.toDate || query.endDate,
+        true
+    );
+    if (dateFrom || dateTo) {
+        filter.orderDate = {};
+        if (dateFrom) filter.orderDate.$gte = dateFrom;
+        if (dateTo) filter.orderDate.$lte = dateTo;
+    }
+
+    const total = await PurchaseOrder.countDocuments(filter);
+    if (total > MAX_EXPORT_PURCHASE_ORDERS) {
+        throw new AppError(
+            `Too many matching purchase orders (${total}). Narrow filters (max ${MAX_EXPORT_PURCHASE_ORDERS}).`,
+            400
+        );
+    }
+
+    const sort = trash.resolveEntitySort(query);
+    const orders =
+        total === 0
+            ? []
+            : await populatePo(PurchaseOrder.find(filter).sort(sort)).lean();
+
+    const filename = buildExportFilename(query);
+    const buffer = await buildPurchaseOrderWorkbook({
+        orders,
+        meta: {
+            exportedAt: new Date(),
+            exportedBy:
+                [actor?.firstName, actor?.lastName].filter(Boolean).join(" ") ||
+                actor?.name ||
+                actor?.email ||
+                actor?.username ||
+                "",
+            companyId: query.companyId ? String(query.companyId) : "",
+            filters: {
+                trash: trashMode,
+                search: query.search || "",
+                status: query.status || "",
+                purchaseType: query.purchaseType || "",
+                dateFrom: query.dateFrom || query.fromDate || "",
+                dateTo: query.dateTo || query.toDate || "",
+                sort: query.sort || "newest"
+            }
+        }
+    });
+
+    await writeActivityLog({
+        user: actor,
+        companyId: query.companyId || null,
+        activityType: "Export",
+        module: "Purchase",
+        subModule: "PurchaseOrder",
+        description: `Exported ${orders.length} purchase order(s) to Excel (${filename}).`,
+        shortDescription: `PO Excel export (${orders.length})`,
+        referenceType: "PurchaseOrder",
+        referenceId: null,
+        newData: {
+            filename,
+            orderCount: orders.length,
+            filters: {
+                search: query.search || "",
+                status: query.status || "",
+                trash: trashMode
+            }
+        },
+        securityLevel: "Medium"
+    });
+
+    return { buffer, filename, orderCount: orders.length };
+};
+
 module.exports = {
     createPurchaseOrder,
     getPurchaseOrders,
@@ -3863,5 +3982,6 @@ module.exports = {
     recordSupplierPayment,
     getPurchaseOrderDeleteCheck,
     getProductPurchaseContext,
-    LOCKED_AFTER
+    LOCKED_AFTER,
+    exportPurchaseOrdersExcel
 };

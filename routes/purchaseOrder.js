@@ -37,6 +37,13 @@ router.get(
     purchaseOrderController.getPurchaseOrders
 );
 
+router.get(
+    "/export/excel",
+    listValidator,
+    validate,
+    purchaseOrderController.exportPurchaseOrdersExcel
+);
+
 router.get("/stats", purchaseOrderController.getPurchaseOrderStats);
 
 router.get(

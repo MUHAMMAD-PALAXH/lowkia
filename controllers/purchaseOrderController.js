@@ -33,6 +33,25 @@ exports.getPurchaseOrders = asyncHandler(async (req, res) => {
     return success(res, "Purchase orders retrieved successfully.", result);
 });
 
+exports.exportPurchaseOrdersExcel = asyncHandler(async (req, res) => {
+    const query = { ...req.query, companyId: req.companyId };
+    if (req.linkedSupplier) {
+        query.supplierId = String(req.linkedSupplier._id);
+    }
+    const { buffer, filename } =
+        await purchaseOrderService.exportPurchaseOrdersExcel(query, req.user);
+    res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+    );
+    res.setHeader("Content-Length", buffer.length);
+    return res.status(200).send(buffer);
+});
+
 exports.getPurchaseOrderStats = asyncHandler(async (req, res) => {
     const query = { ...req.query, companyId: req.companyId };
     if (req.linkedSupplier) {
