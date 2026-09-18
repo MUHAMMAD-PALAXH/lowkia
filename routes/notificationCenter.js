@@ -110,18 +110,32 @@ const visibilityQuery = (req) => {
     };
 };
 
-const applyListFilters = (query, req) => {
-    if (req.query.category && req.query.category !== "all") {
+const applyListFilters = (query, req, opts = {}) => {
+    const ignoreReadState = opts.ignoreReadState === true;
+    const ignoreCategory = opts.ignoreCategory === true;
+    const ignorePriority = opts.ignorePriority === true;
+
+    if (
+        !ignoreCategory &&
+        req.query.category &&
+        req.query.category !== "all"
+    ) {
         query.category = String(req.query.category).toLowerCase();
     }
-    if (req.query.priority && req.query.priority !== "all") {
+    if (
+        !ignorePriority &&
+        req.query.priority &&
+        req.query.priority !== "all"
+    ) {
         query.priority = String(req.query.priority).toLowerCase();
     }
-    if (req.query.unread === "true") {
-        query["readBy.userId"] = { $ne: req.user._id };
-    }
-    if (req.query.read === "true") {
-        query["readBy.userId"] = req.user._id;
+    if (!ignoreReadState) {
+        if (req.query.unread === "true") {
+            query["readBy.userId"] = { $ne: req.user._id };
+        }
+        if (req.query.read === "true") {
+            query["readBy.userId"] = req.user._id;
+        }
     }
 
     const actorId = String(req.query.actorId || req.query.userId || "").trim();
@@ -293,20 +307,42 @@ router.get(
     "/summary",
     asyncHandler(async (req, res) => {
         const base = visibilityQuery(req);
+        applyListFilters(base, req, { ignoreReadState: true });
+
+        const railBase = visibilityQuery(req);
+        applyListFilters(railBase, req, {
+            ignoreReadState: true,
+            ignoreCategory: true,
+        });
+
         const unread = {
             ...base,
             "readBy.userId": { $ne: req.user._id },
         };
-        const [total, unreadCount, critical, byCategory, recent] =
+        const read = {
+            ...base,
+            "readBy.userId": req.user._id,
+        };
+        const railUnread = {
+            ...railBase,
+            "readBy.userId": { $ne: req.user._id },
+        };
+        const important = {
+            ...unread,
+            $and: [
+                ...(Array.isArray(base.$and) ? base.$and : []),
+                { priority: { $in: ["high", "critical"] } },
+            ],
+        };
+
+        const [total, unreadCount, readCount, critical, byCategory, recent] =
             await Promise.all([
                 NotificationCenterEvent.countDocuments(base),
                 NotificationCenterEvent.countDocuments(unread),
-                NotificationCenterEvent.countDocuments({
-                    ...unread,
-                    priority: { $in: ["high", "critical"] },
-                }),
+                NotificationCenterEvent.countDocuments(read),
+                NotificationCenterEvent.countDocuments(important),
                 NotificationCenterEvent.aggregate([
-                    { $match: unread },
+                    { $match: railUnread },
                     { $group: { _id: "$category", count: { $sum: 1 } } },
                     { $sort: { count: -1 } },
                 ]),
@@ -321,6 +357,7 @@ router.get(
             data: {
                 total,
                 unread: unreadCount,
+                read: readCount,
                 important: critical,
                 byCategory: Object.fromEntries(
                     byCategory.map((item) => [item._id, item.count])
