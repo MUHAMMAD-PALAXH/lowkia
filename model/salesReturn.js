@@ -320,7 +320,8 @@ refundMethod:{
         "Bank",
         "Card",
         "Mobile Banking",
-        "Credit Adjustment"
+        "Credit Adjustment",
+        "Clover"
     ],
     default:"Cash"
 },

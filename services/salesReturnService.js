@@ -727,9 +727,113 @@ const bulkRestoreSalesReturns = (payload, actorId, companyId = null) =>
 const bulkPermanentDeleteSalesReturns = (payload, companyId = null) =>
     trash.bulkPermanentDelete(payload, companyId);
 
+const REFUND_METHODS = new Set([
+    "Cash",
+    "Bank",
+    "Card",
+    "Mobile Banking",
+    "Credit Adjustment",
+    "Clover",
+]);
+
+/**
+ * Record customer refund after stock receive.
+ * Method "Clover" refunds the original CLOVER Payment via REST Pay Display when present.
+ */
+const refundReturn = async (id, payload = {}, user = null, companyId = null) => {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw new AppError("Invalid return id.", 400);
+    }
+    const tenant = companyFilter(companyId);
+    const ret = await SalesReturn.findOne({
+        _id: id,
+        ...NOT_DELETED,
+        ...tenant,
+    });
+    if (!ret) throw new AppError("Sales return not found.", 404);
+    assertDocumentCompany(ret, companyId, "Sales return");
+
+    if (ret.status === "Refunded") {
+        throw new AppError("This return is already refunded.", 400);
+    }
+    if (ret.status !== "Received") {
+        throw new AppError(
+            "Receive the return (restore stock) before recording a refund.",
+            400
+        );
+    }
+
+    const amount =
+        payload.refundAmount != null
+            ? Number(payload.refundAmount)
+            : Number(ret.refundAmount) || Number(ret.subtotal) || 0;
+    if (!(amount > 0)) {
+        throw new AppError("Refund amount must be greater than zero.", 400);
+    }
+
+    let method = String(
+        payload.refundMethod || payload.method || payload.paymentMethod || "Cash"
+    ).trim();
+    if (String(method).toLowerCase().includes("clover")) {
+        method = "Clover";
+    }
+    // Admin POS labels → schema enum
+    if (method === "Apple Pay") method = "Card";
+    if (!REFUND_METHODS.has(method)) {
+        throw new AppError(`Invalid refund method: ${method}`, 400);
+    }
+
+    let cloverResult = null;
+    if (method === "Clover") {
+        if (!user) {
+            throw new AppError("Authentication required for Clover refund.", 401);
+        }
+        const {
+            findPaidCloverPaymentForOrder,
+            refundCloverPayment,
+        } = require("./customerPaymentService");
+        const original = await findPaidCloverPaymentForOrder(
+            ret.salesOrderId,
+            companyId
+        );
+        if (!original) {
+            throw new AppError(
+                "No paid Clover payment found for this sales order. Use Cash/Card/Bank refund instead.",
+                400
+            );
+        }
+        cloverResult = await refundCloverPayment(
+            original._id,
+            {
+                amount,
+                fullRefund: false,
+                salesReturnId: ret._id,
+                deviceSerial: payload.deviceSerial || null,
+                note: payload.note || `Sales return ${ret.returnNumber}`,
+            },
+            user,
+            { reason: payload.reason || "Sales return refund" }
+        );
+    }
+
+    ret.refundAmount = amount;
+    ret.refundMethod = method;
+    ret.refundStatus = "Completed";
+    ret.status = "Refunded";
+    ret.updatedBy = user?._id || payload.actorId || null;
+    await ret.save();
+
+    return {
+        salesReturn: await populateReturn(SalesReturn.findById(ret._id)),
+        clover: cloverResult?.clover || null,
+        refundPayment: cloverResult?.refund || null,
+    };
+};
+
 module.exports = {
     createFromSalesOrder,
     receiveReturn,
+    refundReturn,
     getReturns,
     getReturnById,
     getReturnableFromOrder,

@@ -58,3 +58,22 @@ exports.cancel = asyncHandler(async (req, res) => {
     );
     return success(res, "Customer checkout cancelled.", doc);
 });
+
+exports.recover = asyncHandler(async (req, res) => {
+    const doc = await customerPaymentService.recoverCheckout(
+        req.params.id,
+        req.user,
+        { ...meta(req), ...(req.body || {}) }
+    );
+    return success(res, "Customer checkout recovered.", doc);
+});
+
+exports.refund = asyncHandler(async (req, res) => {
+    const doc = await customerPaymentService.refundCloverPayment(
+        req.params.id,
+        req.body || {},
+        req.user,
+        meta(req)
+    );
+    return success(res, "Clover refund completed.", doc);
+});

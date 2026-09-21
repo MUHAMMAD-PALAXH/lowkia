@@ -22,6 +22,7 @@ const PAYMENT_PROVIDERS = Object.freeze([
     "STRIPE",
     "BANK",
     "OTHER",
+    "CLOVER",
 ]);
 
 /**

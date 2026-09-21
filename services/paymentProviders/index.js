@@ -1,7 +1,8 @@
 /**
  * Payment provider abstraction.
- * Stripe handles PCI card/Apple Pay; NONE is for manual ERP completions.
- * Method ≠ Provider (CARD + STRIPE, CASH + NONE, etc.).
+ * Stripe handles PCI card/Apple Pay online; Clover Flex for counter card-present;
+ * NONE is for manual ERP completions.
+ * Method ≠ Provider (CARD + STRIPE/CLOVER, CASH + NONE, etc.).
  */
 
 const {
@@ -11,62 +12,12 @@ const {
     getStripeApiVersion,
     isStripeConfigured,
 } = require("../../config/stripe");
-
-class PaymentProviderError extends Error {
-    constructor(message, statusCode = 400) {
-        super(message);
-        this.name = "PaymentProviderError";
-        this.statusCode = statusCode;
-    }
-}
-
-class PaymentProvider {
-    get name() {
-        return "NONE";
-    }
-
-    async createPayment(_input) {
-        throw new PaymentProviderError(
-            `${this.name} createPayment is not implemented.`,
-            501
-        );
-    }
-
-    async authorizePayment(_input) {
-        throw new PaymentProviderError(
-            `${this.name} authorizePayment is not implemented.`,
-            501
-        );
-    }
-
-    async capturePayment(_providerPaymentId, _input = {}) {
-        throw new PaymentProviderError(
-            `${this.name} capturePayment is not implemented.`,
-            501
-        );
-    }
-
-    async refundPayment(_providerPaymentId, _input = {}) {
-        throw new PaymentProviderError(
-            `${this.name} refundPayment is not implemented.`,
-            501
-        );
-    }
-
-    async verifyPayment(_providerPaymentId) {
-        throw new PaymentProviderError(
-            `${this.name} verifyPayment is not implemented.`,
-            501
-        );
-    }
-
-    async getPaymentStatus(_providerPaymentId) {
-        throw new PaymentProviderError(
-            `${this.name} getPaymentStatus is not implemented.`,
-            501
-        );
-    }
-}
+const { isCloverConfigured } = require("../../config/clover");
+const {
+    PaymentProvider,
+    PaymentProviderError,
+} = require("./paymentProviderBase");
+const { CloverPaymentProvider } = require("./cloverProvider");
 
 /** Manual / offline ERP payments — no external processor. */
 class NonePaymentProvider extends PaymentProvider {
@@ -328,6 +279,7 @@ class StripePaymentProvider extends PaymentProvider {
 const providers = {
     NONE: new NonePaymentProvider(),
     STRIPE: new StripePaymentProvider(),
+    CLOVER: new CloverPaymentProvider(),
 };
 
 const getPaymentProvider = (name = "NONE") => {
@@ -340,7 +292,9 @@ module.exports = {
     PaymentProviderError,
     NonePaymentProvider,
     StripePaymentProvider,
+    CloverPaymentProvider,
     getPaymentProvider,
     isStripeConfigured,
+    isCloverConfigured,
     getStripePublishableKey,
 };

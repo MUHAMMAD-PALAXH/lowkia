@@ -145,6 +145,7 @@ require('./model/overtimeRequest');
 require('./model/settings');
 require('./model/company');
 require('./model/payment');
+require('./model/cloverConnection');
 require('./model/supplierPayable');
 require('./model/salaryStructure');
 require('./model/payrollRun');
@@ -233,6 +234,7 @@ app.use('/api/profit-loss-reports', require('./routes/profitLossReport'));
 app.use('/api/overview-reports', require('./routes/overviewReport'));
 // Finance Phase 9 — customer Stripe checkout
 app.use('/api/customer-payments', require('./routes/customerPayment'));
+app.use('/api/clover', require('./routes/clover'));
 
 // Last Updated Sync Route
 const Product = mongoose.model('Product');

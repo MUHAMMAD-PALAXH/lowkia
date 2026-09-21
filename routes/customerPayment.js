@@ -15,6 +15,7 @@ const {
     createCheckoutValidator,
     listValidator,
     reasonValidator,
+    refundValidator,
 } = require("../validators/customerPaymentValidator");
 
 // Base: /api/customer-payments
@@ -50,6 +51,21 @@ router.post(
     reasonValidator,
     validate,
     controller.cancel
+);
+router.post(
+    "/:id/recover",
+    financeOwnerOnly,
+    idValidator,
+    validate,
+    controller.recover
+);
+router.post(
+    "/:id/refund",
+    financeOwnerOnly,
+    idValidator,
+    refundValidator,
+    validate,
+    controller.refund
 );
 
 module.exports = router;

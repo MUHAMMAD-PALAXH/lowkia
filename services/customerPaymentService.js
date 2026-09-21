@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Payment = require("../model/payment");
 const SalesOrder = require("../model/salesOrder");
 const Customer = require("../model/customer");
+const RepairTicket = require("../model/repairTicket");
 const AppError = require("../utils/appError");
 const {
     DEFAULT_CURRENCY,
@@ -23,9 +24,17 @@ const {
     getPaymentProvider,
     PaymentProviderError,
     isStripeConfigured,
+    isCloverConfigured,
     getStripePublishableKey,
 } = require("./paymentProviders");
 const { markPaid } = require("./salesOrderService");
+const {
+    applyPaymentToRepairTicket,
+} = require("./repairTicketService");
+const {
+    resolveDeviceForCharge,
+} = require("./cloverConnectionService");
+const { newIdempotencyKey } = require("../utils/secretCrypto");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -76,6 +85,10 @@ const populatePayment = (q) =>
             "salesOrderId",
             "orderNumber grandTotal paidAmount dueAmount paymentStatus status customerId customerName"
         )
+        .populate(
+            "repairTicketId",
+            "ticketNumber totalAmount paidAmount dueAmount paymentStatus status customerId customerName"
+        )
         .populate("partyId", "fullName name customerCode phone email")
         .populate("createdBy", "firstName lastName email role");
 
@@ -105,6 +118,21 @@ const loadSalesOrder = async (salesOrderId, companyId = null) => {
     return order;
 };
 
+const loadRepairTicket = async (repairTicketId, companyId = null) => {
+    const ticket = await RepairTicket.findOne({
+        _id: repairTicketId,
+        ...NOT_DELETED,
+    });
+    if (!ticket) throw new AppError("Repair ticket not found.", 404);
+    if (String(ticket.status || "").toLowerCase() === "cancelled") {
+        throw new AppError("Cannot checkout a cancelled repair ticket.", 400);
+    }
+    if (companyId) {
+        assertDocumentCompany(ticket, companyId, "Repair ticket");
+    }
+    return ticket;
+};
+
 const dueMinorOfOrder = (order, currency = DEFAULT_CURRENCY) => {
     const dueMajor =
         order.dueAmount != null
@@ -117,22 +145,76 @@ const dueMinorOfOrder = (order, currency = DEFAULT_CURRENCY) => {
     return toMinor(dueMajor, currency);
 };
 
+const dueMinorOfRepair = (ticket, currency = DEFAULT_CURRENCY) => {
+    const dueMajor =
+        ticket.dueAmount != null
+            ? Number(ticket.dueAmount)
+            : Math.max(
+                  (Number(ticket.totalAmount) || 0) -
+                      (Number(ticket.paidAmount) || 0),
+                  0
+              );
+    return toMinor(dueMajor, currency);
+};
+
 /**
- * Start Stripe (or manual) checkout against a sales order.
- * CARD / APPLE_PAY → STRIPE PaymentIntent.
+ * Start Stripe / Clover / manual checkout against a sales order OR repair ticket.
+ * CARD / APPLE_PAY → STRIPE PaymentIntent (online) or CLOVER (terminal).
  * CASH / BANK_* → NONE (manual complete).
  */
 const createCheckout = async (payload = {}, user, meta = {}) => {
     if (!user?._id) throw new AppError("Authentication required.", 401);
     const companyId = await ensureUserCompany(user);
     const salesOrderId = toObjectId(payload.salesOrderId);
-    if (!salesOrderId) throw new AppError("salesOrderId is required.", 400);
+    const repairTicketId = toObjectId(payload.repairTicketId);
+    if (!salesOrderId && !repairTicketId) {
+        throw new AppError("salesOrderId or repairTicketId is required.", 400);
+    }
+    if (salesOrderId && repairTicketId) {
+        throw new AppError(
+            "Provide either salesOrderId or repairTicketId, not both.",
+            400
+        );
+    }
 
-    const order = await loadSalesOrder(salesOrderId, companyId);
     const currency = DEFAULT_CURRENCY;
-    const dueMinor = dueMinorOfOrder(order, currency);
-    if (dueMinor <= 0) {
-        throw new AppError("Sales order has no outstanding balance.", 400);
+    let order = null;
+    let ticket = null;
+    let dueMinor = 0;
+    let branchId = null;
+    let partyId = null;
+    let sourceModule = "Sales";
+    let referenceType = "SalesOrder";
+    let referenceId = null;
+    let allocationTargetType = "SalesOrder";
+    let displayLabel = "";
+
+    if (salesOrderId) {
+        order = await loadSalesOrder(salesOrderId, companyId);
+        dueMinor = dueMinorOfOrder(order, currency);
+        if (dueMinor <= 0) {
+            throw new AppError("Sales order has no outstanding balance.", 400);
+        }
+        branchId = order.branchId || null;
+        partyId = order.customerId || order._id;
+        sourceModule = "Sales";
+        referenceType = "SalesOrder";
+        referenceId = order._id;
+        allocationTargetType = "SalesOrder";
+        displayLabel = `SO ${order.orderNumber || order._id}`;
+    } else {
+        ticket = await loadRepairTicket(repairTicketId, companyId);
+        dueMinor = dueMinorOfRepair(ticket, currency);
+        if (dueMinor <= 0) {
+            throw new AppError("Repair ticket has no outstanding balance.", 400);
+        }
+        branchId = ticket.branchId || null;
+        partyId = ticket.customerId || ticket._id;
+        sourceModule = "Repair";
+        referenceType = "RepairTicket";
+        referenceId = ticket._id;
+        allocationTargetType = "RepairTicket";
+        displayLabel = `Repair ${ticket.ticketNumber || ticket._id}`;
     }
 
     let { amountMinor, amount } = resolveAmountMinor(
@@ -148,8 +230,19 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
     );
     let provider = payload.paymentProvider;
     if (!provider) {
-        provider =
-            methodRaw === "CARD" || methodRaw === "APPLE_PAY" ? "STRIPE" : "NONE";
+        if (methodRaw === "CARD" || methodRaw === "APPLE_PAY") {
+            // Explicit CLOVER request, else default Stripe for online wallets/cards
+            provider =
+                String(payload.channel || "").toUpperCase() === "CLOVER" ||
+                String(payload.terminal || "").toUpperCase() === "CLOVER"
+                    ? "CLOVER"
+                    : "STRIPE";
+        } else {
+            provider = "NONE";
+        }
+    }
+    if (String(provider).toUpperCase() === "CLOVER") {
+        provider = "CLOVER";
     }
     const { paymentMethod, paymentProvider } = assertMethodProviderCombo(
         methodRaw,
@@ -162,16 +255,25 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
             503
         );
     }
+    if (paymentProvider === "STRIPE" && repairTicketId) {
+        throw new AppError(
+            "Stripe online checkout is not available for repair tickets. Use Clover Flex or record payment on the ticket.",
+            400
+        );
+    }
 
-    // Avoid duplicate open checkouts for same SO (all providers)
-    const open = await Payment.findOne({
+    // Avoid duplicate open checkouts for same SO / repair (all providers)
+    const openFilter = {
         companyId,
-        salesOrderId: order._id,
         paymentType: "CustomerPayment",
         ...NOT_DELETED,
         status: { $in: ["draft", "pendingApproval", "approved", "processing"] },
         originalPaymentId: null,
-    }).select(
+    };
+    if (salesOrderId) openFilter.salesOrderId = order._id;
+    if (repairTicketId) openFilter.repairTicketId = ticket._id;
+
+    const open = await Payment.findOne(openFilter).select(
         "paymentNumber status providerPaymentIntentId paymentProvider amountMinor"
     );
     if (open) {
@@ -191,7 +293,7 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
                         checkout: {
                             provider: "STRIPE",
                             providerPaymentIntentId:
-                                open.providerPaymentIntentId,
+                            open.providerPaymentIntentId,
                             clientSecret: null,
                             publishableKey: getStripePublishableKey(),
                             reused: true,
@@ -205,14 +307,14 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
             }
         }
         throw new AppError(
-            `Open checkout ${open.paymentNumber} already exists for this order (status=${open.status}). Complete or cancel it first.`,
+            `Open checkout ${open.paymentNumber} already exists (status=${open.status}). Complete or cancel it first.`,
             409
         );
     }
 
     let customer = null;
-    if (order.customerId) {
-        customer = await Customer.findById(order.customerId)
+    if (order?.customerId || ticket?.customerId) {
+        customer = await Customer.findById(order?.customerId || ticket?.customerId)
             .select("fullName name email phone customerCode")
             .lean();
     }
@@ -220,14 +322,15 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
     const paymentNumber = await generatePaymentNumber();
     const payment = await Payment.create({
         companyId,
-        branchId: order.branchId || null,
+        branchId,
         paymentNumber,
         paymentDate: new Date(),
         paymentType: "CustomerPayment",
         purpose: "againstPayable",
         partyType: "Customer",
-        partyId: order.customerId || order._id,
-        salesOrderId: order._id,
+        partyId,
+        salesOrderId: order?._id || null,
+        repairTicketId: ticket?._id || null,
         currency,
         amountMinor,
         amount,
@@ -237,19 +340,19 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
         dueAmount: amount,
         paymentMethod,
         paymentProvider,
-        status: paymentProvider === "STRIPE" ? "processing" : "approved",
+        status: paymentProvider === "NONE" ? "approved" : "processing",
         requiresApproval: false,
         requestedBy: user._id,
         createdBy: user._id,
         note: String(payload.note || "").trim().slice(0, 1000),
-        sourceModule: "Sales",
+        sourceModule,
         isManualEntry: paymentProvider === "NONE",
-        referenceType: "SalesOrder",
-        referenceId: order._id,
+        referenceType,
+        referenceId,
         allocations: [
             {
-                targetType: "SalesOrder",
-                targetId: order._id,
+                targetType: allocationTargetType,
+                targetId: referenceId,
                 amountMinor,
                 note: "customer checkout",
             },
@@ -276,15 +379,17 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
                     customer?.fullName ||
                     customer?.name ||
                     payload.customerName,
-                description: `SO ${order.orderNumber || order._id}`,
+                description: displayLabel,
                 createEphemeralKey: payload.createEphemeralKey === true,
                 erpPaymentMethod: paymentMethod,
                 metadata: {
                     companyId: String(companyId),
                     paymentId: String(payment._id),
                     paymentNumber: payment.paymentNumber,
-                    salesOrderId: String(order._id),
-                    orderNumber: String(order.orderNumber || ""),
+                    salesOrderId: order ? String(order._id) : "",
+                    repairTicketId: ticket ? String(ticket._id) : "",
+                    orderNumber: String(order?.orderNumber || ""),
+                    ticketNumber: String(ticket?.ticketNumber || ""),
                     paymentMethod: String(paymentMethod),
                 },
             });
@@ -301,6 +406,112 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
                 ephemeralKey: intent.ephemeralKey,
                 providerCustomerId: intent.providerCustomerId,
                 status: intent.status,
+            };
+        } else if (paymentProvider === "CLOVER") {
+            const {
+                accessToken,
+                device,
+                posId,
+                connection,
+            } = await resolveDeviceForCharge(
+                companyId,
+                payload.deviceSerial || payload.cloverDeviceId || null
+            );
+
+            const idempotencyKey = newIdempotencyKey();
+            const externalPaymentId = String(payment.paymentNumber || payment._id)
+                .replace(/[^A-Za-z0-9_-]/g, "")
+                .slice(0, 42);
+
+            payment.paymentMethodReference = idempotencyKey;
+            payment.providerPaymentIntentId = externalPaymentId;
+            payment.transactionReference = device.serialNumber;
+            payment.note = [
+                payment.note,
+                `Clover Flex ${device.serialNumber}`,
+            ]
+                .filter(Boolean)
+                .join(" · ")
+                .slice(0, 1000);
+            await payment.save();
+
+            // Optional short message on idle device before charge
+            const clover = getPaymentProvider("CLOVER");
+            try {
+                await clover.displayMessage({
+                    accessToken,
+                    deviceId: device.serialNumber,
+                    posId,
+                    text: `${displayLabel} · Pay ${formatMoney(amountMinor)}`,
+                    beep: false,
+                });
+            } catch (_) {
+                /* display is best-effort */
+            }
+
+            const result = await clover.createPayment({
+                accessToken,
+                deviceId: device.serialNumber,
+                posId,
+                amountMinor,
+                currency,
+                externalPaymentId,
+                idempotencyKey,
+                timeoutSec: Number(payload.timeoutSec) || 120,
+            });
+
+            payment.providerTransactionId = result.cloverPaymentId || "";
+            payment.paymentMethodReference = idempotencyKey;
+            if (result.cardLast4) {
+                payment.providerCustomerId = `${result.cardBrand || "CARD"} ****${result.cardLast4}`;
+            }
+            await payment.save();
+
+            connection.lastUsedAt = new Date();
+            device.lastSeenAt = new Date();
+            device.lastError = "";
+            await connection.save();
+
+            try {
+                await clover.showWelcome({
+                    accessToken,
+                    deviceId: device.serialNumber,
+                    posId,
+                });
+            } catch (_) {
+                /* welcome best-effort */
+            }
+
+            if (!result.succeeded) {
+                payment.status = "failed";
+                payment.failureReason = `Clover result=${result.status}`;
+                await payment.save();
+                throw new AppError(
+                    `Clover payment did not succeed (status=${result.status}).`,
+                    400
+                );
+            }
+
+            // Complete ledger + SO/Repair immediately after verified device success
+            const completed = await completeCheckout(payment._id, user, {
+                ...meta,
+                skipProviderCheck: true,
+                webhookAmountMinor: result.amountMinor,
+                providerTransactionId: result.cloverPaymentId,
+            });
+
+            return {
+                ...completed,
+                checkout: {
+                    provider: "CLOVER",
+                    status: "succeeded",
+                    deviceSerial: device.serialNumber,
+                    cloverPaymentId: result.cloverPaymentId,
+                    cardLast4: result.cardLast4,
+                    cardBrand: result.cardBrand,
+                    entryType: result.entryType,
+                    idempotencyKey,
+                },
             };
         }
     } catch (err) {
@@ -337,19 +548,34 @@ const createCheckout = async (payload = {}, user, meta = {}) => {
         });
     }
 
+    const entitySummary = order
+        ? {
+              salesOrder: {
+                  _id: order._id,
+                  orderNumber: order.orderNumber,
+                  grandTotal: order.grandTotal,
+                  paidAmount: order.paidAmount,
+                  dueAmount: order.dueAmount,
+                  dueMinor,
+              },
+          }
+        : {
+              repairTicket: {
+                  _id: ticket._id,
+                  ticketNumber: ticket.ticketNumber,
+                  totalAmount: ticket.totalAmount,
+                  paidAmount: ticket.paidAmount,
+                  dueAmount: ticket.dueAmount,
+                  dueMinor,
+              },
+          };
+
     return {
         payment: serializePayment(
             await populatePayment(Payment.findById(payment._id))
         ),
         checkout,
-        salesOrder: {
-            _id: order._id,
-            orderNumber: order.orderNumber,
-            grandTotal: order.grandTotal,
-            paidAmount: order.paidAmount,
-            dueAmount: order.dueAmount,
-            dueMinor,
-        },
+        ...entitySummary,
     };
 };
 
@@ -483,10 +709,22 @@ const completeCheckout = async (paymentId, user, meta = {}) => {
             );
         }
 
-        // Re-check SO outstanding before posting
+        // Re-check SO / repair outstanding before posting
         if (payment.salesOrderId) {
             const order = await loadSalesOrder(payment.salesOrderId, companyId);
             const dueMinor = dueMinorOfOrder(order, payment.currency);
+            assertNotOverpaying(
+                payment.amountMinor,
+                dueMinor,
+                "Customer payment"
+            );
+        }
+        if (payment.repairTicketId) {
+            const ticket = await loadRepairTicket(
+                payment.repairTicketId,
+                companyId
+            );
+            const dueMinor = dueMinorOfRepair(ticket, payment.currency);
             assertNotOverpaying(
                 payment.amountMinor,
                 dueMinor,
@@ -531,6 +769,23 @@ const completeCheckout = async (paymentId, user, meta = {}) => {
                     skipPaymentLedger: true,
                 },
                 user?._id || null
+            );
+        }
+
+        if (payment.repairTicketId) {
+            const addMajor = toMajor(payment.amountMinor, payment.currency);
+            await applyPaymentToRepairTicket(
+                payment.repairTicketId,
+                addMajor,
+                companyId,
+                user?._id || null,
+                payment.paymentProvider === "CLOVER"
+                    ? "Card"
+                    : payment.paymentMethod === "CASH"
+                      ? "Cash"
+                      : payment.paymentMethod === "BANK_TRANSFER"
+                        ? "Bank"
+                        : "Partial"
             );
         }
 
@@ -634,6 +889,27 @@ const cancelCheckout = async (paymentId, user, meta = {}) => {
         }
     }
 
+    // Best-effort cancel on Flex if still waiting
+    if (payment.paymentProvider === "CLOVER") {
+        try {
+            const {
+                accessToken,
+                device,
+                posId,
+            } = await resolveDeviceForCharge(
+                companyId,
+                payment.transactionReference || null
+            );
+            await getPaymentProvider("CLOVER").cancelDevice({
+                accessToken,
+                deviceId: device.serialNumber,
+                posId,
+            });
+        } catch (_) {
+            /* device may already be idle */
+        }
+    }
+
     applyStatusTransition(payment, "cancelled", user._id, {
         reason: meta.reason || "Cancelled",
     });
@@ -641,6 +917,258 @@ const cancelCheckout = async (paymentId, user, meta = {}) => {
     return serializePayment(
         await populatePayment(Payment.findById(payment._id))
     );
+};
+
+/**
+ * Recover unknown Clover checkout by replaying the same Idempotency-Key.
+ * Safe: Clover returns the original result — no double charge.
+ */
+const recoverCheckout = async (paymentId, user, meta = {}) => {
+    if (!isOwner(user)) {
+        throw new AppError("Only the owner can recover Clover checkouts.", 403);
+    }
+    const companyId = await ensureUserCompany(user);
+    const payment = await getPaymentOrFail(paymentId, companyId);
+    if (payment.status === "paid") {
+        return {
+            payment: serializePayment(
+                await populatePayment(Payment.findById(payment._id))
+            ),
+            alreadyPaid: true,
+        };
+    }
+    if (payment.paymentProvider !== "CLOVER") {
+        throw new AppError("Recover is only supported for Clover checkouts.", 400);
+    }
+    if (!["processing", "failed", "approved"].includes(payment.status)) {
+        throw new AppError(
+            `Cannot recover payment in status ${payment.status}.`,
+            400
+        );
+    }
+    const idempotencyKey = payment.paymentMethodReference;
+    const externalPaymentId = payment.providerPaymentIntentId;
+    if (!idempotencyKey || !externalPaymentId) {
+        throw new AppError(
+            "Missing Clover idempotency key / external payment id on this payment.",
+            400
+        );
+    }
+
+    const {
+        accessToken,
+        device,
+        posId,
+        connection,
+    } = await resolveDeviceForCharge(
+        companyId,
+        payment.transactionReference || meta.deviceSerial || null
+    );
+
+    const clover = getPaymentProvider("CLOVER");
+    const result = await clover.createPayment({
+        accessToken,
+        deviceId: device.serialNumber,
+        posId,
+        amountMinor: payment.amountMinor,
+        currency: payment.currency || DEFAULT_CURRENCY,
+        externalPaymentId,
+        idempotencyKey,
+        timeoutSec: Number(meta.timeoutSec) || 120,
+    });
+
+    payment.providerTransactionId =
+        result.cloverPaymentId || payment.providerTransactionId;
+    await payment.save();
+    connection.lastUsedAt = new Date();
+    device.lastSeenAt = new Date();
+    await connection.save();
+
+    if (!result.succeeded) {
+        payment.status = "failed";
+        payment.failureReason = `Clover recover result=${result.status}`;
+        await payment.save();
+        throw new AppError(
+            `Clover recovery did not succeed (status=${result.status}).`,
+            400
+        );
+    }
+
+    const completed = await completeCheckout(payment._id, user, {
+        ...meta,
+        skipProviderCheck: true,
+        webhookAmountMinor: result.amountMinor,
+        providerTransactionId: result.cloverPaymentId,
+    });
+    return {
+        ...completed,
+        checkout: {
+            provider: "CLOVER",
+            status: "succeeded",
+            recovered: true,
+            cloverPaymentId: result.cloverPaymentId,
+            deviceSerial: device.serialNumber,
+        },
+    };
+};
+
+/**
+ * Refund a paid CLOVER customer payment (full or partial). Creates CustomerRefund ledger row.
+ */
+const refundCloverPayment = async (paymentId, payload = {}, user, meta = {}) => {
+    if (!isOwner(user)) {
+        throw new AppError("Only the owner can refund Clover payments.", 403);
+    }
+    const companyId = await ensureUserCompany(user);
+    const original = await Payment.findOne({
+        _id: paymentId,
+        companyId,
+        paymentType: "CustomerPayment",
+        ...NOT_DELETED,
+        originalPaymentId: null,
+    });
+    if (!original) throw new AppError("Payment not found.", 404);
+    assertDocumentCompany(original, companyId, "Payment");
+    if (original.status !== "paid") {
+        throw new AppError("Only paid payments can be refunded.", 400);
+    }
+    if (original.paymentProvider !== "CLOVER") {
+        throw new AppError("This payment was not collected on Clover.", 400);
+    }
+    if (!original.providerTransactionId) {
+        throw new AppError("Missing Clover payment id for refund.", 400);
+    }
+
+    const currency = original.currency || DEFAULT_CURRENCY;
+    const fullRefund = payload.fullRefund === true || payload.amount == null;
+    let amountMinor;
+    if (fullRefund) {
+        amountMinor = Number(original.amountMinor);
+    } else {
+        ({ amountMinor } = resolveAmountMinor(payload, currency));
+    }
+    assertPositiveMinor(amountMinor, "Refund");
+    if (amountMinor > Number(original.amountMinor)) {
+        throw new AppError("Refund cannot exceed original payment.", 400);
+    }
+
+    const {
+        accessToken,
+        device,
+        posId,
+        connection,
+    } = await resolveDeviceForCharge(
+        companyId,
+        payload.deviceSerial || original.transactionReference || null
+    );
+
+    const idempotencyKey = newIdempotencyKey();
+    const clover = getPaymentProvider("CLOVER");
+    const result = await clover.refundPayment(original.providerTransactionId, {
+        accessToken,
+        deviceId: device.serialNumber,
+        posId,
+        idempotencyKey,
+        fullRefund,
+        amountMinor: fullRefund ? null : amountMinor,
+        timeoutSec: Number(payload.timeoutSec) || 120,
+    });
+
+    const refundNumber = await generatePaymentNumber();
+    const refundAmount = toMajor(amountMinor, currency);
+    const refund = await Payment.create({
+        companyId,
+        branchId: original.branchId || null,
+        paymentNumber: refundNumber,
+        paymentDate: new Date(),
+        paymentType: "CustomerRefund",
+        purpose: "other",
+        partyType: original.partyType,
+        partyId: original.partyId,
+        salesOrderId: original.salesOrderId,
+        repairTicketId: original.repairTicketId,
+        salesReturnId: payload.salesReturnId
+            ? toObjectId(payload.salesReturnId)
+            : null,
+        currency,
+        amountMinor,
+        amount: refundAmount,
+        paidAmountMinor: amountMinor,
+        paidAmount: refundAmount,
+        dueAmountMinor: 0,
+        dueAmount: 0,
+        paymentMethod: original.paymentMethod,
+        paymentProvider: "CLOVER",
+        status: "paid",
+        originalPaymentId: original._id,
+        providerTransactionId: result.refundId || "",
+        paymentMethodReference: idempotencyKey,
+        transactionReference: device.serialNumber,
+        note: String(payload.note || meta.reason || "Clover refund")
+            .trim()
+            .slice(0, 1000),
+        sourceModule: original.sourceModule || "Sales",
+        createdBy: user._id,
+        postedBy: user._id,
+        postedAt: new Date(),
+        transactionDate: new Date(),
+        referenceType: "CloverRefund",
+        referenceId: original._id,
+    });
+
+    if (amountMinor >= Number(original.amountMinor)) {
+        applyStatusTransition(original, "reversed", user._id, {
+            reason: meta.reason || "Clover refund",
+            originalPaymentId: original._id,
+        });
+        original.reversedBy = user._id;
+        original.reversedAt = new Date();
+        await original.save();
+    }
+
+    connection.lastUsedAt = new Date();
+    device.lastSeenAt = new Date();
+    await connection.save();
+
+    await auditPayment({
+        user,
+        companyId,
+        branchId: refund.branchId,
+        activityType: "Payment",
+        description: `Clover refund ${refund.paymentNumber} for ${original.paymentNumber}`,
+        payment: refund,
+        ipAddress: meta.ipAddress || "",
+    });
+
+    return {
+        refund: serializePayment(
+            await populatePayment(Payment.findById(refund._id))
+        ),
+        original: serializePayment(
+            await populatePayment(Payment.findById(original._id))
+        ),
+        clover: {
+            refundId: result.refundId,
+            status: result.status,
+            amountMinor: result.amountMinor,
+            deviceSerial: device.serialNumber,
+        },
+    };
+};
+
+/**
+ * Find the latest paid CLOVER payment for a sales order (for return refunds).
+ */
+const findPaidCloverPaymentForOrder = async (salesOrderId, companyId) => {
+    return Payment.findOne({
+        companyId,
+        salesOrderId,
+        paymentType: "CustomerPayment",
+        paymentProvider: "CLOVER",
+        status: "paid",
+        ...NOT_DELETED,
+        originalPaymentId: null,
+    }).sort({ postedAt: -1, createdAt: -1 });
 };
 
 const getCheckoutStatus = async (paymentId, companyId) => {
@@ -688,6 +1216,9 @@ const listCustomerPayments = async (companyId, query = {}) => {
     if (query.salesOrderId && toObjectId(query.salesOrderId)) {
         filter.salesOrderId = toObjectId(query.salesOrderId);
     }
+    if (query.repairTicketId && toObjectId(query.repairTicketId)) {
+        filter.repairTicketId = toObjectId(query.repairTicketId);
+    }
     if (query.customerId && toObjectId(query.customerId)) {
         filter.partyId = toObjectId(query.customerId);
     }
@@ -723,9 +1254,12 @@ const listCustomerPayments = async (companyId, query = {}) => {
 
 const getProviderInfo = () => ({
     stripeConfigured: isStripeConfigured(),
+    cloverConfigured: isCloverConfigured(),
     publishableKey: getStripePublishableKey() || null,
     supportedMethods: ["CARD", "APPLE_PAY", "CASH", "BANK_TRANSFER"],
-    note: "Card / Apple Pay never touch Lowkia servers — Stripe PaymentIntents + wallets only. Enable Apple Pay in Stripe Dashboard → Settings → Payment methods.",
+    supportedTerminals: ["CLOVER"],
+    note:
+        "Card / Apple Pay online: Stripe PaymentIntents. Card-present / contactless on Flex: Clover REST Pay Display (Cloud Pay Display). Enable Apple Pay in Stripe Dashboard for wallets.",
 });
 
 module.exports = {
@@ -733,6 +1267,9 @@ module.exports = {
     completeCheckout,
     completeByPaymentIntent,
     cancelCheckout,
+    recoverCheckout,
+    refundCloverPayment,
+    findPaidCloverPaymentForOrder,
     getCheckoutStatus,
     listCustomerPayments,
     getProviderInfo,

@@ -24,6 +24,8 @@ router.get("/", salesReturnController.getReturns);
 router.get("/:id", salesReturnController.getReturnById);
 router.post("/", salesReturnController.createReturn);
 router.patch("/:id/receive", salesReturnController.receiveReturn);
+router.post("/:id/refund", salesReturnController.refundReturn);
+router.patch("/:id/refund", salesReturnController.refundReturn);
 
 router.delete("/:id", salesReturnController.deleteSalesReturn);
 router.delete("/:id/permanent", salesReturnController.permanentDeleteSalesReturn);

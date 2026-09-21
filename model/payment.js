@@ -28,6 +28,8 @@ const allocationSchema = new mongoose.Schema(
                 "EmployeeAdvance",
                 "SalesOrder",
                 "SalesInvoice",
+                "RepairTicket",
+                "SalesReturn",
                 "Other",
             ],
             required: true,
@@ -166,6 +168,20 @@ const paymentSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "SalesInvoice",
             default: null,
+        },
+
+        repairTicketId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "RepairTicket",
+            default: null,
+            index: true,
+        },
+
+        salesReturnId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "SalesReturn",
+            default: null,
+            index: true,
         },
 
         /** Legacy / generic reference */

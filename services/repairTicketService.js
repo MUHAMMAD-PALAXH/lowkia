@@ -991,6 +991,58 @@ const exportRepairTicketsExcel = async (
     return { buffer, filename, ticketCount: tickets.length };
 };
 
+/**
+ * Apply a verified customer payment to a repair ticket (ledger already posted).
+ * Additive paidAmount only — never decreases.
+ */
+const applyPaymentToRepairTicket = async (
+    ticketId,
+    addPaidMajor,
+    companyId,
+    actorId = null,
+    paymentMethodHint = null
+) => {
+    const tenant = companyFilter(companyId);
+    const doc = await RepairTicket.findOne({
+        _id: ticketId,
+        ...NOT_DELETED,
+        ...tenant,
+    });
+    if (!doc) {
+        throw new AppError("Repair ticket not found.", 404);
+    }
+    assertDocumentCompany(doc, companyId, "Repair ticket");
+
+    const add = money(addPaidMajor);
+    if (add <= 0) {
+        throw new AppError("Payment amount must be positive.", 400);
+    }
+
+    const nextPaid = money((Number(doc.paidAmount) || 0) + add);
+    const total = money(doc.totalAmount);
+    if (nextPaid > total + 0.009) {
+        throw new AppError("Payment would overpay the repair ticket.", 400);
+    }
+
+    const amounts = calcAmounts({
+        diagnosisCharge: doc.diagnosisCharge,
+        serviceCharge: doc.serviceCharge,
+        partsCost: doc.partsCost,
+        laborCost: doc.laborCost,
+        discount: doc.discount,
+        tax: doc.tax,
+        otherCharges: doc.otherCharges,
+        paidAmount: nextPaid,
+    });
+    Object.assign(doc, amounts);
+    if (paymentMethodHint) {
+        doc.paymentMethod = String(paymentMethodHint).trim() || doc.paymentMethod;
+    }
+    doc.updatedBy = toObjectId(actorId);
+    await doc.save();
+    return getRepairTicketById(doc._id, companyId);
+};
+
 module.exports = {
     createRepairTicket,
     getRepairTickets,
@@ -1006,5 +1058,6 @@ module.exports = {
     bulkPermanentDeleteRepairTickets,
     getRepairTicketStats,
     lookupImeiWarranty,
-    exportRepairTicketsExcel
+    exportRepairTicketsExcel,
+    applyPaymentToRepairTicket,
 };
