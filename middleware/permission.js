@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const { isCompanyOwner } = require("../utils/roleAccess");
+const { error } = require("../utils/apiResponse");
 
 // =======================================================
 // Permission Middleware
@@ -9,12 +10,7 @@ const { isCompanyOwner } = require("../utils/roleAccess");
 const permit = (...roles) => {
     return asyncHandler(async (req, res, next) => {
         if (!req.user) {
-            return res.status(401).json({
-                success: false,
-                message: "Authentication required.",
-                data: null,
-                errors: null
-            });
+            return error(res, "Authentication required.", 401);
         }
 
         // Company owner (or legacy admin) can do everything in company ERP
@@ -23,12 +19,7 @@ const permit = (...roles) => {
         }
 
         if (roles.length && !roles.includes(req.user.role)) {
-            return res.status(403).json({
-                success: false,
-                message: "Permission denied.",
-                data: null,
-                errors: null
-            });
+            return error(res, "Permission denied.", 403);
         }
 
         next();

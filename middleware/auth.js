@@ -8,6 +8,8 @@ const {
     isVendor,
     isGlobalSuperAdmin,
 } = require("../utils/roleAccess");
+const { error } = require("../utils/apiResponse");
+const { t } = require("../utils/i18n");
 
 
 
@@ -27,10 +29,7 @@ const protect = asyncHandler(async (req, res, next) => {
     }
 
     if (!token) {
-        return res.status(401).json({
-            success: false,
-            message: "Authentication token is missing.",
-        });
+        return error(res, "Authentication token is missing.", 401);
     }
 
     try {
@@ -44,19 +43,13 @@ const protect = asyncHandler(async (req, res, next) => {
             .select("-password");
 
         if (!user) {
-            return res.status(401).json({
-                success: false,
-                message: "User not found.",
-            });
+            return error(res, "User not found.", 401);
         }
 
         // Soft Deleted User
 
         if (user.isDeleted) {
-            return res.status(403).json({
-                success: false,
-                message: "Your account has been deleted.",
-            });
+            return error(res, "Your account has been deleted.", 403);
         }
 
         // Suspended / Blocked
@@ -65,10 +58,11 @@ const protect = asyncHandler(async (req, res, next) => {
             user.status === "Suspended" ||
             user.status === "Blocked"
         ) {
-            return res.status(403).json({
-                success: false,
-                message: `Your account is ${user.status}.`,
-            });
+            return error(
+                res,
+                t(req, "Your account is {status}.", { status: user.status }),
+                403
+            );
         }
 
         req.user = user;
@@ -78,31 +72,17 @@ const protect = asyncHandler(async (req, res, next) => {
 
         next();
 
-    } catch (error) {
+    } catch (err) {
 
-        if (error.name === "TokenExpiredError") {
-
-            return res.status(401).json({
-                success: false,
-                message: "Token expired. Please login again.",
-            });
-
+        if (err.name === "TokenExpiredError") {
+            return error(res, "Token expired. Please login again.", 401);
         }
 
-        if (error.name === "JsonWebTokenError") {
-
-            return res.status(401).json({
-                success: false,
-                message: "Invalid token.",
-            });
-
+        if (err.name === "JsonWebTokenError") {
+            return error(res, "Invalid token.", 401);
         }
 
-        return res.status(500).json({
-            success: false,
-            message: error.message,
-        });
-
+        return error(res, err.message || "Internal server error", 500);
     }
 
 });
@@ -116,15 +96,7 @@ const protect = asyncHandler(async (req, res, next) => {
 const adminOnly = (req, res, next) => {
 
     if (!hasAdminPower(req.user?.role)) {
-
-        return res.status(403).json({
-
-            success: false,
-
-            message: "Only admin can access this resource."
-
-        });
-
+        return error(res, "Only admin can access this resource.", 403);
     }
 
     next();
@@ -142,15 +114,7 @@ const vendorOrAdmin = (req, res, next) => {
     const role = req.user?.role;
 
     if (!(hasAdminPower(role) || isVendor(role))) {
-
-        return res.status(403).json({
-
-            success: false,
-
-            message: "Access denied."
-
-        });
-
+        return error(res, "Access denied.", 403);
     }
 
     next();
@@ -166,15 +130,7 @@ const vendorOrAdmin = (req, res, next) => {
 const branchManagerOrAdmin = (req, res, next) => {
 
     if (!hasManagerPower(req.user?.role)) {
-
-        return res.status(403).json({
-
-            success: false,
-
-            message: "Access denied."
-
-        });
-
+        return error(res, "Access denied.", 403);
     }
 
     next();
@@ -190,12 +146,7 @@ const branchManagerOrAdmin = (req, res, next) => {
 const globalSuperAdminOnly = (req, res, next) => {
 
     if (!isGlobalSuperAdmin(req.user?.role)) {
-
-        return res.status(403).json({
-            success: false,
-            message: "Global Super Admin access required.",
-        });
-
+        return error(res, "Global Super Admin access required.", 403);
     }
 
     next();
@@ -216,15 +167,7 @@ const authorize = (...roles) => {
     return (req, res, next) => {
 
         if (!roles.includes(req.user.role)) {
-
-            return res.status(403).json({
-
-                success: false,
-
-                message: "Permission denied."
-
-            });
-
+            return error(res, "Permission denied.", 403);
         }
 
         next();

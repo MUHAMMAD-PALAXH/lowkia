@@ -74,6 +74,7 @@ app.post(
 );
 
 app.use(express.json());
+app.use(require('./utils/i18n/resolveLocale').localeMiddleware);
 app.use(require('./middleware/notificationCapture'));
 
 app.use('/image/products', express.static('public/products'));
@@ -270,6 +271,7 @@ app.get('/', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('Global error:', { message: err.message, code: err.code, name: err.name });
 
+  const { t, tErrors } = require('./utils/i18n');
   const statusCode = err.statusCode || err.status || 500;
   const isOperational = err.isOperational === true;
 
@@ -293,9 +295,9 @@ app.use((err, req, res, next) => {
 
   res.status(finalStatus).json({
     success: false,
-    message,
+    message: t(req, message),
     data: null,
-    errors: err.errors || null,
+    errors: err.errors ? tErrors(req, err.errors) : null,
   });
 });
 
