@@ -59,8 +59,9 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
             .lean(),
         Journal.find(journalMatch)
             .select(
-                "journalNumber journalDate journalType postingStatus totalDebit totalCredit referenceType referenceId description branchId"
+                "journalNumber journalDate journalType postingStatus totalDebit totalCredit referenceType referenceId description branchId lines"
             )
+            .populate("lines.accountId", "accountCode accountName accountType")
             .sort({ journalDate: -1, createdAt: -1 })
             .limit(100)
             .lean(),
@@ -112,6 +113,52 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
     const currency =
         accounts.find((a) => a.currency)?.currency || DEFAULT_CURRENCY;
 
+    // Flatten journal lines → entry/exit movements (Debit = IN, Credit = OUT)
+    const movements = [];
+    for (const journal of journals) {
+        const lines = Array.isArray(journal.lines) ? journal.lines : [];
+        for (const line of lines) {
+            const acc =
+                line.accountId && typeof line.accountId === "object"
+                    ? line.accountId
+                    : null;
+            const debit = Math.max(Number(line.debit) || 0, 0);
+            const credit = Math.max(Number(line.credit) || 0, 0);
+            const base = {
+                journalId: journal._id,
+                journalNumber: journal.journalNumber || "",
+                journalDate: journal.journalDate || null,
+                journalType: journal.journalType || "",
+                postingStatus: journal.postingStatus || "",
+                referenceType: journal.referenceType || "",
+                description:
+                    (line.description || journal.description || "").trim(),
+                accountId: acc?._id || line.accountId || null,
+                accountCode: acc?.accountCode || "",
+                accountName: acc?.accountName || "",
+                accountType: acc?.accountType || "",
+            };
+            if (debit > 0) {
+                movements.push({
+                    ...base,
+                    direction: "IN",
+                    side: "Debit",
+                    amount: debit,
+                });
+            }
+            if (credit > 0) {
+                movements.push({
+                    ...base,
+                    direction: "OUT",
+                    side: "Credit",
+                    amount: credit,
+                });
+            }
+            if (movements.length >= 300) break;
+        }
+        if (movements.length >= 300) break;
+    }
+
     return {
         meta: {
             currency,
@@ -120,6 +167,7 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
             generatedAt: new Date().toISOString(),
             accountCount: accounts.length,
             journalCount: journals.length,
+            movementCount: movements.length,
         },
         kpis: {
             accounts: accounts.length,
@@ -136,7 +184,11 @@ const getDashboard = async (companyId, query = {}, managedBranchIds = null) => {
         },
         accountsByType: byType,
         accounts,
-        journals,
+        journals: journals.map((j) => {
+            const { lines, ...rest } = j;
+            return rest;
+        }),
+        movements,
     };
 };
 
