@@ -88,6 +88,18 @@ exports.ensureProductBarcode = asyncHandler(async (req, res) => {
     return success(res, "Product barcode ready.", product);
 });
 
+exports.exportProductCodes = asyncHandler(async (req, res) => {
+    const data = await productService.exportProductCodes(
+        {
+            productIds: req.body?.productIds,
+            all: req.body?.all,
+            availableOnly: req.body?.availableOnly
+        },
+        req.companyId
+    );
+    return success(res, "Product codes exported successfully.", data);
+});
+
 exports.getProductById = asyncHandler(async (req, res) => {
     const includeDeleted =
         req.query.deleted === "true" || req.query.trash === "true";

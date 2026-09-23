@@ -3245,6 +3245,157 @@ const exportProductsExcel = async (
     return { buffer, filename, productCount: products.length };
 };
 
+const MAX_PRODUCT_CODES_EXPORT = 10000;
+
+/**
+ * Export barcodes / IMEIs for selected products or the whole catalog.
+ * Non-IMEI → product + variant EAN barcodes; IMEI → ItemTrack unit codes.
+ */
+const exportProductCodes = async (
+    { productIds, all = false, availableOnly = false } = {},
+    companyId = null
+) => {
+    const tenant = companyFilter(companyId);
+    let products;
+
+    if (all === true || all === "true") {
+        products = await Product.find({ ...NOT_DELETED, ...tenant })
+            .select("_id name productCode trackingType barcode")
+            .lean();
+    } else {
+        const ids = (Array.isArray(productIds) ? productIds : [])
+            .map((id) => toObjectId(id))
+            .filter(Boolean);
+        if (!ids.length) {
+            throw new AppError("Select at least one product.", 400);
+        }
+        products = await Product.find({
+            _id: { $in: ids },
+            ...NOT_DELETED,
+            ...tenant
+        })
+            .select("_id name productCode trackingType barcode")
+            .lean();
+    }
+
+    if (!products.length) {
+        throw new AppError("No products found.", 404);
+    }
+
+    const nonImeiIds = products
+        .filter((p) => p.trackingType !== "IMEI")
+        .map((p) => p._id);
+    const imeiProductIds = products
+        .filter((p) => p.trackingType === "IMEI")
+        .map((p) => p._id);
+
+    const variants = nonImeiIds.length
+        ? await ProductVariant.find({
+              productId: { $in: nonImeiIds },
+              isDeleted: { $ne: true }
+          })
+              .select("productId barcode sku combinationString")
+              .lean()
+        : [];
+
+    const variantsByProduct = new Map();
+    for (const variant of variants) {
+        const key = String(variant.productId);
+        if (!variantsByProduct.has(key)) variantsByProduct.set(key, []);
+        variantsByProduct.get(key).push(variant);
+    }
+
+    const imeiFilter = {
+        productId: { $in: imeiProductIds },
+        ...tenant
+    };
+    if (availableOnly === true || availableOnly === "true") {
+        imeiFilter.status = "available";
+    } else {
+        imeiFilter.status = { $ne: "deleted" };
+    }
+
+    const tracks = imeiProductIds.length
+        ? await ItemTrack.find(imeiFilter)
+              .select("imei productId status")
+              .sort({ imei: 1 })
+              .limit(MAX_PRODUCT_CODES_EXPORT + 1)
+              .lean()
+        : [];
+
+    if (tracks.length > MAX_PRODUCT_CODES_EXPORT) {
+        throw new AppError(
+            `Too many codes to export (limit ${MAX_PRODUCT_CODES_EXPORT}). Narrow your selection.`,
+            400
+        );
+    }
+
+    const tracksByProduct = new Map();
+    for (const track of tracks) {
+        const key = String(track.productId);
+        if (!tracksByProduct.has(key)) tracksByProduct.set(key, []);
+        tracksByProduct.get(key).push(track);
+    }
+
+    const byProduct = [];
+    const codes = [];
+    const seen = new Set();
+
+    const pushCode = (value) => {
+        const code = String(value || "").trim();
+        if (!code || seen.has(code)) return false;
+        seen.add(code);
+        codes.push(code);
+        return true;
+    };
+
+    for (const product of products) {
+        const productId = String(product._id);
+        const trackingType = product.trackingType || "Non-IMEI";
+        const productCodes = [];
+
+        if (trackingType === "IMEI") {
+            for (const track of tracksByProduct.get(productId) || []) {
+                const imei = String(track.imei || "").trim();
+                if (!imei) continue;
+                productCodes.push(imei);
+                pushCode(imei);
+            }
+        } else {
+            const productBarcode = String(product.barcode || "").trim();
+            const productVariants = variantsByProduct.get(productId) || [];
+            if (productVariants.length) {
+                for (const variant of productVariants) {
+                    const barcode = String(variant.barcode || "").trim();
+                    if (!barcode) continue;
+                    productCodes.push(barcode);
+                    pushCode(barcode);
+                }
+            }
+            if (productBarcode) {
+                productCodes.push(productBarcode);
+                pushCode(productBarcode);
+            }
+        }
+
+        byProduct.push({
+            productId,
+            name: product.name || "",
+            productCode: product.productCode || "",
+            trackingType,
+            codes: [...new Set(productCodes)],
+            count: [...new Set(productCodes)].length
+        });
+    }
+
+    return {
+        codes,
+        total: codes.length,
+        productCount: products.length,
+        byProduct
+    };
+};
+
 module.exports = {
     createProduct,
     getProducts,
@@ -3256,6 +3407,7 @@ module.exports = {
     getLowStockProducts,
     getProductByBarcode,
     ensureProductBarcode,
+    exportProductCodes,
     updateProduct,
     approveProduct,
     rejectProduct,
