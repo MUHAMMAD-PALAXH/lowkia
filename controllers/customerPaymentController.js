@@ -36,7 +36,8 @@ exports.list = asyncHandler(async (req, res) => {
 exports.getStatus = asyncHandler(async (req, res) => {
     const doc = await customerPaymentService.getCheckoutStatus(
         req.params.id,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Customer checkout status.", doc);
 });

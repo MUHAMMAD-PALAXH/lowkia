@@ -157,6 +157,58 @@ const dueMinorOfRepair = (ticket, currency = DEFAULT_CURRENCY) => {
     return toMinor(dueMajor, currency);
 };
 
+/** Map CustomerPayment → SalesOrder.paymentMethod label. */
+const soMethodFromCustomerPayment = (payment, fallback) => {
+    if (payment?.paymentProvider === "CLOVER") return "Clover Flex";
+    switch (String(payment?.paymentMethod || "").toUpperCase()) {
+        case "CARD":
+            return "Card";
+        case "APPLE_PAY":
+            return "Apple Pay";
+        case "CASH":
+            return "Cash";
+        case "BANK_TRANSFER":
+            return "Bank";
+        default:
+            return fallback;
+    }
+};
+
+/**
+ * If a CustomerPayment is already paid but the linked SO still shows due,
+ * apply the payment amount onto the order (heals Clover/status desync).
+ */
+const syncSalesOrderPaidFromPayment = async (payment, companyId, user) => {
+    if (!payment?.salesOrderId || payment.status !== "paid") return null;
+    const order = await loadSalesOrder(payment.salesOrderId, companyId);
+    const addMajor = toMajor(payment.amountMinor, payment.currency);
+    const currentPaid = Number(order.paidAmount) || 0;
+    const grand = Number(order.grandTotal) || 0;
+    if (currentPaid >= grand - 0.009 && order.paymentStatus === "Paid") {
+        return order;
+    }
+    const due =
+        order.dueAmount != null
+            ? Number(order.dueAmount)
+            : Math.max(grand - currentPaid, 0);
+    if (due < 0.009) return order;
+    const newPaid = Math.min(grand, currentPaid + Math.min(addMajor, due));
+    if (newPaid <= currentPaid + 0.009) return order;
+    return markPaid(
+        order._id,
+        {
+            paidAmount: newPaid,
+            paymentMethod: soMethodFromCustomerPayment(
+                payment,
+                order.paymentMethod
+            ),
+            skipPaymentLedger: true,
+        },
+        user?._id || null,
+        companyId
+    );
+};
+
 /**
  * Start Stripe / Clover / manual checkout against a sales order OR repair ticket.
  * CARD / APPLE_PAY → STRIPE PaymentIntent (online) or CLOVER (terminal).
@@ -620,6 +672,7 @@ const completeCheckout = async (paymentId, user, meta = {}) => {
         if (!existing) throw new AppError("Payment not found.", 404);
         assertDocumentCompany(existing, companyId, "Payment");
         if (existing.status === "paid") {
+            await syncSalesOrderPaidFromPayment(existing, companyId, user);
             return {
                 payment: serializePayment(
                     await populatePayment(Payment.findById(existing._id))
@@ -752,23 +805,19 @@ const completeCheckout = async (paymentId, user, meta = {}) => {
             if (newPaid > grand + 0.009) {
                 throw new AppError("Payment would overpay the sales order.", 400);
             }
+            const soMethod = soMethodFromCustomerPayment(
+                payment,
+                order.paymentMethod
+            );
             await markPaid(
                 order._id,
                 {
                     paidAmount: newPaid,
-                    paymentMethod:
-                        payment.paymentMethod === "CARD"
-                            ? "Card"
-                            : payment.paymentMethod === "APPLE_PAY"
-                              ? "Apple Pay"
-                              : payment.paymentMethod === "CASH"
-                                ? "Cash"
-                                : payment.paymentMethod === "BANK_TRANSFER"
-                                  ? "Bank"
-                                  : order.paymentMethod,
+                    paymentMethod: soMethod,
                     skipPaymentLedger: true,
                 },
-                user?._id || null
+                user?._id || null,
+                companyId
             );
         }
 
@@ -808,14 +857,28 @@ const completeCheckout = async (paymentId, user, meta = {}) => {
             alreadyPaid: false,
         };
     } catch (err) {
-        // Release claim so operator can retry / cancel
+        // Release claim so operator can retry / cancel.
+        // Also roll back from "paid" — SO update can fail after payment.save().
         try {
-            if (claimed.status && claimable.includes(claimed.status)) {
-                await Payment.updateOne(
-                    { _id: paymentId, status: "processing" },
-                    { $set: { status: claimed.status } }
-                );
-            }
+            const revertTo = claimable.includes(claimed.status)
+                ? claimed.status
+                : "approved";
+            await Payment.updateOne(
+                {
+                    _id: paymentId,
+                    status: { $in: ["processing", "paid"] },
+                },
+                {
+                    $set: {
+                        status: revertTo,
+                        paidAmountMinor: 0,
+                        paidAmount: 0,
+                        dueAmountMinor: claimed.amountMinor || 0,
+                        dueAmount: claimed.amount || 0,
+                        failureReason: String(err.message || err).slice(0, 500),
+                    },
+                }
+            );
         } catch (_) {
             /* ignore rollback noise */
         }
@@ -930,6 +993,7 @@ const recoverCheckout = async (paymentId, user, meta = {}) => {
     const companyId = await ensureUserCompany(user);
     const payment = await getPaymentOrFail(paymentId, companyId);
     if (payment.status === "paid") {
+        await syncSalesOrderPaidFromPayment(payment, companyId, user);
         return {
             payment: serializePayment(
                 await populatePayment(Payment.findById(payment._id))
@@ -1171,8 +1235,15 @@ const findPaidCloverPaymentForOrder = async (salesOrderId, companyId) => {
     }).sort({ postedAt: -1, createdAt: -1 });
 };
 
-const getCheckoutStatus = async (paymentId, companyId) => {
+const getCheckoutStatus = async (paymentId, companyId, user = null) => {
     const payment = await getPaymentOrFail(paymentId, companyId);
+    if (payment.status === "paid" && payment.salesOrderId) {
+        try {
+            await syncSalesOrderPaidFromPayment(payment, companyId, user);
+        } catch (_) {
+            /* heal is best-effort */
+        }
+    }
     let providerStatus = null;
     if (
         payment.paymentProvider === "STRIPE" &&
@@ -1242,6 +1313,30 @@ const listCustomerPayments = async (companyId, query = {}) => {
         ),
         Payment.countDocuments(filter),
     ]);
+
+    // Heal SO paymentStatus when a paid CustomerPayment outpaces the order.
+    for (const row of items) {
+        const so = row.salesOrderId;
+        if (
+            row.status === "paid" &&
+            so &&
+            typeof so === "object" &&
+            String(so.paymentStatus || "") !== "Paid" &&
+            Number(so.dueAmount) > 0.009
+        ) {
+            try {
+                await syncSalesOrderPaidFromPayment(row, companyId, null);
+                const refreshed = await SalesOrder.findById(so._id)
+                    .select(
+                        "orderNumber grandTotal paidAmount dueAmount paymentStatus status customerId customerName"
+                    )
+                    .lean();
+                if (refreshed) row.salesOrderId = refreshed;
+            } catch (_) {
+                /* list heal is best-effort */
+            }
+        }
+    }
 
     return {
         items: items.map(serializePayment),
