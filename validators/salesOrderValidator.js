@@ -4,6 +4,7 @@ const PAYMENT_METHODS = [
     "Cash",
     "Bank",
     "Card",
+    "Clover Flex",
     "Mobile Banking",
     "Credit",
     "Apple Pay",

@@ -43,6 +43,7 @@ const escapeRegex = (value = "") =>
 const soMethodToFinance = (raw) => {
     const s = String(raw || "").trim().toLowerCase();
     if (s.includes("apple")) return "APPLE_PAY";
+    if (s.includes("clover")) return "CARD";
     if (s.includes("cash")) return "CASH";
     if (s.includes("card")) return "CARD";
     if (s.includes("bank") || s.includes("transfer")) return "BANK_TRANSFER";

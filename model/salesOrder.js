@@ -423,6 +423,7 @@ paymentMethod:{
         "Cash",
         "Bank",
         "Card",
+        "Clover Flex",
         "Mobile Banking",
         "Credit",
         "Apple Pay"

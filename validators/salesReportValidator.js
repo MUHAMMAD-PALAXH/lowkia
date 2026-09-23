@@ -10,7 +10,7 @@ const SALES_STATUSES = [
     "Cancelled",
 ];
 const PAYMENT_STATUSES = ["Pending", "Partial", "Paid", "Refunded"];
-const PAYMENT_METHODS = ["Cash", "Bank", "Card", "Mobile Banking", "Credit"];
+const PAYMENT_METHODS = ["Cash", "Bank", "Card", "Clover Flex", "Mobile Banking", "Credit"];
 const PERIOD_TYPES = ["daily", "weekly", "monthly", "yearly"];
 
 const dashboardValidator = [
