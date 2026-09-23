@@ -80,6 +80,14 @@ exports.getProductByBarcode = asyncHandler(async (req, res) => {
     return success(res, "Product retrieved successfully.", product);
 });
 
+exports.ensureProductBarcode = asyncHandler(async (req, res) => {
+    const product = await productService.ensureProductBarcode(
+        req.params.id,
+        req.companyId
+    );
+    return success(res, "Product barcode ready.", product);
+});
+
 exports.getProductById = asyncHandler(async (req, res) => {
     const includeDeleted =
         req.query.deleted === "true" || req.query.trash === "true";

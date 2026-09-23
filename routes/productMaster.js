@@ -66,6 +66,13 @@ router.get(
 
 router.get("/barcode/:barcode", productController.getProductByBarcode);
 
+router.post(
+    "/:id/ensure-barcode",
+    idValidator,
+    validate,
+    productController.ensureProductBarcode
+);
+
 router.get(
     "/:id/delete-check",
     idValidator,

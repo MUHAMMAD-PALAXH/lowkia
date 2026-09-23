@@ -2492,6 +2492,52 @@ const getProductByBarcode = async (barcode, companyId = null) => {
     return byVariant;
 };
 
+/**
+ * Ensure Non-IMEI products (and variants) have a permanent EAN-13 barcode.
+ * Never regenerates an existing barcode. Used before sticker printing so labels
+ * encode a scanner-lookup key instead of falling back to SKU text.
+ */
+const ensureProductBarcode = async (id, companyId = null) => {
+    const product = await findProductOrFail(id, companyId);
+    assertDocumentCompany(product, companyId, "Product");
+
+    if (product.trackingType === "IMEI") {
+        throw new AppError(
+            "IMEI products use serial numbers, not shared product barcodes.",
+            400
+        );
+    }
+
+    let changed = false;
+
+    if (!String(product.barcode || "").trim()) {
+        product.barcode = await generateProductBarcode();
+        product.barcodeType = "EAN13";
+        product.barcodeGeneratedAt = new Date();
+        changed = true;
+    }
+
+    const variants = await ProductVariant.find({
+        productId: product._id,
+        isDeleted: { $ne: true },
+    });
+
+    for (const variant of variants) {
+        if (!String(variant.barcode || "").trim()) {
+            variant.barcode = await generateProductBarcode();
+            await variant.save();
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        product.updatedAt = new Date();
+        await product.save();
+    }
+
+    return getProductById(product._id, {}, companyId);
+};
+
 // ==========================================================
 // Update
 // ==========================================================
@@ -3209,6 +3255,7 @@ module.exports = {
     getPendingApprovals,
     getLowStockProducts,
     getProductByBarcode,
+    ensureProductBarcode,
     updateProduct,
     approveProduct,
     rejectProduct,
