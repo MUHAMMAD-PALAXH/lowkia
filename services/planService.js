@@ -37,6 +37,7 @@ const PLAN_FEATURE_CATALOG = [
     { key: "InventoryReport", label: "Inventory reports", group: "Insights" },
     { key: "RepairReport", label: "Repair reports", group: "Insights" },
     { key: "ProfitLoss", label: "Profit / loss", group: "Insights" },
+    { key: "Bookkeeping", label: "Bookkeeping", group: "Insights" },
     { key: "Analytics", label: "Online sales analytics", group: "Insights" },
     { key: "Coupon", label: "Coupons", group: "Growth" },
     { key: "Poster", label: "Posters", group: "Growth" },
