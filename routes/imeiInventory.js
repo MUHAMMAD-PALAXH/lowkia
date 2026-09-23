@@ -552,7 +552,11 @@ router.get('/search/:imei', asyncHandler(async (req, res) => {
     success: true,
     data: {
       imei: item.imei,
+      productId: item.productId?._id || item.productId,
+      variantId: item.variantId?._id || item.variantId,
+      currentBranchId: item.currentBranchId,
       productName: item.productId?.name,
+      variantName: item.variantId?.combinationString || item.variantId?.sku || '',
       variantSpecs: item.variantId?.attributes || item.variantId?.combinationString,
       status: item.status,
       customerPhone: item.saleInfo?.customerPhone || 'N/A',
