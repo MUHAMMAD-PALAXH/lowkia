@@ -10,10 +10,14 @@ const {
     deviceValidator,
 } = require("../validators/cloverValidator");
 
+// Public OAuth callback — Clover redirects the browser here (no JWT).
+router.get("/oauth/callback", controller.oauthCallback);
+
 // Base: /api/clover — company owner configures merchant/device binding
 router.use(protect, resolveTenant, adminOnly);
 
 router.get("/connection", controller.getConnection);
+router.get("/oauth/start", controller.startOAuth);
 router.put(
     "/connection",
     upsertValidator,

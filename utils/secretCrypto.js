@@ -48,9 +48,45 @@ function newIdempotencyKey() {
     return crypto.randomBytes(16).toString("hex");
 }
 
+/** Compact signed state for OAuth (company + user binding). */
+function signOAuthState(payload, ttlSec = 600) {
+    const body = {
+        ...payload,
+        exp: Math.floor(Date.now() / 1000) + ttlSec,
+    };
+    const data = Buffer.from(JSON.stringify(body), "utf8").toString("base64url");
+    const sig = crypto
+        .createHmac("sha256", deriveKey())
+        .update(data)
+        .digest("base64url");
+    return `${data}.${sig}`;
+}
+
+function verifyOAuthState(token) {
+    const raw = String(token || "");
+    const [data, sig] = raw.split(".");
+    if (!data || !sig) throw new Error("Invalid OAuth state.");
+    const expected = crypto
+        .createHmac("sha256", deriveKey())
+        .update(data)
+        .digest("base64url");
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        throw new Error("Invalid OAuth state signature.");
+    }
+    const body = JSON.parse(Buffer.from(data, "base64url").toString("utf8"));
+    if (!body?.exp || body.exp < Math.floor(Date.now() / 1000)) {
+        throw new Error("OAuth state expired. Start Connect again.");
+    }
+    return body;
+}
+
 module.exports = {
     encryptSecret,
     decryptSecret,
     newIdempotencyKey,
+    signOAuthState,
+    verifyOAuthState,
     KEY_BYTES,
 };
