@@ -58,6 +58,31 @@ const warehouseIdsItemRule = body("warehouseIds.*")
         return true;
     });
 
+const managerIdsRule = body("managerIds")
+    .optional({ nullable: true })
+    .custom((ids) => {
+        if (ids === undefined || ids === null || ids === "") {
+            return true;
+        }
+        if (!Array.isArray(ids)) {
+            throw new Error("managerIds must be an array.");
+        }
+        return true;
+    });
+
+const managerIdsItemRule = body("managerIds.*")
+    .optional({ nullable: true })
+    .custom((id) => {
+        if (id === undefined || id === null || id === "") {
+            return true;
+        }
+        const value = String(id);
+        if (!/^[a-fA-F0-9]{24}$/.test(value)) {
+            throw new Error("Invalid manager id in managerIds.");
+        }
+        return true;
+    });
+
 const createBranchValidator = [
     body("name")
         .notEmpty()
@@ -110,8 +135,8 @@ const createBranchValidator = [
         .optional({ nullable: true })
         .isString()
         .trim()
-        .isLength({ max: 120 })
-        .withMessage("Manager name must be at most 120 characters."),
+        .isLength({ max: 500 })
+        .withMessage("Manager name must be at most 500 characters."),
     body("description")
         .optional({ nullable: true })
         .isString(),
@@ -120,7 +145,9 @@ const createBranchValidator = [
         .exists()
         .withMessage("branchCode is auto-generated and cannot be provided."),
     warehouseIdsRule,
-    warehouseIdsItemRule
+    warehouseIdsItemRule,
+    managerIdsRule,
+    managerIdsItemRule
 ];
 
 const updateBranchValidator = [
@@ -166,14 +193,16 @@ const updateBranchValidator = [
         .optional({ nullable: true })
         .isString()
         .trim()
-        .isLength({ max: 120 })
-        .withMessage("Manager name must be at most 120 characters."),
+        .isLength({ max: 500 })
+        .withMessage("Manager name must be at most 500 characters."),
     body("branchCode")
         .not()
         .exists()
         .withMessage("branchCode cannot be changed."),
     warehouseIdsRule,
-    warehouseIdsItemRule
+    warehouseIdsItemRule,
+    managerIdsRule,
+    managerIdsItemRule
 ];
 
 const assignWarehousesValidator = [

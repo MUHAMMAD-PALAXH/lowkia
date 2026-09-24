@@ -35,9 +35,17 @@ const branchSchema = new mongoose.Schema(
         },
 
         // ==========================================================
-        // Manager (AdminUser until auth/HR phase)
+        // Managers — many employees ↔ many branches
         // ==========================================================
 
+        managerIds: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "Employee"
+            }
+        ],
+
+        // Legacy single manager (AdminUser) — kept for older clients
         managerId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "AdminUser",
@@ -154,6 +162,7 @@ const branchSchema = new mongoose.Schema(
 
 branchSchema.index({ name: 1 });
 branchSchema.index({ managerId: 1 });
+branchSchema.index({ managerIds: 1 });
 branchSchema.index({ warehouseIds: 1 });
 branchSchema.index({ isDeleted: 1, status: 1 });
 

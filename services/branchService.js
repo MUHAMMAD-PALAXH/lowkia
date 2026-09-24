@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Branch = require("../model/branch");
 const Warehouse = require("../model/warehouse");
 const Product = require("../model/product");
+const Employee = require("../model/employee");
 const { generateBranchCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
@@ -94,6 +95,62 @@ const normalizeWarehouseIds = (ids = []) => {
     if (!Array.isArray(ids)) return [];
     const unique = [...new Set(ids.map((id) => String(id)))];
     return unique.filter((id) => mongoose.Types.ObjectId.isValid(id));
+};
+
+const normalizeManagerIds = (ids = []) => {
+    if (!Array.isArray(ids)) return [];
+    const unique = [...new Set(ids.map((id) => String(id)))];
+    return unique.filter((id) => mongoose.Types.ObjectId.isValid(id));
+};
+
+const validateManagersExist = async (managerIds, companyId = null) => {
+    if (!managerIds.length) return;
+    const count = await Employee.countDocuments({
+        _id: { $in: managerIds },
+        isDeleted: { $ne: true },
+        ...companyFilter(companyId)
+    });
+    if (count !== managerIds.length) {
+        throw new AppError(
+            "One or more selected managers are invalid or deleted.",
+            400
+        );
+    }
+};
+
+const resolveManagerName = async (managerIds = []) => {
+    if (!managerIds.length) return "";
+    const employees = await Employee.find({
+        _id: { $in: managerIds },
+        isDeleted: { $ne: true }
+    })
+        .select("fullName firstName lastName employeeCode")
+        .lean();
+    const byId = new Map(employees.map((e) => [String(e._id), e]));
+    return managerIds
+        .map((id) => {
+            const e = byId.get(String(id));
+            if (!e) return "";
+            const name =
+                String(e.fullName || "").trim() ||
+                `${e.firstName || ""} ${e.lastName || ""}`.trim();
+            const code = String(e.employeeCode || "").trim();
+            if (code && name) return `${code} — ${name}`;
+            return name || code;
+        })
+        .filter(Boolean)
+        .join(", ");
+};
+
+const applyManagerFields = async (data = {}, companyId = null) => {
+    if (!Object.prototype.hasOwnProperty.call(data, "managerIds")) {
+        return data;
+    }
+    const managerIds = normalizeManagerIds(data.managerIds);
+    await validateManagersExist(managerIds, companyId);
+    data.managerIds = managerIds;
+    data.managerName = await resolveManagerName(managerIds);
+    return data;
 };
 
 const validateWarehousesExist = async (warehouseIds) => {
@@ -192,6 +249,10 @@ const findActiveBranchOrFail = trash.findActiveOrFail;
 
 const populateBranch = (query) =>
     query
+        .populate(
+            "managerIds",
+            "employeeCode fullName firstName lastName email phone"
+        )
         .populate("managerId", "firstName lastName email phone")
         .populate(
             "warehouseIds",
@@ -238,6 +299,7 @@ const createBranch = async (payload, actorId = null, companyId = null) => {
         data.warehouseIds || payload.warehouseIds || []
     );
     await validateWarehousesExist(warehouseIds);
+    await applyManagerFields(data, companyId);
 
     if (data.isHeadOffice === true) {
         await ensureSingleHeadOffice(null, companyId);
@@ -252,6 +314,8 @@ const createBranch = async (payload, actorId = null, companyId = null) => {
                 name,
                 city: data.city.trim(),
                 warehouseIds,
+                managerIds: data.managerIds || [],
+                managerName: data.managerName || "",
                 branchCode,
                 createdBy: actorId || null,
             },
@@ -413,6 +477,8 @@ const updateBranch = async (id, payload, actorId = null, companyId = null) => {
         await validateWarehousesExist(warehouseIds);
         data.warehouseIds = warehouseIds;
     }
+
+    await applyManagerFields(data, companyId);
 
     if (data.isHeadOffice === true) {
         await ensureSingleHeadOffice(id, companyId);
