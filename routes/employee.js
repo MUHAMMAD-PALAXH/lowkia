@@ -20,9 +20,16 @@ router.use(protect, resolveTenant, requireCompany, attendanceAdminOnly);
 router.get("/", listValidator, validate, controller.getEmployees);
 router.get("/available-users", controller.getAvailableUsers);
 router.get("/:id", idValidator, validate, controller.getEmployeeById);
-router.post("/", createEmployeeValidator, validate, controller.createEmployee);
+router.post(
+    "/",
+    ownerOnly,
+    createEmployeeValidator,
+    validate,
+    controller.createEmployee
+);
 router.put(
     "/:id",
+    ownerOnly,
     updateEmployeeValidator,
     validate,
     controller.updateEmployee
@@ -33,9 +40,16 @@ router.patch(
     validate,
     controller.assignShift
 );
-router.delete("/:id", idValidator, validate, controller.deleteEmployee);
+router.delete(
+    "/:id",
+    ownerOnly,
+    idValidator,
+    validate,
+    controller.deleteEmployee
+);
 router.patch(
     "/:id/restore",
+    ownerOnly,
     idValidator,
     validate,
     controller.restoreEmployee

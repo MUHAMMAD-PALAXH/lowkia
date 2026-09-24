@@ -19,12 +19,19 @@ exports.createCustomer = asyncHandler(async (req, res) => {
 });
 
 exports.getCustomers = asyncHandler(async (req, res) => {
-    const result = await customerService.getCustomers(req.query, req.companyId);
+    const result = await customerService.getCustomers(
+        req.query,
+        req.companyId,
+        req.user
+    );
     return success(res, "Customers retrieved successfully.", result);
 });
 
 exports.getCustomerStats = asyncHandler(async (req, res) => {
-    const stats = await customerService.getCustomerStats(req.companyId);
+    const stats = await customerService.getCustomerStats(
+        req.companyId,
+        req.user
+    );
     return success(res, "Customer stats retrieved successfully.", stats);
 });
 
@@ -54,7 +61,8 @@ exports.getCustomerById = asyncHandler(async (req, res) => {
     const customer = await customerService.getCustomerById(
         req.params.id,
         req.companyId,
-        { includeDeleted }
+        { includeDeleted },
+        req.user
     );
     return success(res, "Customer retrieved successfully.", customer);
 });
@@ -64,7 +72,8 @@ exports.updateCustomer = asyncHandler(async (req, res) => {
         req.params.id,
         req.body,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Customer updated successfully.", customer);
 });
@@ -73,7 +82,8 @@ exports.deleteCustomer = asyncHandler(async (req, res) => {
     await customerService.deleteCustomer(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Customer moved to trash.", null);
 });
@@ -82,7 +92,8 @@ exports.restoreCustomer = asyncHandler(async (req, res) => {
     const customer = await customerService.restoreCustomer(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Customer restored from trash.", customer);
 });
@@ -90,7 +101,8 @@ exports.restoreCustomer = asyncHandler(async (req, res) => {
 exports.permanentDeleteCustomer = asyncHandler(async (req, res) => {
     const result = await customerService.permanentDeleteCustomer(
         req.params.id,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Customer permanently deleted.", result);
 });
@@ -99,7 +111,8 @@ exports.bulkDeleteCustomers = asyncHandler(async (req, res) => {
     const result = await customerService.bulkDeleteCustomers(
         req.body || {},
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Customers moved to trash.", result);
 });
@@ -108,7 +121,8 @@ exports.bulkRestoreCustomers = asyncHandler(async (req, res) => {
     const result = await customerService.bulkRestoreCustomers(
         req.body || {},
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Customers restored from trash.", result);
 });
@@ -116,7 +130,8 @@ exports.bulkRestoreCustomers = asyncHandler(async (req, res) => {
 exports.bulkPermanentDeleteCustomers = asyncHandler(async (req, res) => {
     const result = await customerService.bulkPermanentDeleteCustomers(
         req.body || {},
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Trash customers permanently deleted.", result);
 });
@@ -124,7 +139,8 @@ exports.bulkPermanentDeleteCustomers = asyncHandler(async (req, res) => {
 exports.blockCustomer = asyncHandler(async (req, res) => {
     const customer = await customerService.blockCustomer(
         req.params.id,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Customer blocked successfully.", customer);
 });
@@ -132,7 +148,8 @@ exports.blockCustomer = asyncHandler(async (req, res) => {
 exports.activateCustomer = asyncHandler(async (req, res) => {
     const customer = await customerService.activateCustomer(
         req.params.id,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Customer activated successfully.", customer);
 });

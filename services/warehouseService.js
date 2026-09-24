@@ -6,6 +6,10 @@ const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const {
+    assertCanEditContent,
+    applyOwnTrashFilter,
+} = require("../utils/recordOwnership");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -277,16 +281,19 @@ const createWarehouse = async (payload, actorId = null, companyId = null) => {
 // List / Get
 // ==========================================================
 
-const getWarehouses = async (query = {}, companyId = null) => {
+const getWarehouses = async (query = {}, companyId = null, actor = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
 
-    const filter = {
+    let filter = {
         ...companyFilter(companyId),
         ...(trashMode ? { isDeleted: true } : { ...NOT_DELETED }),
     };
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
 
     if (query.status) filter.status = query.status;
     if (query.warehouseType) filter.warehouseType = query.warehouseType;
@@ -356,8 +363,9 @@ const getActiveWarehouses = async (companyId = null) => {
 // Update
 // ==========================================================
 
-const updateWarehouse = async (id, payload, actorId = null) => {
+const updateWarehouse = async (id, payload, actorId = null, actor = null) => {
     const warehouse = await findActiveWarehouseOrFail(id);
+    assertCanEditContent(warehouse, actor || { _id: actorId }, "Warehouse");
     const data = pickUpdatableFields(payload);
 
     if (data.warehouseName) {
@@ -414,8 +422,14 @@ const updateWarehouse = async (id, payload, actorId = null) => {
     return populateWarehouse(Warehouse.findById(warehouse._id));
 };
 
-const assignBranches = async (id, branchIdsInput, actorId = null) => {
+const assignBranches = async (
+    id,
+    branchIdsInput,
+    actorId = null,
+    actor = null
+) => {
     const warehouse = await findActiveWarehouseOrFail(id);
+    assertCanEditContent(warehouse, actor || { _id: actorId }, "Warehouse");
     const branchIds = normalizeIds(branchIdsInput);
     await validateBranchesExist(branchIds);
 
@@ -433,18 +447,23 @@ const assignBranches = async (id, branchIdsInput, actorId = null) => {
 // Soft delete
 // ==========================================================
 
-const deleteWarehouse = (id, actorId = null) => trash.softDelete(id, actorId);
-const restoreWarehouse = (id, actorId = null) => trash.restore(id, actorId);
-const permanentDeleteWarehouse = (id) => trash.permanentDelete(id);
-const bulkDeleteWarehouses = (payload, actorId) =>
-    trash.bulkSoftDelete(payload, actorId);
-const bulkRestoreWarehouses = (payload, actorId) =>
-    trash.bulkRestore(payload, actorId);
-const bulkPermanentDeleteWarehouses = (payload) =>
-    trash.bulkPermanentDelete(payload);
+const deleteWarehouse = (id, actorId = null, actor = null) =>
+    trash.softDelete(id, actorId, null, actor || { _id: actorId });
+const restoreWarehouse = (id, actorId = null, actor = null) =>
+    trash.restore(id, actorId, null, actor || { _id: actorId });
+const permanentDeleteWarehouse = (id, actor = null) =>
+    trash.permanentDelete(id, null, actor);
+const bulkDeleteWarehouses = (payload, actorId, actor = null) =>
+    trash.bulkSoftDelete(payload, actorId, null, actor || { _id: actorId });
+const bulkRestoreWarehouses = (payload, actorId, actor = null) =>
+    trash.bulkRestore(payload, actorId, null, actor || { _id: actorId });
+const bulkPermanentDeleteWarehouses = (payload, actor = null) =>
+    trash.bulkPermanentDelete(payload, null, actor);
 
-const getWarehouseStats = async (companyId = null) => {
+const getWarehouseStats = async (companyId = null, actor = null) => {
     const tenant = companyFilter(companyId);
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
     const [[rows], trashCount] = await Promise.all([
         Warehouse.aggregate([
             { $match: { ...NOT_DELETED, ...tenant } },
@@ -474,7 +493,7 @@ const getWarehouseStats = async (companyId = null) => {
                 }
             }
         ]),
-        Warehouse.countDocuments({ isDeleted: true, ...tenant })
+        Warehouse.countDocuments(trashFilter)
     ]);
 
     return {
@@ -490,21 +509,23 @@ const getWarehouseStats = async (companyId = null) => {
     };
 };
 
-const setStatus = async (id, status, actorId = null) => {
+const setStatus = async (id, status, actorId = null, actor = null) => {
     const allowed = ["Active", "Inactive", "Closed", "Maintenance"];
     if (!allowed.includes(status)) {
         throw new AppError("Invalid warehouse status.", 400);
     }
 
     const warehouse = await findActiveWarehouseOrFail(id);
+    assertCanEditContent(warehouse, actor || { _id: actorId }, "Warehouse");
     warehouse.status = status;
     warehouse.updatedBy = actorId || null;
     await warehouse.save();
     return populateWarehouse(Warehouse.findById(warehouse._id));
 };
 
-const setDefault = async (id, actorId = null) => {
+const setDefault = async (id, actorId = null, actor = null) => {
     const warehouse = await findActiveWarehouseOrFail(id);
+    assertCanEditContent(warehouse, actor || { _id: actorId }, "Warehouse");
     await ensureSingleDefault(id);
     warehouse.isDefault = true;
     warehouse.updatedBy = actorId || null;

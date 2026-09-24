@@ -1,6 +1,12 @@
 const mongoose = require("mongoose");
 const AppError = require("./appError");
 const { companyFilter } = require("./tenantScope");
+const {
+    assertCanTrash,
+    assertCanManageTrashItem,
+    applyOwnTrashFilter,
+    actorIdOf,
+} = require("./recordOwnership");
 
 const toObjectId = (value) => {
     if (!value) return null;
@@ -114,18 +120,32 @@ const createTrashOps = (Model, options = {}) => {
         return doc;
     };
 
-    const softDelete = async (id, actorId = null, companyId = null) => {
+    const softDelete = async (
+        id,
+        actorId = null,
+        companyId = null,
+        actorUser = null
+    ) => {
         const doc = await findActiveOrFail(id, companyId);
+        const actor = actorUser || (actorId ? { _id: actorId } : null);
+        if (actor) assertCanTrash(doc, actor, label);
         if (beforeSoftDelete) await beforeSoftDelete(doc, actorId);
-        markSoftDeleted(doc, actorId);
+        markSoftDeleted(doc, actorId || actorIdOf(actor) || null);
         if (softDeleteExtra) softDeleteExtra(doc);
         await doc.save();
         return doc;
     };
 
-    const restore = async (id, actorId = null, companyId = null) => {
+    const restore = async (
+        id,
+        actorId = null,
+        companyId = null,
+        actorUser = null
+    ) => {
         const doc = await findTrashOrFail(id, companyId);
-        clearSoftDeleted(doc, actorId);
+        const actor = actorUser || (actorId ? { _id: actorId } : null);
+        if (actor) assertCanManageTrashItem(doc, actor, label);
+        clearSoftDeleted(doc, actorId || actorIdOf(actor) || null);
         if (restoreStatus && statusField) {
             doc[statusField] = restoreStatus;
         }
@@ -134,8 +154,13 @@ const createTrashOps = (Model, options = {}) => {
         return doc;
     };
 
-    const permanentDelete = async (id, companyId = null) => {
+    const permanentDelete = async (
+        id,
+        companyId = null,
+        actorUser = null
+    ) => {
         const doc = await findTrashOrFail(id, companyId);
+        if (actorUser) assertCanManageTrashItem(doc, actorUser, label);
         if (beforePermanent) await beforePermanent(doc);
         await Model.deleteOne(
             applyTenant({ _id: doc._id, isDeleted: true }, companyId)
@@ -178,7 +203,8 @@ const createTrashOps = (Model, options = {}) => {
     const bulkSoftDelete = async (
         payload = {},
         actorId = null,
-        companyId = null
+        companyId = null,
+        actorUser = null
     ) => {
         const filter = buildScopeFilter(payload, false, companyId);
         const docs = await Model.find(filter);
@@ -188,12 +214,14 @@ const createTrashOps = (Model, options = {}) => {
                 404
             );
         }
+        const actor = actorUser || (actorId ? { _id: actorId } : null);
         let deleted = 0;
         const errors = [];
         for (const doc of docs) {
             try {
+                if (actor) assertCanTrash(doc, actor, label);
                 if (beforeSoftDelete) await beforeSoftDelete(doc, actorId);
-                markSoftDeleted(doc, actorId);
+                markSoftDeleted(doc, actorId || actorIdOf(actor) || null);
                 if (softDeleteExtra) softDeleteExtra(doc);
                 await doc.save();
                 deleted += 1;
@@ -213,13 +241,17 @@ const createTrashOps = (Model, options = {}) => {
     const bulkRestore = async (
         payload = {},
         actorId = null,
-        companyId = null
+        companyId = null,
+        actorUser = null
     ) => {
-        const filter = buildScopeFilter(payload, true, companyId);
+        let filter = buildScopeFilter(payload, true, companyId);
+        if (actorUser) filter = applyOwnTrashFilter(filter, actorUser);
         const docs = await Model.find(filter);
+        const actor = actorUser || (actorId ? { _id: actorId } : null);
         let restored = 0;
         for (const doc of docs) {
-            clearSoftDeleted(doc, actorId);
+            if (actor) assertCanManageTrashItem(doc, actor, label);
+            clearSoftDeleted(doc, actorId || actorIdOf(actor) || null);
             if (restoreStatus && statusField) {
                 doc[statusField] = restoreStatus;
             }
@@ -230,10 +262,20 @@ const createTrashOps = (Model, options = {}) => {
         return { restored };
     };
 
-    const bulkPermanentDelete = async (payload = {}, companyId = null) => {
-        const filter = buildScopeFilter(payload, true, companyId);
+    const bulkPermanentDelete = async (
+        payload = {},
+        companyId = null,
+        actorUser = null
+    ) => {
+        let filter = buildScopeFilter(payload, true, companyId);
+        if (actorUser) filter = applyOwnTrashFilter(filter, actorUser);
+        const docs = await Model.find(filter);
+        if (actorUser) {
+            for (const doc of docs) {
+                assertCanManageTrashItem(doc, actorUser, label);
+            }
+        }
         if (beforePermanent) {
-            const docs = await Model.find(filter);
             for (const doc of docs) {
                 await beforePermanent(doc);
             }
@@ -242,8 +284,11 @@ const createTrashOps = (Model, options = {}) => {
         return { deleted: result.deletedCount || 0 };
     };
 
-    const trashCount = (companyId = null) =>
-        Model.countDocuments(applyTenant({ isDeleted: true }, companyId));
+    const trashCount = (companyId = null, actorUser = null) => {
+        let filter = applyTenant({ isDeleted: true }, companyId);
+        if (actorUser) filter = applyOwnTrashFilter(filter, actorUser);
+        return Model.countDocuments(filter);
+    };
 
     return {
         toObjectId,
@@ -270,5 +315,6 @@ module.exports = {
     resolveEntitySort,
     markSoftDeleted,
     clearSoftDeleted,
-    createTrashOps
+    createTrashOps,
+    applyOwnTrashFilter,
 };

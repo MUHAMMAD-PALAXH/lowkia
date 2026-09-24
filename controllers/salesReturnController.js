@@ -17,7 +17,8 @@ exports.createReturn = asyncHandler(async (req, res) => {
 exports.getReturns = asyncHandler(async (req, res) => {
     const result = await salesReturnService.getReturns(
         req.query,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales returns retrieved.", result);
 });
@@ -63,7 +64,10 @@ exports.getReturnableFromOrder = asyncHandler(async (req, res) => {
 });
 
 exports.getReturnStats = asyncHandler(async (req, res) => {
-    const stats = await salesReturnService.getReturnStats(req.companyId);
+    const stats = await salesReturnService.getReturnStats(
+        req.companyId,
+        req.user
+    );
     return success(res, "Sales return stats retrieved.", stats);
 });
 
@@ -71,7 +75,8 @@ exports.deleteSalesReturn = asyncHandler(async (req, res) => {
     const result = await salesReturnService.deleteSalesReturn(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales return moved to trash.", result);
 });
@@ -80,7 +85,8 @@ exports.restoreSalesReturn = asyncHandler(async (req, res) => {
     const doc = await salesReturnService.restoreSalesReturn(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales return restored from trash.", doc);
 });
@@ -88,7 +94,8 @@ exports.restoreSalesReturn = asyncHandler(async (req, res) => {
 exports.permanentDeleteSalesReturn = asyncHandler(async (req, res) => {
     const result = await salesReturnService.permanentDeleteSalesReturn(
         req.params.id,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales return permanently deleted.", result);
 });
@@ -97,7 +104,8 @@ exports.bulkDeleteSalesReturns = asyncHandler(async (req, res) => {
     const result = await salesReturnService.bulkDeleteSalesReturns(
         req.body || {},
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales returns moved to trash.", result);
 });
@@ -106,7 +114,8 @@ exports.bulkRestoreSalesReturns = asyncHandler(async (req, res) => {
     const result = await salesReturnService.bulkRestoreSalesReturns(
         req.body || {},
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales returns restored from trash.", result);
 });
@@ -114,7 +123,8 @@ exports.bulkRestoreSalesReturns = asyncHandler(async (req, res) => {
 exports.bulkPermanentDeleteSalesReturns = asyncHandler(async (req, res) => {
     const result = await salesReturnService.bulkPermanentDeleteSalesReturns(
         req.body || {},
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Trash sales returns permanently deleted.", result);
 });

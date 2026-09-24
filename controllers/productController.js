@@ -23,7 +23,11 @@ exports.createProduct = asyncHandler(async (req, res) => {
 });
 
 exports.getProducts = asyncHandler(async (req, res) => {
-    const result = await productService.getProducts(req.query, req.companyId);
+    const result = await productService.getProducts(
+        req.query,
+        req.companyId,
+        req.user
+    );
     return success(res, "Products retrieved successfully.", result);
 });
 
@@ -46,7 +50,7 @@ exports.exportProductsExcel = asyncHandler(async (req, res) => {
 });
 
 exports.getProductStats = asyncHandler(async (req, res) => {
-    const stats = await productService.getProductStats(req.companyId);
+    const stats = await productService.getProductStats(req.companyId, req.user);
     return success(res, "Product stats retrieved successfully.", stats);
 });
 
@@ -122,7 +126,8 @@ exports.prepareAndTrashProduct = asyncHandler(async (req, res) => {
     const data = await productService.prepareAndTrashProduct(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Product blockers cleared and moved to trash.", data);
 });
@@ -144,7 +149,8 @@ exports.bulkPrepareAndTrashProducts = asyncHandler(async (req, res) => {
             const data = await productService.prepareAndTrashProduct(
                 id,
                 getActorId(req),
-                req.companyId
+                req.companyId,
+                req.user
             );
             deleted += 1;
             results.push(data);
@@ -176,7 +182,8 @@ exports.updateProduct = asyncHandler(async (req, res) => {
     const product = await productService.updateProduct(
         req.params.id,
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Product updated successfully.", product);
 });
@@ -213,7 +220,8 @@ exports.setStatus = asyncHandler(async (req, res) => {
         req.params.id,
         req.body.status,
         getActorId(req),
-        req.user?.role
+        req.user?.role,
+        req.user
     );
     return success(res, `Product status set to ${req.body.status}.`, product);
 });
@@ -223,7 +231,8 @@ exports.activateProduct = asyncHandler(async (req, res) => {
         req.params.id,
         "Active",
         getActorId(req),
-        req.user?.role
+        req.user?.role,
+        req.user
     );
     return success(res, "Product activated successfully.", product);
 });
@@ -233,7 +242,8 @@ exports.deactivateProduct = asyncHandler(async (req, res) => {
         req.params.id,
         "Inactive",
         getActorId(req),
-        req.user?.role
+        req.user?.role,
+        req.user
     );
     return success(res, "Product deactivated successfully.", product);
 });
@@ -243,7 +253,8 @@ exports.archiveProduct = asyncHandler(async (req, res) => {
         req.params.id,
         "Archived",
         getActorId(req),
-        req.user?.role
+        req.user?.role,
+        req.user
     );
     return success(res, "Product archived successfully.", product);
 });
@@ -253,7 +264,8 @@ exports.publishProduct = asyncHandler(async (req, res) => {
         req.params.id,
         true,
         getActorId(req),
-        req.user?.role
+        req.user?.role,
+        req.user
     );
     return success(res, "Product published successfully.", product);
 });
@@ -263,7 +275,8 @@ exports.unpublishProduct = asyncHandler(async (req, res) => {
         req.params.id,
         false,
         getActorId(req),
-        req.user?.role
+        req.user?.role,
+        req.user
     );
     return success(res, "Product unpublished successfully.", product);
 });
@@ -272,7 +285,8 @@ exports.assignSuppliers = asyncHandler(async (req, res) => {
     const product = await productService.assignSuppliers(
         req.params.id,
         req.body.suppliers || [],
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Suppliers assigned successfully.", product);
 });
@@ -283,27 +297,32 @@ exports.refreshStockSummary = asyncHandler(async (req, res) => {
 });
 
 exports.deleteProduct = asyncHandler(async (req, res) => {
-    await productService.deleteProduct(req.params.id, getActorId(req));
+    await productService.deleteProduct(req.params.id, getActorId(req), req.user);
     return success(res, "Product moved to trash.");
 });
 
 exports.restoreProduct = asyncHandler(async (req, res) => {
     const product = await productService.restoreProduct(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Product restored from trash.", product);
 });
 
 exports.permanentDeleteProduct = asyncHandler(async (req, res) => {
-    const result = await productService.permanentDeleteProduct(req.params.id);
+    const result = await productService.permanentDeleteProduct(
+        req.params.id,
+        req.user
+    );
     return success(res, "Product permanently deleted.", result);
 });
 
 exports.bulkDeleteProducts = asyncHandler(async (req, res) => {
     const result = await productService.bulkDeleteProducts(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Products moved to trash.", result);
 });
@@ -311,14 +330,16 @@ exports.bulkDeleteProducts = asyncHandler(async (req, res) => {
 exports.bulkRestoreProducts = asyncHandler(async (req, res) => {
     const result = await productService.bulkRestoreProducts(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Products restored from trash.", result);
 });
 
 exports.bulkPermanentDeleteProducts = asyncHandler(async (req, res) => {
     const result = await productService.bulkPermanentDeleteProducts(
-        req.body || {}
+        req.body || {},
+        req.user
     );
     return success(res, "Trash products permanently deleted.", result);
 });

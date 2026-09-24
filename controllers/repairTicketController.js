@@ -17,7 +17,8 @@ exports.createRepairTicket = asyncHandler(async (req, res) => {
 exports.getRepairTickets = asyncHandler(async (req, res) => {
     const result = await repairTicketService.getRepairTickets(
         req.query,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Repair tickets retrieved.", result);
 });
@@ -44,7 +45,8 @@ exports.exportRepairTicketsExcel = asyncHandler(async (req, res) => {
 exports.getRepairTicketStats = asyncHandler(async (req, res) => {
     const stats = await repairTicketService.getRepairTicketStats(
         req.query,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Repair ticket stats retrieved.", stats);
 });
@@ -55,7 +57,8 @@ exports.getRepairTicketById = asyncHandler(async (req, res) => {
     const doc = await repairTicketService.getRepairTicketById(
         req.params.id,
         req.companyId,
-        { includeDeleted }
+        { includeDeleted },
+        req.user
     );
     return success(res, "Repair ticket retrieved.", doc);
 });
@@ -65,7 +68,8 @@ exports.updateRepairTicket = asyncHandler(async (req, res) => {
         req.params.id,
         req.body,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Repair ticket updated.", doc);
 });
@@ -93,7 +97,8 @@ exports.deleteRepairTicket = asyncHandler(async (req, res) => {
     const result = await repairTicketService.deleteRepairTicket(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Repair ticket moved to trash.", result);
 });
@@ -102,7 +107,8 @@ exports.restoreRepairTicket = asyncHandler(async (req, res) => {
     const doc = await repairTicketService.restoreRepairTicket(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Repair ticket restored from trash.", doc);
 });
@@ -110,7 +116,8 @@ exports.restoreRepairTicket = asyncHandler(async (req, res) => {
 exports.permanentDeleteRepairTicket = asyncHandler(async (req, res) => {
     const result = await repairTicketService.permanentDeleteRepairTicket(
         req.params.id,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Repair ticket permanently deleted.", result);
 });
@@ -119,7 +126,8 @@ exports.bulkDeleteRepairTickets = asyncHandler(async (req, res) => {
     const result = await repairTicketService.bulkDeleteRepairTickets(
         req.body || {},
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Repair tickets moved to trash.", result);
 });
@@ -128,7 +136,8 @@ exports.bulkRestoreRepairTickets = asyncHandler(async (req, res) => {
     const result = await repairTicketService.bulkRestoreRepairTickets(
         req.body || {},
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Repair tickets restored from trash.", result);
 });
@@ -136,7 +145,8 @@ exports.bulkRestoreRepairTickets = asyncHandler(async (req, res) => {
 exports.bulkPermanentDeleteRepairTickets = asyncHandler(async (req, res) => {
     const result = await repairTicketService.bulkPermanentDeleteRepairTickets(
         req.body || {},
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Trash items permanently deleted.", result);
 });

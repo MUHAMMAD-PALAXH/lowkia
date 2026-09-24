@@ -37,6 +37,10 @@ const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
 const { writeActivityLog } = require("./activityLogService");
 const {
+    assertCanEditContent,
+    applyOwnTrashFilter,
+} = require("../utils/recordOwnership");
+const {
     buildGrnWorkbook,
     buildExportFilename,
     MAX_EXPORT_GRNS
@@ -1898,15 +1902,18 @@ const createGrnFromPurchaseOrder = async (
     return enrichGrnDoc(created, ctx);
 };
 
-const getGrns = async (query = {}, companyId = null) => {
+const getGrns = async (query = {}, companyId = null, actor = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
     const tenant = companyFilter(companyId);
-    const filter = trashMode
+    let filter = trashMode
         ? { isDeleted: true, ...tenant }
         : { ...NOT_DELETED, ...tenant };
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
 
     if (query.status) filter.status = query.status;
     if (query.purchaseOrderId) {
@@ -2195,8 +2202,10 @@ const getGrnDeleteCheck = async (id) => {
     };
 };
 
-const getGrnStats = async (companyId = null) => {
+const getGrnStats = async (companyId = null, actor = null) => {
     const tenant = companyFilter(companyId);
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
     const [rows, trashCount] = await Promise.all([
         GRN.aggregate([
             { $match: { ...NOT_DELETED, ...tenant } },
@@ -2208,7 +2217,7 @@ const getGrnStats = async (companyId = null) => {
                 }
             }
         ]),
-        GRN.countDocuments({ isDeleted: true, ...tenant })
+        GRN.countDocuments(trashFilter)
     ]);
     const stats = {
         total: 0,
@@ -2232,8 +2241,9 @@ const getGrnStats = async (companyId = null) => {
     return stats;
 };
 
-const updateGrn = async (id, payload = {}, actorId = null) => {
+const updateGrn = async (id, payload = {}, actorId = null, actor = null) => {
     const grn = await findGrnOrFail(id);
+    assertCanEditContent(grn, actor || { _id: actorId }, "GRN");
     if (!EDITABLE_GRN.includes(grn.status)) {
         throw new AppError("Only Draft / Pending Approval GRNs can be edited.", 400);
     }
@@ -2963,12 +2973,18 @@ const cancelGrn = async (id, actorId = null, reason = "") => {
     return populateGrn(GRN.findById(grn._id));
 };
 
-const deleteGrn = (id, actorId = null) => trash.softDelete(id, actorId);
-const restoreGrn = (id, actorId = null) => trash.restore(id, actorId);
-const permanentDeleteGrn = (id) => trash.permanentDelete(id);
-const bulkDeleteGrns = (payload, actorId) => trash.bulkSoftDelete(payload, actorId);
-const bulkRestoreGrns = (payload, actorId) => trash.bulkRestore(payload, actorId);
-const bulkPermanentDeleteGrns = (payload) => trash.bulkPermanentDelete(payload);
+const deleteGrn = (id, actorId = null, actor = null) =>
+    trash.softDelete(id, actorId, null, actor || { _id: actorId });
+const restoreGrn = (id, actorId = null, actor = null) =>
+    trash.restore(id, actorId, null, actor || { _id: actorId });
+const permanentDeleteGrn = (id, actor = null) =>
+    trash.permanentDelete(id, null, actor);
+const bulkDeleteGrns = (payload, actorId, actor = null) =>
+    trash.bulkSoftDelete(payload, actorId, null, actor || { _id: actorId });
+const bulkRestoreGrns = (payload, actorId, actor = null) =>
+    trash.bulkRestore(payload, actorId, null, actor || { _id: actorId });
+const bulkPermanentDeleteGrns = (payload, actor = null) =>
+    trash.bulkPermanentDelete(payload, null, actor);
 
 /**
  * Full filtered GRN Excel export (all matching rows).
@@ -2976,9 +2992,12 @@ const bulkPermanentDeleteGrns = (payload) => trash.bulkPermanentDelete(payload);
 const exportGrnsExcel = async (query = {}, companyId = null, actor = null) => {
     const trashMode = isTrashQuery(query);
     const tenant = companyFilter(companyId);
-    const filter = trashMode
+    let filter = trashMode
         ? { isDeleted: true, ...tenant }
         : { ...NOT_DELETED, ...tenant };
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
 
     if (query.status) filter.status = query.status;
     if (query.purchaseOrderId) {

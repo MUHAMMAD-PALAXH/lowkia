@@ -13,6 +13,12 @@ const {
     buildExportFilename,
     MAX_EXPORT_REPAIR_TICKETS
 } = require("./export/repairTicketExcelExporter");
+const {
+    assertCanEditContent,
+    assertCanTrash,
+    assertCanManageTrashItem,
+    applyOwnTrashFilter,
+} = require("../utils/recordOwnership");
 
 const AppError = require("../utils/appError");
 
@@ -418,12 +424,15 @@ const createRepairTicket = async (
     return populateTicket(RepairTicket.findById(doc._id)).lean();
 };
 
-const getRepairTickets = async (query = {}, companyId = null) => {
+const getRepairTickets = async (query = {}, companyId = null, actor = null) => {
     const trashMode = isTrashQuery(query);
     const tenant = companyFilter(companyId);
-    const filter = trashMode
+    let filter = trashMode
         ? { isDeleted: true, ...tenant }
         : { ...NOT_DELETED, ...tenant };
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
     if (query.branchId) filter.branchId = toObjectId(query.branchId);
     if (query.customerId && toObjectId(query.customerId)) {
         filter.customerId = toObjectId(query.customerId);
@@ -470,7 +479,8 @@ const getRepairTickets = async (query = {}, companyId = null) => {
 const getRepairTicketById = async (
     id,
     companyId = null,
-    { includeDeleted = false } = {}
+    { includeDeleted = false } = {},
+    actor = null
 ) => {
     const tenant = companyFilter(companyId);
     const filter = { _id: id, ...tenant };
@@ -482,6 +492,9 @@ const getRepairTicketById = async (
         throw err;
     }
     assertDocumentCompany(doc, companyId, "Repair ticket");
+    if (includeDeleted && doc.isDeleted && actor) {
+        assertCanManageTrashItem(doc, actor, "Repair ticket");
+    }
     return doc;
 };
 
@@ -489,7 +502,8 @@ const updateRepairTicket = async (
     id,
     payload = {},
     actorId = null,
-    companyId = null
+    companyId = null,
+    actor = null
 ) => {
     const tenant = companyFilter(companyId);
     const doc = await RepairTicket.findOne({ _id: id, ...NOT_DELETED, ...tenant });
@@ -499,6 +513,7 @@ const updateRepairTicket = async (
         throw err;
     }
     assertDocumentCompany(doc, companyId, "Repair ticket");
+    assertCanEditContent(doc, actor || { _id: actorId }, "Repair ticket");
 
     if (payload.branchId !== undefined) {
         const nextBranchId = toObjectId(payload.branchId);
@@ -644,7 +659,12 @@ const updateRepairTicketStatus = async (
 const completeRepairTicket = async (id, actorId = null, companyId = null) =>
     updateRepairTicketStatus(id, "Completed", actorId, companyId);
 
-const deleteRepairTicket = async (id, actorId = null, companyId = null) => {
+const deleteRepairTicket = async (
+    id,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     const tenant = companyFilter(companyId);
     const existing = await RepairTicket.findOne({
         _id: id,
@@ -657,11 +677,22 @@ const deleteRepairTicket = async (id, actorId = null, companyId = null) => {
         throw err;
     }
     assertDocumentCompany(existing, companyId, "Repair ticket");
-    const doc = await trash.softDelete(id, actorId, companyId);
+    assertCanTrash(existing, actor || { _id: actorId }, "Repair ticket");
+    const doc = await trash.softDelete(
+        id,
+        actorId,
+        companyId,
+        actor || { _id: actorId }
+    );
     return { id: String(doc._id) };
 };
 
-const restoreRepairTicket = async (id, actorId = null, companyId = null) => {
+const restoreRepairTicket = async (
+    id,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     const tenant = companyFilter(companyId);
     const existing = await RepairTicket.findOne({
         _id: id,
@@ -674,11 +705,20 @@ const restoreRepairTicket = async (id, actorId = null, companyId = null) => {
         throw err;
     }
     assertDocumentCompany(existing, companyId, "Repair ticket");
-    await trash.restore(id, actorId, companyId);
+    assertCanManageTrashItem(
+        existing,
+        actor || { _id: actorId },
+        "Repair ticket"
+    );
+    await trash.restore(id, actorId, companyId, actor || { _id: actorId });
     return getRepairTicketById(id, companyId);
 };
 
-const permanentDeleteRepairTicket = async (id, companyId = null) => {
+const permanentDeleteRepairTicket = async (
+    id,
+    companyId = null,
+    actor = null
+) => {
     const tenant = companyFilter(companyId);
     const existing = await RepairTicket.findOne({
         _id: id,
@@ -691,20 +731,50 @@ const permanentDeleteRepairTicket = async (id, companyId = null) => {
         throw err;
     }
     assertDocumentCompany(existing, companyId, "Repair ticket");
-    return trash.permanentDelete(id, companyId);
+    assertCanManageTrashItem(existing, actor, "Repair ticket");
+    return trash.permanentDelete(id, companyId, actor);
 };
 
-const bulkDeleteRepairTickets = (payload, actorId, companyId = null) =>
-    trash.bulkSoftDelete(payload, actorId, companyId);
-const bulkRestoreRepairTickets = (payload, actorId, companyId = null) =>
-    trash.bulkRestore(payload, actorId, companyId);
-const bulkPermanentDeleteRepairTickets = (payload, companyId = null) =>
-    trash.bulkPermanentDelete(payload, companyId);
+const bulkDeleteRepairTickets = (
+    payload,
+    actorId,
+    companyId = null,
+    actor = null
+) =>
+    trash.bulkSoftDelete(
+        payload,
+        actorId,
+        companyId,
+        actor || { _id: actorId }
+    );
+const bulkRestoreRepairTickets = (
+    payload,
+    actorId,
+    companyId = null,
+    actor = null
+) =>
+    trash.bulkRestore(
+        payload,
+        actorId,
+        companyId,
+        actor || { _id: actorId }
+    );
+const bulkPermanentDeleteRepairTickets = (
+    payload,
+    companyId = null,
+    actor = null
+) => trash.bulkPermanentDelete(payload, companyId, actor);
 
-const getRepairTicketStats = async (query = {}, companyId = null) => {
+const getRepairTicketStats = async (
+    query = {},
+    companyId = null,
+    actor = null
+) => {
     const tenant = companyFilter(companyId);
     const match = { ...NOT_DELETED, ...tenant };
     if (query.branchId) match.branchId = toObjectId(query.branchId);
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
 
     const [[rows], trashCount] = await Promise.all([
         RepairTicket.aggregate([
@@ -746,7 +816,7 @@ const getRepairTicketStats = async (query = {}, companyId = null) => {
                 }
             }
         ]),
-        RepairTicket.countDocuments({ isDeleted: true, ...tenant })
+        RepairTicket.countDocuments(trashFilter)
     ]);
 
     return {

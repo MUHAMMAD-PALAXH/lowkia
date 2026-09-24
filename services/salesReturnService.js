@@ -13,6 +13,7 @@ const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const { applyOwnTrashFilter } = require("../utils/recordOwnership");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const STOCK_RESTORED_STATUSES = ["Received", "Refunded"];
@@ -540,15 +541,18 @@ const receiveReturn = async (id, actorId = null, companyId = null) => {
     return populateReturn(SalesReturn.findById(ret._id));
 };
 
-const getReturns = async (query = {}, companyId = null) => {
+const getReturns = async (query = {}, companyId = null, actor = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
     const tenant = companyFilter(companyId);
-    const filter = trashMode
+    let filter = trashMode
         ? { isDeleted: true, ...tenant }
         : { ...NOT_DELETED, ...tenant };
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
     if (query.status) filter.status = query.status;
     if (query.salesOrderId && toObjectId(query.salesOrderId)) {
         filter.salesOrderId = toObjectId(query.salesOrderId);
@@ -652,8 +656,10 @@ const getReturnableFromOrder = async (salesOrderId, companyId = null) => {
     };
 };
 
-const getReturnStats = async (companyId = null) => {
+const getReturnStats = async (companyId = null, actor = null) => {
     const tenant = companyFilter(companyId);
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
     const [rows, trashCount] = await Promise.all([
         SalesReturn.aggregate([
             { $match: { ...NOT_DELETED, ...tenant } },
@@ -665,7 +671,7 @@ const getReturnStats = async (companyId = null) => {
                 }
             }
         ]),
-        SalesReturn.countDocuments({ isDeleted: true, ...tenant })
+        SalesReturn.countDocuments(trashFilter)
     ]);
 
     const stats = {
@@ -714,18 +720,45 @@ const getReturnStats = async (companyId = null) => {
     return stats;
 };
 
-const deleteSalesReturn = (id, actorId = null, companyId = null) =>
-    trash.softDelete(id, actorId, companyId);
-const restoreSalesReturn = (id, actorId = null, companyId = null) =>
-    trash.restore(id, actorId, companyId);
-const permanentDeleteSalesReturn = (id, companyId = null) =>
-    trash.permanentDelete(id, companyId);
-const bulkDeleteSalesReturns = (payload, actorId, companyId = null) =>
-    trash.bulkSoftDelete(payload, actorId, companyId);
-const bulkRestoreSalesReturns = (payload, actorId, companyId = null) =>
-    trash.bulkRestore(payload, actorId, companyId);
-const bulkPermanentDeleteSalesReturns = (payload, companyId = null) =>
-    trash.bulkPermanentDelete(payload, companyId);
+const deleteSalesReturn = (id, actorId = null, companyId = null, actor = null) =>
+    trash.softDelete(id, actorId, companyId, actor || { _id: actorId });
+const restoreSalesReturn = (
+    id,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => trash.restore(id, actorId, companyId, actor || { _id: actorId });
+const permanentDeleteSalesReturn = (id, companyId = null, actor = null) =>
+    trash.permanentDelete(id, companyId, actor);
+const bulkDeleteSalesReturns = (
+    payload,
+    actorId,
+    companyId = null,
+    actor = null
+) =>
+    trash.bulkSoftDelete(
+        payload,
+        actorId,
+        companyId,
+        actor || { _id: actorId }
+    );
+const bulkRestoreSalesReturns = (
+    payload,
+    actorId,
+    companyId = null,
+    actor = null
+) =>
+    trash.bulkRestore(
+        payload,
+        actorId,
+        companyId,
+        actor || { _id: actorId }
+    );
+const bulkPermanentDeleteSalesReturns = (
+    payload,
+    companyId = null,
+    actor = null
+) => trash.bulkPermanentDelete(payload, companyId, actor);
 
 const REFUND_METHODS = new Set([
     "Cash",

@@ -16,6 +16,10 @@ const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
 const { hasAdminPower } = require("../utils/roleAccess");
 const {
+    assertCanEditContent,
+    applyOwnTrashFilter,
+} = require("../utils/recordOwnership");
+const {
     buildProductWorkbook,
     buildExportFilename,
     MAX_EXPORT_PRODUCTS
@@ -483,8 +487,14 @@ const unlinkProductFromPurchaseOrders = async (productId, actorId = null) => {
  * Clears resolvable blockers (stock + draft/open POs) then soft-deletes.
  * Used by the friendly "Resolve & trash" product UI.
  */
-const prepareAndTrashProduct = async (id, actorId = null, companyId = null) => {
+const prepareAndTrashProduct = async (
+    id,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     const product = await findProductOrFail(id, companyId);
+    assertCanEditContent(product, actor || { _id: actorId }, "Product");
     const steps = [];
     const inventoryService = require("./inventoryService");
     const live = await inventoryService.getLiveWarehouseStock(product._id);
@@ -573,7 +583,7 @@ const prepareAndTrashProduct = async (id, actorId = null, companyId = null) => {
     }
 
     // 3) Soft-delete the product
-    const deleted = await deleteProduct(id, actorId);
+    const deleted = await deleteProduct(id, actorId, actor);
     steps.push({ action: "trashProduct", id: String(deleted._id) });
 
     return {
@@ -1406,16 +1416,19 @@ const attachSoldQty = async (items = []) => {
     }
 };
 
-const getProducts = async (query = {}, companyId = null) => {
+const getProducts = async (query = {}, companyId = null, actor = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
     const tenant = companyFilter(companyId);
 
-    const filter = trashMode
+    let filter = trashMode
         ? { isDeleted: true, ...tenant }
         : { ...NOT_DELETED, ...tenant };
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
 
     if (query.status) filter.status = query.status;
     if (query.approvalStatus) filter.approvalStatus = query.approvalStatus;
@@ -2551,8 +2564,9 @@ const ensureProductBarcode = async (id, companyId = null) => {
 // Update
 // ==========================================================
 
-const updateProduct = async (id, payload = {}, actorId = null) => {
+const updateProduct = async (id, payload = {}, actorId = null, actor = null) => {
     const product = await findProductOrFail(id);
+    assertCanEditContent(product, actor || { _id: actorId }, "Product");
     const data = pickUpdatableFields(payload);
 
     if (data.name) {
@@ -2724,13 +2738,20 @@ const resubmitProduct = async (id, actor = {}, note = "") => {
 // Status / publish
 // ==========================================================
 
-const setStatus = async (id, status, actorId = null, actorRole = null) => {
+const setStatus = async (
+    id,
+    status,
+    actorId = null,
+    actorRole = null,
+    actor = null
+) => {
     const allowed = ["Draft", "Active", "Inactive", "Archived"];
     if (!allowed.includes(status)) {
         throw new AppError("Invalid product status.", 400);
     }
 
     const product = await findProductOrFail(id);
+    assertCanEditContent(product, actor || { _id: actorId }, "Product");
 
     if (status === "Active" && product.approvalStatus !== "Approved") {
         if (!hasAdminPower(actorRole)) {
@@ -2765,8 +2786,15 @@ const setStatus = async (id, status, actorId = null, actorRole = null) => {
     return populateProduct(Product.findById(product._id));
 };
 
-const setPublish = async (id, publish, actorId = null, actorRole = null) => {
+const setPublish = async (
+    id,
+    publish,
+    actorId = null,
+    actorRole = null,
+    actor = null
+) => {
     const product = await findProductOrFail(id);
+    assertCanEditContent(product, actor || { _id: actorId }, "Product");
 
     if (publish && product.approvalStatus !== "Approved") {
         if (!hasAdminPower(actorRole)) {
@@ -2810,8 +2838,14 @@ const setPublish = async (id, publish, actorId = null, actorRole = null) => {
 // Suppliers
 // ==========================================================
 
-const assignSuppliers = async (id, suppliersInput, actorId = null) => {
+const assignSuppliers = async (
+    id,
+    suppliersInput,
+    actorId = null,
+    actor = null
+) => {
     const product = await findProductOrFail(id);
+    assertCanEditContent(product, actor || { _id: actorId }, "Product");
     const suppliers = (await normalizeSuppliers(suppliersInput)) || [];
 
     product.suppliers = suppliers;
@@ -2826,8 +2860,13 @@ const assignSuppliers = async (id, suppliersInput, actorId = null) => {
 // Soft delete
 // ==========================================================
 
-const deleteProduct = async (id, actorId = null) => {
-    const product = await trash.softDelete(id, actorId);
+const deleteProduct = async (id, actorId = null, actor = null) => {
+    const product = await trash.softDelete(
+        id,
+        actorId,
+        null,
+        actor || { _id: actorId }
+    );
 
     await ProductVariant.updateMany(
         { productId: product._id, isDeleted: { $ne: true } },
@@ -2843,8 +2882,13 @@ const deleteProduct = async (id, actorId = null) => {
     return product;
 };
 
-const restoreProduct = async (id, actorId = null) => {
-    const product = await trash.restore(id, actorId);
+const restoreProduct = async (id, actorId = null, actor = null) => {
+    const product = await trash.restore(
+        id,
+        actorId,
+        null,
+        actor || { _id: actorId }
+    );
 
     await ProductVariant.updateMany(
         { productId: product._id, isDeleted: true },
@@ -2854,13 +2898,14 @@ const restoreProduct = async (id, actorId = null) => {
     return populateProduct(Product.findById(product._id));
 };
 
-const permanentDeleteProduct = (id) => trash.permanentDelete(id);
-const bulkDeleteProducts = (payload, actorId) =>
-    trash.bulkSoftDelete(payload, actorId);
-const bulkRestoreProducts = (payload, actorId) =>
-    trash.bulkRestore(payload, actorId);
-const bulkPermanentDeleteProducts = (payload) =>
-    trash.bulkPermanentDelete(payload);
+const permanentDeleteProduct = (id, actor = null) =>
+    trash.permanentDelete(id, null, actor);
+const bulkDeleteProducts = (payload, actorId, actor = null) =>
+    trash.bulkSoftDelete(payload, actorId, null, actor || { _id: actorId });
+const bulkRestoreProducts = (payload, actorId, actor = null) =>
+    trash.bulkRestore(payload, actorId, null, actor || { _id: actorId });
+const bulkPermanentDeleteProducts = (payload, actor = null) =>
+    trash.bulkPermanentDelete(payload, null, actor);
 
 // ==========================================================
 // Stock summary (written by Inventory Service only)
@@ -2951,9 +2996,11 @@ const refreshStockSummary = async (id) => {
     return populateProduct(Product.findById(product._id));
 };
 
-const getProductStats = async (companyId = null) => {
+const getProductStats = async (companyId = null, actor = null) => {
     const tenant = companyFilter(companyId);
     const Branch = require("../model/branch");
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
     const [[rows], trashCount, branchCount] = await Promise.all([
         Product.aggregate([
         { $match: { ...NOT_DELETED, ...tenant } },
@@ -2990,7 +3037,7 @@ const getProductStats = async (companyId = null) => {
             }
         }
         ]),
-        Product.countDocuments({ isDeleted: true, ...tenant }),
+        Product.countDocuments(trashFilter),
         Branch.countDocuments({ isDeleted: { $ne: true }, ...tenant })
     ]);
 

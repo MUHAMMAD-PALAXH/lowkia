@@ -27,7 +27,11 @@ exports.createSupplier = asyncHandler(async (req, res) => {
 // ==========================================================
 
 exports.getSuppliers = asyncHandler(async (req, res) => {
-    const result = await supplierService.getSuppliers(req.query, req.companyId);
+    const result = await supplierService.getSuppliers(
+        req.query,
+        req.companyId,
+        req.user
+    );
     return success(res, "Suppliers retrieved successfully.", result);
 });
 
@@ -47,7 +51,10 @@ exports.getActiveSuppliers = asyncHandler(async (req, res) => {
 // ==========================================================
 
 exports.getSupplierStats = asyncHandler(async (req, res) => {
-    const stats = await supplierService.getSupplierStats(req.companyId);
+    const stats = await supplierService.getSupplierStats(
+        req.companyId,
+        req.user
+    );
     return success(res, "Supplier stats retrieved successfully.", stats);
 });
 
@@ -96,7 +103,8 @@ exports.updateSupplier = asyncHandler(async (req, res) => {
     const supplier = await supplierService.updateSupplier(
         req.params.id,
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
 
     return success(res, "Supplier updated successfully.", supplier);
@@ -110,7 +118,8 @@ exports.updateSupplier = asyncHandler(async (req, res) => {
 exports.deleteSupplier = asyncHandler(async (req, res) => {
     const supplier = await supplierService.deleteSupplier(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
 
     return success(res, "Supplier moved to trash.", supplier);
@@ -123,7 +132,8 @@ exports.deleteSupplier = asyncHandler(async (req, res) => {
 exports.restoreSupplier = asyncHandler(async (req, res) => {
     const supplier = await supplierService.restoreSupplier(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
 
     return success(res, "Supplier restored from trash.", supplier);
@@ -131,7 +141,8 @@ exports.restoreSupplier = asyncHandler(async (req, res) => {
 
 exports.permanentDeleteSupplier = asyncHandler(async (req, res) => {
     const result = await supplierService.permanentDeleteSupplier(
-        req.params.id
+        req.params.id,
+        req.user
     );
 
     return success(res, "Supplier permanently deleted.", result);
@@ -140,7 +151,8 @@ exports.permanentDeleteSupplier = asyncHandler(async (req, res) => {
 exports.bulkDeleteSuppliers = asyncHandler(async (req, res) => {
     const result = await supplierService.bulkDeleteSuppliers(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
 
     return success(res, "Suppliers moved to trash.", result);
@@ -149,7 +161,8 @@ exports.bulkDeleteSuppliers = asyncHandler(async (req, res) => {
 exports.bulkRestoreSuppliers = asyncHandler(async (req, res) => {
     const result = await supplierService.bulkRestoreSuppliers(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
 
     return success(res, "Suppliers restored from trash.", result);
@@ -157,7 +170,8 @@ exports.bulkRestoreSuppliers = asyncHandler(async (req, res) => {
 
 exports.bulkPermanentDeleteSuppliers = asyncHandler(async (req, res) => {
     const result = await supplierService.bulkPermanentDeleteSuppliers(
-        req.body || {}
+        req.body || {},
+        req.user
     );
 
     return success(res, "Trash suppliers permanently deleted.", result);
@@ -179,7 +193,8 @@ exports.approveSupplier = asyncHandler(async (req, res) => {
 exports.blockSupplier = asyncHandler(async (req, res) => {
     const supplier = await supplierService.blockSupplier(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
 
     return success(res, "Supplier blocked successfully.", supplier);
@@ -188,7 +203,8 @@ exports.blockSupplier = asyncHandler(async (req, res) => {
 exports.activateSupplier = asyncHandler(async (req, res) => {
     const supplier = await supplierService.activateSupplier(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
 
     return success(res, "Supplier activated successfully.", supplier);
@@ -197,7 +213,8 @@ exports.activateSupplier = asyncHandler(async (req, res) => {
 exports.deactivateSupplier = asyncHandler(async (req, res) => {
     const supplier = await supplierService.deactivateSupplier(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
 
     return success(res, "Supplier deactivated successfully.", supplier);

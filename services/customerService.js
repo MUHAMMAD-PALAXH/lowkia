@@ -9,6 +9,12 @@ const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const {
+    assertCanEditContent,
+    assertCanTrash,
+    assertCanManageTrashItem,
+    applyOwnTrashFilter,
+} = require("../utils/recordOwnership");
 
 const trash = createTrashOps(Customer, {
     label: "Customer",
@@ -331,15 +337,19 @@ const createCustomer = async (payload, actorId = null, companyId = null) => {
     );
 };
 
-const getCustomers = async (query = {}, companyId = null) => {
+const getCustomers = async (query = {}, companyId = null, actor = null) => {
     const tenant = companyFilter(companyId);
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
-    const filter = trashMode
+    let filter = trashMode
         ? { isDeleted: true, ...tenant }
         : { isDeleted: { $ne: true }, ...tenant };
+
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
 
     if (query.status) filter.status = query.status;
     if (query.customerType) filter.customerType = query.customerType;
@@ -388,7 +398,8 @@ const getActiveCustomers = async (companyId = null) => {
 const getCustomerById = async (
     id,
     companyId = null,
-    { includeDeleted = false } = {}
+    { includeDeleted = false } = {},
+    actor = null
 ) => {
     companyFilter(companyId);
     if (includeDeleted) {
@@ -398,14 +409,24 @@ const getCustomerById = async (
         const customer = await Customer.findById(id);
         if (!customer) throw new AppError("Customer not found.", 404);
         assertDocumentCompany(customer, companyId, "Customer");
+        if (customer.isDeleted && actor) {
+            assertCanManageTrashItem(customer, actor, "Customer");
+        }
         return customer;
     }
     return findActiveCustomerOrFail(id, companyId);
 };
 
-const updateCustomer = async (id, payload, actorId = null, companyId = null) => {
+const updateCustomer = async (
+    id,
+    payload,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     const tenant = companyFilter(companyId);
     const customer = await findActiveCustomerOrFail(id, companyId);
+    assertCanEditContent(customer, actor || { _id: actorId }, "Customer");
     const data = pickUpdatableFields(payload);
 
     if (data.name) {
@@ -427,42 +448,85 @@ const updateCustomer = async (id, payload, actorId = null, companyId = null) => 
     return customer;
 };
 
-const deleteCustomer = async (id, actorId = null, companyId = null) => {
-    await findActiveCustomerOrFail(id, companyId);
-    return trash.softDelete(id, actorId);
+const deleteCustomer = async (
+    id,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
+    const customer = await findActiveCustomerOrFail(id, companyId);
+    assertCanTrash(customer, actor || { _id: actorId }, "Customer");
+    return trash.softDelete(id, actorId, companyId, actor || { _id: actorId });
 };
 
-const restoreCustomer = async (id, actorId = null, companyId = null) => {
+const restoreCustomer = async (
+    id,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     companyFilter(companyId);
-    const customer = await trash.findTrashOrFail(id);
+    const customer = await trash.findTrashOrFail(id, companyId);
     assertDocumentCompany(customer, companyId, "Customer");
-    return trash.restore(id, actorId);
+    assertCanManageTrashItem(customer, actor || { _id: actorId }, "Customer");
+    return trash.restore(id, actorId, companyId, actor || { _id: actorId });
 };
 
-const permanentDeleteCustomer = async (id, companyId = null) => {
+const permanentDeleteCustomer = async (
+    id,
+    companyId = null,
+    actor = null
+) => {
     companyFilter(companyId);
-    const customer = await trash.findTrashOrFail(id);
+    const customer = await trash.findTrashOrFail(id, companyId);
     assertDocumentCompany(customer, companyId, "Customer");
-    return trash.permanentDelete(id);
+    assertCanManageTrashItem(customer, actor, "Customer");
+    return trash.permanentDelete(id, companyId, actor);
 };
 
-const bulkDeleteCustomers = async (payload, actorId, companyId = null) => {
+const bulkDeleteCustomers = async (
+    payload,
+    actorId,
+    companyId = null,
+    actor = null
+) => {
     companyFilter(companyId);
-    return trash.bulkSoftDelete(payload, actorId);
+    return trash.bulkSoftDelete(
+        payload,
+        actorId,
+        companyId,
+        actor || { _id: actorId }
+    );
 };
 
-const bulkRestoreCustomers = async (payload, actorId, companyId = null) => {
+const bulkRestoreCustomers = async (
+    payload,
+    actorId,
+    companyId = null,
+    actor = null
+) => {
     companyFilter(companyId);
-    return trash.bulkRestore(payload, actorId);
+    return trash.bulkRestore(
+        payload,
+        actorId,
+        companyId,
+        actor || { _id: actorId }
+    );
 };
 
-const bulkPermanentDeleteCustomers = async (payload, companyId = null) => {
+const bulkPermanentDeleteCustomers = async (
+    payload,
+    companyId = null,
+    actor = null
+) => {
     companyFilter(companyId);
-    return trash.bulkPermanentDelete(payload);
+    return trash.bulkPermanentDelete(payload, companyId, actor);
 };
 
-const getCustomerStats = async (companyId = null) => {
+const getCustomerStats = async (companyId = null, actor = null) => {
     const tenant = companyFilter(companyId);
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
     const [[rows], trashCount, customers] = await Promise.all([
         Customer.aggregate([
             { $match: { isDeleted: { $ne: true }, ...tenant } },
@@ -484,7 +548,7 @@ const getCustomerStats = async (companyId = null) => {
                 }
             }
         ]),
-        Customer.countDocuments({ isDeleted: true, ...tenant }),
+        Customer.countDocuments(trashFilter),
         Customer.find({ isDeleted: { $ne: true }, ...tenant }).select(
             "_id phone"
         )
@@ -508,13 +572,15 @@ const getCustomerStats = async (companyId = null) => {
     };
 };
 
-const blockCustomer = async (id, companyId = null) => {
+const blockCustomer = async (id, companyId = null, actor = null) => {
     const customer = await findActiveCustomerOrFail(id, companyId);
+    assertCanEditContent(customer, actor, "Customer");
     return customer.block();
 };
 
-const activateCustomer = async (id, companyId = null) => {
+const activateCustomer = async (id, companyId = null, actor = null) => {
     const customer = await findActiveCustomerOrFail(id, companyId);
+    assertCanEditContent(customer, actor, "Customer");
     return customer.activate();
 };
 

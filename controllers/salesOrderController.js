@@ -20,7 +20,8 @@ exports.createSalesOrder = asyncHandler(async (req, res) => {
 exports.getSalesOrders = asyncHandler(async (req, res) => {
     const result = await salesOrderService.getSalesOrders(
         req.query,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales orders retrieved successfully.", result);
 });
@@ -44,7 +45,10 @@ exports.exportSalesOrdersExcel = asyncHandler(async (req, res) => {
 });
 
 exports.getSalesOrderStats = asyncHandler(async (req, res) => {
-    const stats = await salesOrderService.getSalesOrderStats(req.companyId);
+    const stats = await salesOrderService.getSalesOrderStats(
+        req.companyId,
+        req.user
+    );
     return success(res, "Sales order stats retrieved successfully.", stats);
 });
 
@@ -56,7 +60,8 @@ exports.getSalesOrderById = asyncHandler(async (req, res) => {
         {
             includeDeleted
         },
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales order retrieved successfully.", order);
 });
@@ -66,7 +71,8 @@ exports.updateSalesOrder = asyncHandler(async (req, res) => {
         req.params.id,
         req.body,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales order updated successfully.", order);
 });
@@ -75,7 +81,8 @@ exports.deleteSalesOrder = asyncHandler(async (req, res) => {
     await salesOrderService.deleteSalesOrder(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales order moved to trash.", null);
 });
@@ -84,7 +91,8 @@ exports.restoreSalesOrder = asyncHandler(async (req, res) => {
     const order = await salesOrderService.restoreSalesOrder(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales order restored from trash.", order);
 });
@@ -93,7 +101,8 @@ exports.permanentDeleteSalesOrder = asyncHandler(async (req, res) => {
     const result = await salesOrderService.permanentDeleteSalesOrder(
         req.params.id,
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales order permanently deleted.", result);
 });
@@ -102,7 +111,8 @@ exports.bulkDeleteSalesOrders = asyncHandler(async (req, res) => {
     const result = await salesOrderService.bulkDeleteSalesOrders(
         req.body || {},
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales orders moved to trash.", result);
 });
@@ -111,7 +121,8 @@ exports.bulkRestoreSalesOrders = asyncHandler(async (req, res) => {
     const result = await salesOrderService.bulkRestoreSalesOrders(
         req.body || {},
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Sales orders restored from trash.", result);
 });
@@ -120,7 +131,8 @@ exports.bulkPermanentDeleteSalesOrders = asyncHandler(async (req, res) => {
     const result = await salesOrderService.bulkPermanentDeleteSalesOrders(
         req.body || {},
         getActorId(req),
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Trash items permanently deleted.", result);
 });

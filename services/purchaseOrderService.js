@@ -14,6 +14,11 @@ const { companyFilter } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
 const { writeActivityLog } = require("./activityLogService");
 const {
+    assertCanEditContent,
+    assertCanTrash,
+    applyOwnTrashFilter,
+} = require("../utils/recordOwnership");
+const {
     buildPurchaseOrderWorkbook,
     buildExportFilename,
     MAX_EXPORT_PURCHASE_ORDERS
@@ -798,14 +803,17 @@ const createPurchaseOrder = async (payload = {}, actorId = null) => {
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
-const getPurchaseOrders = async (query = {}) => {
+const getPurchaseOrders = async (query = {}, actor = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
     const trashMode = isTrashQuery(query);
-    const filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
+    let filter = trashMode ? { isDeleted: true } : { ...NOT_DELETED };
     Object.assign(filter, companyFilter(query.companyId));
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
 
     if (query.status) {
         if (query.status === "Completed") {
@@ -886,11 +894,14 @@ const getPurchaseOrderById = async (
     return enrichPosWithGrnMeta(po);
 };
 
-const getPurchaseOrderStats = async (query = {}) => {
+const getPurchaseOrderStats = async (query = {}, actor = null) => {
     const tenant = companyFilter(query.companyId);
     const match = { ...NOT_DELETED, ...tenant };
     const supplierId = toObjectId(query.supplierId);
     if (supplierId) match.supplierId = supplierId;
+
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
 
     const [rows, trashCount] = await Promise.all([
         PurchaseOrder.aggregate([
@@ -905,7 +916,7 @@ const getPurchaseOrderStats = async (query = {}) => {
         ]),
         supplierId
             ? Promise.resolve(0)
-            : PurchaseOrder.countDocuments({ isDeleted: true, ...tenant })
+            : PurchaseOrder.countDocuments(trashFilter)
     ]);
 
     const stats = {
@@ -993,8 +1004,14 @@ const getPurchaseOrderStats = async (query = {}) => {
     return stats;
 };
 
-const updatePurchaseOrder = async (id, payload = {}, actorId = null) => {
+const updatePurchaseOrder = async (
+    id,
+    payload = {},
+    actorId = null,
+    actor = null
+) => {
     const po = await findPoOrFail(id);
+    assertCanEditContent(po, actor || { _id: actorId }, "Purchase order");
 
     if (!EDITABLE_STATUSES.includes(po.status)) {
         throw new AppError(
@@ -1116,17 +1133,29 @@ const updatePurchaseOrder = async (id, payload = {}, actorId = null) => {
     return populatePo(PurchaseOrder.findById(po._id));
 };
 
-const deletePurchaseOrder = async (id, actorId = null, payload = {}) => {
+const deletePurchaseOrder = async (
+    id,
+    actorId = null,
+    payload = {},
+    actor = null
+) => {
     const po = await findPoOrFail(id);
+    assertCanTrash(po, actor || { _id: actorId }, "Purchase order");
     if (NO_STOCK_IMPACT_STATUSES.includes(po.status)) {
-        return trash.softDelete(id, actorId);
+        return trash.softDelete(id, actorId, null, actor || { _id: actorId });
     }
-    return prepareAndTrashPurchaseOrder(id, actorId, payload);
+    return prepareAndTrashPurchaseOrder(id, actorId, payload, actor);
 };
-const restorePurchaseOrder = (id, actorId = null) => trash.restore(id, actorId);
-const permanentDeletePurchaseOrder = (id) => trash.permanentDelete(id);
+const restorePurchaseOrder = (id, actorId = null, actor = null) =>
+    trash.restore(id, actorId, null, actor || { _id: actorId });
+const permanentDeletePurchaseOrder = (id, actor = null) =>
+    trash.permanentDelete(id, null, actor);
 
-const bulkDeletePurchaseOrders = async (payload = {}, actorId = null) => {
+const bulkDeletePurchaseOrders = async (
+    payload = {},
+    actorId = null,
+    actor = null
+) => {
     const scope = String(payload.scope || "ids").toLowerCase();
     if (scope === "ids") {
         const ids = Array.isArray(payload.ids) ? payload.ids : [];
@@ -1134,7 +1163,7 @@ const bulkDeletePurchaseOrders = async (payload = {}, actorId = null) => {
         const errors = [];
         for (const rawId of ids) {
             try {
-                await deletePurchaseOrder(rawId, actorId, payload);
+                await deletePurchaseOrder(rawId, actorId, payload, actor);
                 deleted += 1;
             } catch (e) {
                 errors.push({
@@ -1153,20 +1182,27 @@ const bulkDeletePurchaseOrders = async (payload = {}, actorId = null) => {
         return { deleted, failed: errors.length, errors };
     }
     // Scope-based: only soft-delete statuses that are already Draft/Cancelled
-    return trash.bulkSoftDelete(payload, actorId);
+    return trash.bulkSoftDelete(
+        payload,
+        actorId,
+        null,
+        actor || { _id: actorId }
+    );
 };
-const bulkRestorePurchaseOrders = (payload, actorId) =>
-    trash.bulkRestore(payload, actorId);
-const bulkPermanentDeletePurchaseOrders = (payload) =>
-    trash.bulkPermanentDelete(payload);
+const bulkRestorePurchaseOrders = (payload, actorId, actor = null) =>
+    trash.bulkRestore(payload, actorId, null, actor || { _id: actorId });
+const bulkPermanentDeletePurchaseOrders = (payload, actor = null) =>
+    trash.bulkPermanentDelete(payload, null, actor);
 
 /** Cancel open draft GRNs, withdraw from supplier, cancel PO, then trash. */
 const prepareAndTrashPurchaseOrder = async (
     id,
     actorId = null,
-    payload = {}
+    payload = {},
+    actorUser = null
 ) => {
     const po = await findPoOrFail(id);
+    assertCanTrash(po, actorUser || { _id: actorId }, "Purchase order");
 
     if (TRASH_LOCKED_STATUSES.includes(po.status)) {
         throw new AppError(
@@ -1243,7 +1279,12 @@ const prepareAndTrashPurchaseOrder = async (
         await po.save();
     }
 
-    return trash.softDelete(id, actorId);
+    return trash.softDelete(
+        id,
+        actorId,
+        null,
+        actorUser || { _id: actorId }
+    );
 };
 
 const submitPurchaseOrder = async (id, actorId = null) => {

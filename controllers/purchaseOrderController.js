@@ -29,7 +29,7 @@ exports.getPurchaseOrders = asyncHandler(async (req, res) => {
     if (req.linkedSupplier) {
         query.supplierId = String(req.linkedSupplier._id);
     }
-    const result = await purchaseOrderService.getPurchaseOrders(query);
+    const result = await purchaseOrderService.getPurchaseOrders(query, req.user);
     return success(res, "Purchase orders retrieved successfully.", result);
 });
 
@@ -57,7 +57,10 @@ exports.getPurchaseOrderStats = asyncHandler(async (req, res) => {
     if (req.linkedSupplier) {
         query.supplierId = String(req.linkedSupplier._id);
     }
-    const stats = await purchaseOrderService.getPurchaseOrderStats(query);
+    const stats = await purchaseOrderService.getPurchaseOrderStats(
+        query,
+        req.user
+    );
     return success(res, "Purchase order stats retrieved successfully.", stats);
 });
 
@@ -86,7 +89,8 @@ exports.updatePurchaseOrder = asyncHandler(async (req, res) => {
     const po = await purchaseOrderService.updatePurchaseOrder(
         req.params.id,
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Purchase order updated successfully.", po);
 });
@@ -95,7 +99,8 @@ exports.deletePurchaseOrder = asyncHandler(async (req, res) => {
     const result = await purchaseOrderService.deletePurchaseOrder(
         req.params.id,
         getActorId(req),
-        req.body || {}
+        req.body || {},
+        req.user
     );
     return success(res, "Purchase order moved to trash.", result);
 });
@@ -104,7 +109,8 @@ exports.prepareAndTrashPurchaseOrder = asyncHandler(async (req, res) => {
     const result = await purchaseOrderService.prepareAndTrashPurchaseOrder(
         req.params.id,
         getActorId(req),
-        req.body || {}
+        req.body || {},
+        req.user
     );
     return success(
         res,
@@ -116,14 +122,16 @@ exports.prepareAndTrashPurchaseOrder = asyncHandler(async (req, res) => {
 exports.restorePurchaseOrder = asyncHandler(async (req, res) => {
     const po = await purchaseOrderService.restorePurchaseOrder(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Purchase order restored from trash.", po);
 });
 
 exports.permanentDeletePurchaseOrder = asyncHandler(async (req, res) => {
     const result = await purchaseOrderService.permanentDeletePurchaseOrder(
-        req.params.id
+        req.params.id,
+        req.user
     );
     return success(res, "Purchase order permanently deleted.", result);
 });
@@ -131,7 +139,8 @@ exports.permanentDeletePurchaseOrder = asyncHandler(async (req, res) => {
 exports.bulkDeletePurchaseOrders = asyncHandler(async (req, res) => {
     const result = await purchaseOrderService.bulkDeletePurchaseOrders(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Purchase orders moved to trash.", result);
 });
@@ -139,14 +148,16 @@ exports.bulkDeletePurchaseOrders = asyncHandler(async (req, res) => {
 exports.bulkRestorePurchaseOrders = asyncHandler(async (req, res) => {
     const result = await purchaseOrderService.bulkRestorePurchaseOrders(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Purchase orders restored from trash.", result);
 });
 
 exports.bulkPermanentDeletePurchaseOrders = asyncHandler(async (req, res) => {
     const result = await purchaseOrderService.bulkPermanentDeletePurchaseOrders(
-        req.body || {}
+        req.body || {},
+        req.user
     );
     return success(res, "Trash purchase orders permanently deleted.", result);
 });

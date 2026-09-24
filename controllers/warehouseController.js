@@ -17,7 +17,8 @@ exports.createWarehouse = asyncHandler(async (req, res) => {
 exports.getWarehouses = asyncHandler(async (req, res) => {
     const result = await warehouseService.getWarehouses(
         req.query,
-        req.companyId
+        req.companyId,
+        req.user
     );
     return success(res, "Warehouses retrieved successfully.", result);
 });
@@ -34,7 +35,10 @@ exports.getActiveWarehouses = asyncHandler(async (req, res) => {
 });
 
 exports.getWarehouseStats = asyncHandler(async (req, res) => {
-    const stats = await warehouseService.getWarehouseStats(req.companyId);
+    const stats = await warehouseService.getWarehouseStats(
+        req.companyId,
+        req.user
+    );
     return success(res, "Warehouse stats retrieved successfully.", stats);
 });
 
@@ -50,7 +54,8 @@ exports.updateWarehouse = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.updateWarehouse(
         req.params.id,
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouse updated successfully.", warehouse);
 });
@@ -59,7 +64,8 @@ exports.assignBranches = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.assignBranches(
         req.params.id,
         req.body.branchIds || [],
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Branches assigned successfully.", warehouse);
 });
@@ -67,7 +73,8 @@ exports.assignBranches = asyncHandler(async (req, res) => {
 exports.deleteWarehouse = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.deleteWarehouse(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouse moved to trash.", warehouse);
 });
@@ -75,14 +82,16 @@ exports.deleteWarehouse = asyncHandler(async (req, res) => {
 exports.restoreWarehouse = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.restoreWarehouse(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouse restored from trash.", warehouse);
 });
 
 exports.permanentDeleteWarehouse = asyncHandler(async (req, res) => {
     const result = await warehouseService.permanentDeleteWarehouse(
-        req.params.id
+        req.params.id,
+        req.user
     );
     return success(res, "Warehouse permanently deleted.", result);
 });
@@ -90,7 +99,8 @@ exports.permanentDeleteWarehouse = asyncHandler(async (req, res) => {
 exports.bulkDeleteWarehouses = asyncHandler(async (req, res) => {
     const result = await warehouseService.bulkDeleteWarehouses(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouses moved to trash.", result);
 });
@@ -98,14 +108,16 @@ exports.bulkDeleteWarehouses = asyncHandler(async (req, res) => {
 exports.bulkRestoreWarehouses = asyncHandler(async (req, res) => {
     const result = await warehouseService.bulkRestoreWarehouses(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouses restored from trash.", result);
 });
 
 exports.bulkPermanentDeleteWarehouses = asyncHandler(async (req, res) => {
     const result = await warehouseService.bulkPermanentDeleteWarehouses(
-        req.body || {}
+        req.body || {},
+        req.user
     );
     return success(res, "Trash warehouses permanently deleted.", result);
 });
@@ -114,7 +126,8 @@ exports.setStatus = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.setStatus(
         req.params.id,
         req.body.status,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouse status updated successfully.", warehouse);
 });
@@ -123,7 +136,8 @@ exports.activateWarehouse = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.setStatus(
         req.params.id,
         "Active",
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouse activated successfully.", warehouse);
 });
@@ -132,7 +146,8 @@ exports.deactivateWarehouse = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.setStatus(
         req.params.id,
         "Inactive",
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouse deactivated successfully.", warehouse);
 });
@@ -141,7 +156,8 @@ exports.setMaintenance = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.setStatus(
         req.params.id,
         "Maintenance",
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouse set to maintenance successfully.", warehouse);
 });
@@ -150,7 +166,8 @@ exports.closeWarehouse = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.setStatus(
         req.params.id,
         "Closed",
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouse closed successfully.", warehouse);
 });
@@ -158,7 +175,8 @@ exports.closeWarehouse = asyncHandler(async (req, res) => {
 exports.setDefault = asyncHandler(async (req, res) => {
     const warehouse = await warehouseService.setDefault(
         req.params.id,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "Warehouse set as default successfully.", warehouse);
 });

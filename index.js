@@ -181,6 +181,7 @@ app.use('/api/purchase-orders', require('./routes/purchaseOrder'));
 app.use('/api/grn', require('./routes/grn'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/customers', require('./routes/customer'));
+app.use('/api/record-delete-requests', require('./routes/recordDeleteRequest'));
 app.use('/api/sales-orders', require('./routes/salesOrder'));
 app.use('/api/sales-returns', require('./routes/salesReturn'));
 app.use('/api/repair-tickets', require('./routes/repairTicket'));

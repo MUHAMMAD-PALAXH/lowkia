@@ -8,6 +8,10 @@ const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const {
+    assertCanEditContent,
+    applyOwnTrashFilter,
+} = require("../utils/recordOwnership");
 
 // Matches false / null / missing — safe for legacy IMEI-created branches
 const NOT_DELETED = { isDeleted: { $ne: true } };
@@ -332,16 +336,19 @@ const createBranch = async (payload, actorId = null, companyId = null) => {
 // List
 // ==========================================================
 
-const getBranches = async (query = {}, companyId = null) => {
+const getBranches = async (query = {}, companyId = null, actor = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
 
-    const filter = {
+    let filter = {
         ...companyFilter(companyId),
         ...(trashMode ? { isDeleted: true } : { ...NOT_DELETED }),
     };
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
 
     if (query.status) filter.status = query.status;
     if (query.isHeadOffice !== undefined) {
@@ -448,9 +455,16 @@ const getActiveBranches = async (companyId = null) => {
 // Update
 // ==========================================================
 
-const updateBranch = async (id, payload, actorId = null, companyId = null) => {
+const updateBranch = async (
+    id,
+    payload,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     const branch = await findActiveBranchOrFail(id);
     assertDocumentCompany(branch, companyId, "Branch");
+    assertCanEditContent(branch, actor || { _id: actorId }, "Branch");
     const data = pickUpdatableFields(payload);
 
     if (data.name) {
@@ -496,8 +510,14 @@ const updateBranch = async (id, payload, actorId = null, companyId = null) => {
 };
 
 // Assign / replace warehouses (dedicated endpoint)
-const assignWarehouses = async (id, warehouseIdsInput, actorId = null) => {
+const assignWarehouses = async (
+    id,
+    warehouseIdsInput,
+    actorId = null,
+    actor = null
+) => {
     const branch = await findActiveBranchOrFail(id);
+    assertCanEditContent(branch, actor || { _id: actorId }, "Branch");
     const warehouseIds = normalizeWarehouseIds(warehouseIdsInput);
 
     await validateWarehousesExist(warehouseIds);
@@ -515,18 +535,23 @@ const assignWarehouses = async (id, warehouseIdsInput, actorId = null) => {
 // Soft delete — blocked if warehouses still assigned
 // ==========================================================
 
-const deleteBranch = (id, actorId = null) => trash.softDelete(id, actorId);
-const restoreBranch = (id, actorId = null) => trash.restore(id, actorId);
-const permanentDeleteBranch = (id) => trash.permanentDelete(id);
-const bulkDeleteBranches = (payload, actorId) =>
-    trash.bulkSoftDelete(payload, actorId);
-const bulkRestoreBranches = (payload, actorId) =>
-    trash.bulkRestore(payload, actorId);
-const bulkPermanentDeleteBranches = (payload) =>
-    trash.bulkPermanentDelete(payload);
+const deleteBranch = (id, actorId = null, actor = null) =>
+    trash.softDelete(id, actorId, null, actor || { _id: actorId });
+const restoreBranch = (id, actorId = null, actor = null) =>
+    trash.restore(id, actorId, null, actor || { _id: actorId });
+const permanentDeleteBranch = (id, actor = null) =>
+    trash.permanentDelete(id, null, actor);
+const bulkDeleteBranches = (payload, actorId, actor = null) =>
+    trash.bulkSoftDelete(payload, actorId, null, actor || { _id: actorId });
+const bulkRestoreBranches = (payload, actorId, actor = null) =>
+    trash.bulkRestore(payload, actorId, null, actor || { _id: actorId });
+const bulkPermanentDeleteBranches = (payload, actor = null) =>
+    trash.bulkPermanentDelete(payload, null, actor);
 
-const getBranchStats = async (companyId = null) => {
+const getBranchStats = async (companyId = null, actor = null) => {
     const tenant = companyFilter(companyId);
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
     const [[rows], trashCount] = await Promise.all([
         Branch.aggregate([
             { $match: { ...NOT_DELETED, ...tenant } },
@@ -556,7 +581,7 @@ const getBranchStats = async (companyId = null) => {
                 }
             }
         ]),
-        Branch.countDocuments({ isDeleted: true, ...tenant })
+        Branch.countDocuments(trashFilter)
     ]);
 
     return {
@@ -576,21 +601,23 @@ const getBranchStats = async (companyId = null) => {
 // Status / Head Office
 // ==========================================================
 
-const setStatus = async (id, status, actorId = null) => {
+const setStatus = async (id, status, actorId = null, actor = null) => {
     const allowed = ["Active", "Inactive", "Closed", "Maintenance"];
     if (!allowed.includes(status)) {
         throw new AppError("Invalid branch status.", 400);
     }
 
     const branch = await findActiveBranchOrFail(id);
+    assertCanEditContent(branch, actor || { _id: actorId }, "Branch");
     branch.status = status;
     branch.updatedBy = actorId || null;
     await branch.save();
     return populateBranch(Branch.findById(branch._id));
 };
 
-const setHeadOffice = async (id, actorId = null) => {
+const setHeadOffice = async (id, actorId = null, actor = null) => {
     const branch = await findActiveBranchOrFail(id);
+    assertCanEditContent(branch, actor || { _id: actorId }, "Branch");
     await ensureSingleHeadOffice(id);
     branch.isHeadOffice = true;
     branch.updatedBy = actorId || null;

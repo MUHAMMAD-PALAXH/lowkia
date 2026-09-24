@@ -6,6 +6,10 @@ const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const {
+    assertCanEditContent,
+    applyOwnTrashFilter,
+} = require("../utils/recordOwnership");
 
 const trash = createTrashOps(Supplier, {
     label: "Supplier",
@@ -136,16 +140,19 @@ const createSupplier = async (payload, actorId = null, companyId = null) => {
 // List Suppliers (pagination + filters)
 // ==========================================================
 
-const getSuppliers = async (query = {}, companyId = null) => {
+const getSuppliers = async (query = {}, companyId = null, actor = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const trashMode = isTrashQuery(query);
     const tenant = companyFilter(companyId);
 
-    const filter = trashMode
+    let filter = trashMode
         ? { isDeleted: true, ...tenant }
         : { isDeleted: false, ...tenant };
+    if (trashMode && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
 
     if (query.status) {
         filter.status = query.status;
@@ -454,8 +461,9 @@ const getSupplierById = async (id, companyId = null) => {
 // Update Supplier
 // ==========================================================
 
-const updateSupplier = async (id, payload, actorId = null) => {
+const updateSupplier = async (id, payload, actorId = null, actor = null) => {
     const supplier = await findActiveSupplierOrFail(id);
+    assertCanEditContent(supplier, actor || { _id: actorId }, "Supplier");
     const data = pickUpdatableFields(payload);
 
     if (data.name) {
@@ -508,18 +516,23 @@ const updateSupplier = async (id, payload, actorId = null) => {
 // Soft Delete
 // ==========================================================
 
-const deleteSupplier = (id, actorId = null) => trash.softDelete(id, actorId);
-const restoreSupplier = (id, actorId = null) => trash.restore(id, actorId);
-const permanentDeleteSupplier = (id) => trash.permanentDelete(id);
-const bulkDeleteSuppliers = (payload, actorId) =>
-    trash.bulkSoftDelete(payload, actorId);
-const bulkRestoreSuppliers = (payload, actorId) =>
-    trash.bulkRestore(payload, actorId);
-const bulkPermanentDeleteSuppliers = (payload) =>
-    trash.bulkPermanentDelete(payload);
+const deleteSupplier = (id, actorId = null, actor = null) =>
+    trash.softDelete(id, actorId, null, actor || { _id: actorId });
+const restoreSupplier = (id, actorId = null, actor = null) =>
+    trash.restore(id, actorId, null, actor || { _id: actorId });
+const permanentDeleteSupplier = (id, actor = null) =>
+    trash.permanentDelete(id, null, actor);
+const bulkDeleteSuppliers = (payload, actorId, actor = null) =>
+    trash.bulkSoftDelete(payload, actorId, null, actor || { _id: actorId });
+const bulkRestoreSuppliers = (payload, actorId, actor = null) =>
+    trash.bulkRestore(payload, actorId, null, actor || { _id: actorId });
+const bulkPermanentDeleteSuppliers = (payload, actor = null) =>
+    trash.bulkPermanentDelete(payload, null, actor);
 
-const getSupplierStats = async (companyId = null) => {
+const getSupplierStats = async (companyId = null, actor = null) => {
     const tenant = companyFilter(companyId);
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
     const [
         [rows],
         trashCount,
@@ -556,7 +569,7 @@ const getSupplierStats = async (companyId = null) => {
                 }
             }
         ]),
-        Supplier.countDocuments({ isDeleted: true, ...tenant }),
+        Supplier.countDocuments(trashFilter),
         PurchaseOrder.countDocuments({
             isDeleted: { $ne: true },
             ...tenant,
@@ -744,16 +757,18 @@ const approveSupplier = async (id, actorId = null) => {
 // Status Actions
 // ==========================================================
 
-const blockSupplier = async (id, actorId = null) => {
+const blockSupplier = async (id, actorId = null, actor = null) => {
     const supplier = await findActiveSupplierOrFail(id);
+    assertCanEditContent(supplier, actor || { _id: actorId }, "Supplier");
     supplier.status = "Blocked";
     supplier.updatedBy = actorId || null;
     await supplier.save();
     return supplier;
 };
 
-const activateSupplier = async (id, actorId = null) => {
+const activateSupplier = async (id, actorId = null, actor = null) => {
     const supplier = await findActiveSupplierOrFail(id);
+    assertCanEditContent(supplier, actor || { _id: actorId }, "Supplier");
 
     if (supplier.status === "Active") {
         throw new AppError("Supplier is already active.", 400);
@@ -765,8 +780,9 @@ const activateSupplier = async (id, actorId = null) => {
     return supplier;
 };
 
-const deactivateSupplier = async (id, actorId = null) => {
+const deactivateSupplier = async (id, actorId = null, actor = null) => {
     const supplier = await findActiveSupplierOrFail(id);
+    assertCanEditContent(supplier, actor || { _id: actorId }, "Supplier");
 
     if (supplier.status === "Inactive") {
         throw new AppError("Supplier is already inactive.", 400);

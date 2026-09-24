@@ -20,12 +20,12 @@ exports.listReceivablePurchaseOrders = asyncHandler(async (req, res) => {
 });
 
 exports.getGrnStats = asyncHandler(async (req, res) => {
-    const stats = await grnService.getGrnStats(req.companyId);
+    const stats = await grnService.getGrnStats(req.companyId, req.user);
     return success(res, "GRN stats retrieved.", stats);
 });
 
 exports.getGrns = asyncHandler(async (req, res) => {
-    const result = await grnService.getGrns(req.query, req.companyId);
+    const result = await grnService.getGrns(req.query, req.companyId, req.user);
     return success(res, "GRNs retrieved successfully.", result);
 });
 
@@ -78,7 +78,8 @@ exports.updateGrn = asyncHandler(async (req, res) => {
     const grn = await grnService.updateGrn(
         req.params.id,
         req.body,
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "GRN updated successfully.", grn);
 });
@@ -151,24 +152,33 @@ exports.cancelGrn = asyncHandler(async (req, res) => {
 });
 
 exports.deleteGrn = asyncHandler(async (req, res) => {
-    const result = await grnService.deleteGrn(req.params.id, getActorId(req));
+    const result = await grnService.deleteGrn(
+        req.params.id,
+        getActorId(req),
+        req.user
+    );
     return success(res, "GRN moved to trash.", result);
 });
 
 exports.restoreGrn = asyncHandler(async (req, res) => {
-    const grn = await grnService.restoreGrn(req.params.id, getActorId(req));
+    const grn = await grnService.restoreGrn(
+        req.params.id,
+        getActorId(req),
+        req.user
+    );
     return success(res, "GRN restored from trash.", grn);
 });
 
 exports.permanentDeleteGrn = asyncHandler(async (req, res) => {
-    const result = await grnService.permanentDeleteGrn(req.params.id);
+    const result = await grnService.permanentDeleteGrn(req.params.id, req.user);
     return success(res, "GRN permanently deleted.", result);
 });
 
 exports.bulkDeleteGrns = asyncHandler(async (req, res) => {
     const result = await grnService.bulkDeleteGrns(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "GRNs moved to trash.", result);
 });
@@ -176,12 +186,16 @@ exports.bulkDeleteGrns = asyncHandler(async (req, res) => {
 exports.bulkRestoreGrns = asyncHandler(async (req, res) => {
     const result = await grnService.bulkRestoreGrns(
         req.body || {},
-        getActorId(req)
+        getActorId(req),
+        req.user
     );
     return success(res, "GRNs restored from trash.", result);
 });
 
 exports.bulkPermanentDeleteGrns = asyncHandler(async (req, res) => {
-    const result = await grnService.bulkPermanentDeleteGrns(req.body || {});
+    const result = await grnService.bulkPermanentDeleteGrns(
+        req.body || {},
+        req.user
+    );
     return success(res, "Trash GRNs permanently deleted.", result);
 });

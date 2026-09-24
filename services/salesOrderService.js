@@ -24,6 +24,12 @@ const productService = require("./productService");
 const AppError = require("../utils/appError");
 const { companyFilter, stampCompany } = require("../utils/tenantScope");
 const { assertDocumentCompany } = require("./companyService");
+const {
+    assertCanEditContent,
+    assertCanTrash,
+    assertCanManageTrashItem,
+    applyOwnTrashFilter,
+} = require("../utils/recordOwnership");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 const EDITABLE_STATUSES = ["Draft", "Pending Approval"];
@@ -1095,13 +1101,16 @@ const createSalesOrder = async (payload, actorId = null) => {
 };
 
 /** Shared list/export match filter (tenant + UI filters). */
-const buildSalesOrderListFilter = (query = {}, companyId = null) => {
+const buildSalesOrderListFilter = (query = {}, companyId = null, actor = null) => {
     const trash =
         query.deleted === "true" ||
         query.trash === "true" ||
         query.includeDeleted === "trash";
-    const filter = trash ? { isDeleted: true } : { ...NOT_DELETED };
+    let filter = trash ? { isDeleted: true } : { ...NOT_DELETED };
     Object.assign(filter, companyFilter(companyId));
+    if (trash && actor) {
+        filter = applyOwnTrashFilter(filter, actor);
+    }
 
     if (query.status) filter.status = query.status;
     if (query.customerId && toObjectId(query.customerId)) {
@@ -1144,11 +1153,11 @@ const buildSalesOrderListFilter = (query = {}, companyId = null) => {
     };
 };
 
-const getSalesOrders = async (query = {}, companyId = null) => {
+const getSalesOrders = async (query = {}, companyId = null, actor = null) => {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
     const skip = (page - 1) * limit;
-    const { filter, trash } = buildSalesOrderListFilter(query, companyId);
+    const { filter, trash } = buildSalesOrderListFilter(query, companyId, actor);
     const sort = resolveSort(query);
 
     // Lean list path: one aggregation, no line-item populate.
@@ -1208,7 +1217,8 @@ const getSalesOrders = async (query = {}, companyId = null) => {
 const getSalesOrderById = async (
     id,
     { includeDeleted = false } = {},
-    companyId = null
+    companyId = null,
+    actor = null
 ) => {
     const tenant = companyFilter(companyId);
     const filter = { _id: id, ...tenant };
@@ -1216,11 +1226,21 @@ const getSalesOrderById = async (
     const order = await populateSo(SalesOrder.findOne(filter));
     if (!order) throw new AppError("Sales order not found.", 404);
     assertDocumentCompany(order, companyId, "Sales order");
+    if (includeDeleted && order.isDeleted && actor) {
+        assertCanManageTrashItem(order, actor, "Sales order");
+    }
     return order;
 };
 
-const updateSalesOrder = async (id, payload, actorId = null, companyId = null) => {
+const updateSalesOrder = async (
+    id,
+    payload,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     const order = await findOrderOrFail(id, companyId);
+    assertCanEditContent(order, actor || { _id: actorId }, "Sales order");
     if (!EDITABLE_STATUSES.includes(order.status)) {
         throw new AppError(
             `Cannot edit a sales order in "${order.status}" status.`,
@@ -1341,8 +1361,14 @@ const updateSalesOrder = async (id, payload, actorId = null, companyId = null) =
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const deleteSalesOrder = async (id, actorId = null, companyId = null) => {
+const deleteSalesOrder = async (
+    id,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     const order = await findOrderOrFail(id, companyId);
+    assertCanTrash(order, actor || { _id: actorId }, "Sales order");
     // Stocked orders: put inventory/IMEI back so active calculations stay correct.
     await reverseStockForTrash(order, actorId);
     order.isDeleted = true;
@@ -1353,8 +1379,14 @@ const deleteSalesOrder = async (id, actorId = null, companyId = null) => {
     return order;
 };
 
-const restoreSalesOrder = async (id, actorId = null, companyId = null) => {
+const restoreSalesOrder = async (
+    id,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     const order = await findDeletedOrderOrFail(id, companyId);
+    assertCanManageTrashItem(order, actor || { _id: actorId }, "Sales order");
     order.isDeleted = false;
     order.deletedAt = null;
     order.deletedBy = null;
@@ -1368,8 +1400,18 @@ const restoreSalesOrder = async (id, actorId = null, companyId = null) => {
     return populateSo(SalesOrder.findById(order._id));
 };
 
-const permanentDeleteSalesOrder = async (id, actorId = null, companyId = null) => {
+const permanentDeleteSalesOrder = async (
+    id,
+    actorId = null,
+    companyId = null,
+    actor = null
+) => {
     const order = await findDeletedOrderOrFail(id, companyId);
+    assertCanManageTrashItem(
+        order,
+        actor || { _id: actorId },
+        "Sales order"
+    );
     // Must already be in trash. Hard-delete document.
     await SalesOrder.deleteOne({ _id: order._id, isDeleted: true });
     return { id: String(order._id), orderNumber: order.orderNumber };
@@ -1382,10 +1424,12 @@ const permanentDeleteSalesOrder = async (id, actorId = null, companyId = null) =
 const bulkDeleteSalesOrders = async (
     { ids = [], scope = "ids", status } = {},
     actorId = null,
-    companyId = null
+    companyId = null,
+    actor = null
 ) => {
     const filter = { ...NOT_DELETED, ...companyFilter(companyId) };
     const scopeKey = String(scope || "ids").toLowerCase();
+    const ownershipActor = actor || (actorId ? { _id: actorId } : null);
 
     if (scopeKey === "ids") {
         const objectIds = (ids || [])
@@ -1420,6 +1464,9 @@ const bulkDeleteSalesOrders = async (
     const errors = [];
     for (const order of orders) {
         try {
+            if (ownershipActor) {
+                assertCanTrash(order, ownershipActor, "Sales order");
+            }
             await reverseStockForTrash(order, actorId);
             order.isDeleted = true;
             order.deletedAt = new Date();
@@ -1442,10 +1489,15 @@ const bulkDeleteSalesOrders = async (
 const bulkRestoreSalesOrders = async (
     { ids = [], scope = "ids", status } = {},
     actorId = null,
-    companyId = null
+    companyId = null,
+    actor = null
 ) => {
-    const filter = { isDeleted: true, ...companyFilter(companyId) };
+    let filter = { isDeleted: true, ...companyFilter(companyId) };
     const scopeKey = String(scope || "ids").toLowerCase();
+    const ownershipActor = actor || (actorId ? { _id: actorId } : null);
+    if (ownershipActor) {
+        filter = applyOwnTrashFilter(filter, ownershipActor);
+    }
 
     if (scopeKey === "ids") {
         const objectIds = (ids || [])
@@ -1472,6 +1524,9 @@ const bulkRestoreSalesOrders = async (
     const orders = await SalesOrder.find(filter);
     let restored = 0;
     for (const order of orders) {
+        if (ownershipActor) {
+            assertCanManageTrashItem(order, ownershipActor, "Sales order");
+        }
         order.isDeleted = false;
         order.deletedAt = null;
         order.deletedBy = null;
@@ -1489,10 +1544,15 @@ const bulkRestoreSalesOrders = async (
 const bulkPermanentDeleteSalesOrders = async (
     { ids = [], scope = "ids" } = {},
     actorId = null,
-    companyId = null
+    companyId = null,
+    actor = null
 ) => {
-    const filter = { isDeleted: true, ...companyFilter(companyId) };
+    let filter = { isDeleted: true, ...companyFilter(companyId) };
     const scopeKey = String(scope || "ids").toLowerCase();
+    const ownershipActor = actor || (actorId ? { _id: actorId } : null);
+    if (ownershipActor) {
+        filter = applyOwnTrashFilter(filter, ownershipActor);
+    }
 
     if (scopeKey === "ids") {
         const objectIds = (ids || [])
@@ -1509,6 +1569,13 @@ const bulkPermanentDeleteSalesOrders = async (
         // purge entire trash
     } else {
         throw new AppError("Invalid permanent-delete scope.", 400);
+    }
+
+    if (ownershipActor) {
+        const docs = await SalesOrder.find(filter).select("_id createdBy");
+        for (const doc of docs) {
+            assertCanManageTrashItem(doc, ownershipActor, "Sales order");
+        }
     }
 
     const result = await SalesOrder.deleteMany(filter);
@@ -2724,8 +2791,10 @@ const getBranchCatalog = async (query = {}, companyId = null) => {
     return { items, total: items.length };
 };
 
-const getSalesOrderStats = async (companyId = null) => {
+const getSalesOrderStats = async (companyId = null, actor = null) => {
     const tenant = companyFilter(companyId);
+    let trashFilter = { isDeleted: true, ...tenant };
+    if (actor) trashFilter = applyOwnTrashFilter(trashFilter, actor);
     const [[rows], trashCount] = await Promise.all([
         SalesOrder.aggregate([
             { $match: { ...NOT_DELETED, ...tenant } },
@@ -2770,7 +2839,7 @@ const getSalesOrderStats = async (companyId = null) => {
                 }
             }
         ]),
-        SalesOrder.countDocuments({ isDeleted: true, ...tenant })
+        SalesOrder.countDocuments(trashFilter)
     ]);
 
     return {
@@ -2798,7 +2867,7 @@ const exportSalesOrdersExcel = async (
     companyId = null,
     actor = null
 ) => {
-    const { filter, trash } = buildSalesOrderListFilter(query, companyId);
+    const { filter, trash } = buildSalesOrderListFilter(query, companyId, actor);
     const total = await SalesOrder.countDocuments(filter);
     if (total > MAX_EXPORT_ORDERS) {
         throw new AppError(
