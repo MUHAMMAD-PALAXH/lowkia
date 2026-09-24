@@ -29,7 +29,7 @@ const cloverConnectionSchema = new mongoose.Schema(
         environment: {
             type: String,
             enum: ["sandbox", "production"],
-            default: "sandbox",
+            default: "production",
             index: true,
         },
 

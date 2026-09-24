@@ -5,6 +5,7 @@ const AppError = require("../utils/appError");
 const { ensureUserCompany } = require("./companyService");
 const {
     getCloverEnv,
+    resolveCloverEnvironment,
     getCloverAuthorizeBaseUrl,
     getCloverOAuthApiBaseUrl,
     getCloverAppId,
@@ -113,8 +114,7 @@ const handleOAuthCallback = async (query = {}) => {
         });
     }
 
-    conn.environment =
-        state.env === "production" ? "production" : getCloverEnv();
+    conn.environment = resolveCloverEnvironment(state.env);
     if (merchantId) conn.merchantId = merchantId;
     conn.accessTokenEnc = encryptSecret(tokens.access_token);
     if (tokens.refresh_token) {

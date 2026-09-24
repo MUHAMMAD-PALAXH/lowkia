@@ -1,12 +1,21 @@
 /**
  * Clover REST Pay Display / OAuth env (US).
+ * Default = production (real merchant / live cards).
+ * Set CLOVER_ENV=sandbox only for test merchants.
  * All endpoints overridable for sandbox vs production.
  */
 const getCloverEnv = () =>
-    String(process.env.CLOVER_ENV || "sandbox").trim().toLowerCase() ===
-    "production"
-        ? "production"
-        : "sandbox";
+    String(process.env.CLOVER_ENV || "production").trim().toLowerCase() ===
+    "sandbox"
+        ? "sandbox"
+        : "production";
+
+/** Prefer explicit request/connection value; else CLOVER_ENV. */
+const resolveCloverEnvironment = (value) => {
+    const v = String(value || "").trim().toLowerCase();
+    if (v === "production" || v === "sandbox") return v;
+    return getCloverEnv();
+};
 
 const getCloverConnectBaseUrl = () => {
     if (process.env.CLOVER_CONNECT_BASE_URL) {
@@ -84,6 +93,7 @@ const isCloverOAuthReady = () =>
 
 module.exports = {
     getCloverEnv,
+    resolveCloverEnvironment,
     getCloverConnectBaseUrl,
     getCloverAuthorizeBaseUrl,
     getCloverOAuthApiBaseUrl,

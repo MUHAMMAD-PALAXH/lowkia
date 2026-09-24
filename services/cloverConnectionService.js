@@ -3,7 +3,7 @@ const AppError = require("../utils/appError");
 const { ensureUserCompany } = require("./companyService");
 const { encryptSecret, decryptSecret } = require("../utils/secretCrypto");
 const {
-    getCloverEnv,
+    resolveCloverEnvironment,
     getDefaultPosId,
     getCloverRaid,
 } = require("../config/clover");
@@ -99,8 +99,7 @@ const upsertConnection = async (payload = {}, user) => {
         });
     }
 
-    conn.environment =
-        payload.environment === "production" ? "production" : getCloverEnv();
+    conn.environment = resolveCloverEnvironment(payload.environment);
     conn.merchantId = merchantId;
     conn.merchantName = String(payload.merchantName || "").trim();
     conn.posId = String(payload.posId || getDefaultPosId()).trim();
