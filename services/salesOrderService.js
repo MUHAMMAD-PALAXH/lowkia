@@ -1149,28 +1149,49 @@ const getSalesOrders = async (query = {}, companyId = null) => {
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 200);
     const skip = (page - 1) * limit;
     const { filter, trash } = buildSalesOrderListFilter(query, companyId);
-
     const sort = resolveSort(query);
-    const [rawItems, total] = await Promise.all([
-        SalesOrder.aggregate([
-            { $match: filter },
-            {
-                $addFields: {
-                    itemCount: { $size: { $ifNull: ["$items", []] } }
-                }
+
+    // Lean list path: one aggregation, no line-item populate.
+    // Dashboard hydrates full docs via GET /:id when printing/editing.
+    const [facet] = await SalesOrder.aggregate([
+        { $match: filter },
+        {
+            $addFields: {
+                itemCount: { $size: { $ifNull: ["$items", []] } },
+                totalQty: {
+                    $sum: {
+                        $map: {
+                            input: { $ifNull: ["$items", []] },
+                            as: "line",
+                            in: { $ifNull: ["$$line.quantity", 0] },
+                        },
+                    },
+                },
             },
-            { $sort: sort },
-            { $skip: skip },
-            { $limit: limit },
-            { $project: { itemCount: 0 } }
-        ]),
-        SalesOrder.countDocuments(filter)
+        },
+        {
+            $facet: {
+                items: [
+                    { $sort: sort },
+                    { $skip: skip },
+                    { $limit: limit },
+                    {
+                        $project: {
+                            items: 0,
+                            customerNote: 0,
+                            internalNote: 0,
+                            deliveryAddress: 0,
+                            __v: 0,
+                        },
+                    },
+                ],
+                total: [{ $count: "count" }],
+            },
+        },
     ]);
 
-    const ids = rawItems.map((r) => r._id);
-    const populated = await populateSo(SalesOrder.find({ _id: { $in: ids } }));
-    const byId = new Map(populated.map((p) => [String(p._id), p]));
-    const items = ids.map((id) => byId.get(String(id))).filter(Boolean);
+    const items = facet?.items || [];
+    const total = facet?.total?.[0]?.count || 0;
 
     return {
         items,
@@ -1178,9 +1199,9 @@ const getSalesOrders = async (query = {}, companyId = null) => {
             page,
             limit,
             total,
-            pages: Math.ceil(total / limit) || 1
+            pages: Math.ceil(total / limit) || 1,
         },
-        trash
+        trash,
     };
 };
 

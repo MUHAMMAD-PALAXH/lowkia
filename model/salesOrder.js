@@ -782,6 +782,11 @@ salesOrderSchema.index({ invoiceId:1 });
 
 salesOrderSchema.index({ isDeleted:1 });
 
+// Tenant list: newest / trash scoped by company
+salesOrderSchema.index({ companyId: 1, isDeleted: 1, createdAt: -1 });
+salesOrderSchema.index({ companyId: 1, isDeleted: 1, orderDate: -1 });
+salesOrderSchema.index({ companyId: 1, isDeleted: 1, status: 1, createdAt: -1 });
+
 // ==========================================================
 // INSTANCE METHODS
 // ==========================================================
