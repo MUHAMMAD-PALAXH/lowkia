@@ -64,7 +64,7 @@ const branchSchema = new mongoose.Schema(
 
         country: {
             type: String,
-            default: "Bangladesh",
+            default: "United States",
             trim: true
         },
 
