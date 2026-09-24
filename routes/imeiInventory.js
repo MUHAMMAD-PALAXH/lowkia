@@ -163,14 +163,79 @@ router.get('/transfer/resolve/:imei', vendorOrAdmin, asyncHandler(async (req, re
 
   const tenant = companyFilter(req.companyId);
   const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const item = await ItemTrack.findOne({
-    imei: { $regex: `^${escaped}$`, $options: 'i' },
+  const imeiExact = { $regex: `^${escaped}$`, $options: 'i' };
+
+  let item = await ItemTrack.findOne({
+    imei: imeiExact,
     ...tenant
   })
     .populate('productId', 'name productCode trackingType branchIds branchId')
     .populate('variantId', 'sku combinationString')
     .populate('currentBranchId', 'name branchCode')
     .lean();
+
+  // Product dashboard barcode (EAN) — resolve to an available unit at source.
+  if (!item) {
+    const Product = require('../model/product');
+    const barcodeExact = { $regex: `^${escaped}$`, $options: 'i' };
+    let productDoc = await Product.findOne({
+      barcode: barcodeExact,
+      ...tenant,
+      isDeleted: { $ne: true }
+    })
+      .select('_id name trackingType branchIds branchId')
+      .lean();
+    let variantDoc = null;
+    if (!productDoc) {
+      variantDoc = await ProductVariant.findOne({
+        barcode: barcodeExact,
+        ...tenant,
+        isDeleted: { $ne: true }
+      })
+        .select('_id productId sku combinationString')
+        .lean();
+      if (variantDoc?.productId) {
+        productDoc = await Product.findOne({
+          _id: variantDoc.productId,
+          ...tenant,
+          isDeleted: { $ne: true }
+        })
+          .select('_id name trackingType branchIds branchId')
+          .lean();
+      }
+    }
+
+    if (productDoc) {
+      const trackQuery = {
+        productId: productDoc._id,
+        status: { $regex: /^available$/i },
+        ...tenant,
+        $or: [
+          { currentBranchId: fromBranchId },
+          { currentBranchId: null },
+          { currentBranchId: { $exists: false } }
+        ]
+      };
+      if (variantDoc?._id) trackQuery.variantId = variantDoc._id;
+
+      item = await ItemTrack.findOne(trackQuery)
+        .populate('productId', 'name productCode trackingType branchIds branchId')
+        .populate('variantId', 'sku combinationString')
+        .populate('currentBranchId', 'name branchCode')
+        .lean();
+
+      if (!item) {
+        const isNonImei =
+          String(productDoc.trackingType || '').toLowerCase() !== 'imei';
+        return res.status(404).json({
+          success: false,
+          message: isNonImei
+            ? `${raw} is a Non-IMEI product barcode. Stock transfer needs an available IMEI/serial unit at the source branch.`
+            : `No available unit at the source branch for barcode ${raw}.`
+        });
+      }
+    }
+  }
 
   if (!item) {
     return res.status(404).json({
