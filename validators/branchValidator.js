@@ -106,6 +106,12 @@ const createBranchValidator = [
         .optional({ checkFalsy: true })
         .isMongoId()
         .withMessage("Invalid managerId."),
+    body("managerName")
+        .optional({ nullable: true })
+        .isString()
+        .trim()
+        .isLength({ max: 120 })
+        .withMessage("Manager name must be at most 120 characters."),
     body("description")
         .optional({ nullable: true })
         .isString(),
@@ -156,6 +162,12 @@ const updateBranchValidator = [
     body("managerId")
         .optional({ checkFalsy: true })
         .isMongoId(),
+    body("managerName")
+        .optional({ nullable: true })
+        .isString()
+        .trim()
+        .isLength({ max: 120 })
+        .withMessage("Manager name must be at most 120 characters."),
     body("branchCode")
         .not()
         .exists()

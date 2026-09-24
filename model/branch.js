@@ -44,6 +44,12 @@ const branchSchema = new mongoose.Schema(
             default: null
         },
 
+        managerName: {
+            type: String,
+            default: "",
+            trim: true
+        },
+
         // ==========================================================
         // Address
         // ==========================================================

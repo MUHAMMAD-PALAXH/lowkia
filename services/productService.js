@@ -1431,6 +1431,9 @@ const getProducts = async (query = {}, companyId = null) => {
     const supplierId = toObjectId(query.supplierId);
     if (supplierId) filter["suppliers.supplierId"] = supplierId;
 
+    const branchId = toObjectId(query.branchId || query.branch);
+    if (branchId) filter.branchIds = branchId;
+
     if (query.search) {
         const search = escapeRegex(String(query.search).trim());
         filter.$or = [
@@ -2944,7 +2947,8 @@ const refreshStockSummary = async (id) => {
 
 const getProductStats = async (companyId = null) => {
     const tenant = companyFilter(companyId);
-    const [[rows], trashCount] = await Promise.all([
+    const Branch = require("../model/branch");
+    const [[rows], trashCount, branchCount] = await Promise.all([
         Product.aggregate([
         { $match: { ...NOT_DELETED, ...tenant } },
         {
@@ -2980,7 +2984,8 @@ const getProductStats = async (companyId = null) => {
             }
         }
         ]),
-        Product.countDocuments({ isDeleted: true, ...tenant })
+        Product.countDocuments({ isDeleted: true, ...tenant }),
+        Branch.countDocuments({ isDeleted: { $ne: true }, ...tenant })
     ]);
 
     return {
@@ -2997,7 +3002,8 @@ const getProductStats = async (companyId = null) => {
             lowStock: 0,
             stockValue: 0
         }),
-        trashCount
+        trashCount,
+        branchCount
     };
 };
 
@@ -3141,6 +3147,9 @@ const exportProductsExcel = async (
 
     const supplierId = toObjectId(query.supplierId);
     if (supplierId) filter["suppliers.supplierId"] = supplierId;
+
+    const branchId = toObjectId(query.branchId || query.branch);
+    if (branchId) filter.branchIds = branchId;
 
     if (query.search) {
         const search = escapeRegex(String(query.search).trim());

@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Branch = require("../model/branch");
 const Warehouse = require("../model/warehouse");
+const Product = require("../model/product");
 const { generateBranchCode } = require("./codeGenerator");
 const AppError = require("../utils/appError");
 const { createTrashOps, isTrashQuery } = require("../utils/softDeleteTrash");
@@ -295,17 +296,20 @@ const getBranches = async (query = {}, companyId = null) => {
             { city: { $regex: search, $options: "i" } },
             { phone: { $regex: search, $options: "i" } },
             { email: { $regex: search, $options: "i" } },
+            { managerName: { $regex: search, $options: "i" } },
             { address: { $regex: search, $options: "i" } }
         ];
     }
 
     const sort = trash.resolveEntitySort(query);
-    const [items, total] = await Promise.all([
+    const [rawItems, total] = await Promise.all([
         populateBranch(
             Branch.find(filter).sort(sort).skip(skip).limit(limit)
         ),
         Branch.countDocuments(filter)
     ]);
+
+    const items = await attachBranchProductCounts(rawItems, companyId);
 
     return {
         items,
@@ -317,6 +321,40 @@ const getBranches = async (query = {}, companyId = null) => {
         },
         trash: trashMode
     };
+};
+
+const attachBranchProductCounts = async (branches, companyId = null) => {
+    const list = (branches || []).map((branch) =>
+        branch && typeof branch.toObject === "function"
+            ? branch.toObject()
+            : { ...(branch || {}) }
+    );
+    if (!list.length) return list;
+
+    const ids = list.map((b) => b._id).filter(Boolean);
+    if (!ids.length) {
+        for (const branch of list) branch.totalProducts = 0;
+        return list;
+    }
+
+    const rows = await Product.aggregate([
+        {
+            $match: {
+                ...NOT_DELETED,
+                ...companyFilter(companyId),
+                branchIds: { $in: ids }
+            }
+        },
+        { $unwind: "$branchIds" },
+        { $match: { branchIds: { $in: ids } } },
+        { $group: { _id: "$branchIds", count: { $sum: 1 } } }
+    ]);
+
+    const counts = new Map(rows.map((row) => [String(row._id), row.count]));
+    for (const branch of list) {
+        branch.totalProducts = counts.get(String(branch._id)) || 0;
+    }
+    return list;
 };
 
 const getBranchById = async (id, companyId = null) => {

@@ -228,6 +228,8 @@ const listProductValidator = [
     query("proSubCategoryId").optional().isMongoId(),
     query("proBrandId").optional().isMongoId(),
     query("supplierId").optional().isMongoId(),
+    query("branchId").optional().isMongoId(),
+    query("branch").optional().isMongoId(),
     query("search").optional().isString().trim(),
     query("deleted").optional().isIn(["true", "false"]),
     query("trash").optional().isIn(["true", "false"]),
