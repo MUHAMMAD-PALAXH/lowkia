@@ -143,6 +143,113 @@ router.get('/transfers/history', vendorOrAdmin, asyncHandler(async (req, res) =>
   res.json({ success: true, data: items });
 }));
 
+/**
+ * Resolve one IMEI/barcode for branch dispatch.
+ * Accepts units already at the source branch, or unassigned available units
+ * whose product is linked to that source (product-form IMEIs often had no branch).
+ */
+router.get('/transfer/resolve/:imei', vendorOrAdmin, asyncHandler(async (req, res) => {
+  const raw = String(req.params.imei || '').trim();
+  const fromBranchId = String(req.query.fromBranchId || '').trim();
+  if (!raw) {
+    return res.status(400).json({ success: false, message: 'IMEI is required.' });
+  }
+  if (!fromBranchId || !mongoose.Types.ObjectId.isValid(fromBranchId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'A valid source branch is required.'
+    });
+  }
+
+  const tenant = companyFilter(req.companyId);
+  const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const item = await ItemTrack.findOne({
+    imei: { $regex: `^${escaped}$`, $options: 'i' },
+    ...tenant
+  })
+    .populate('productId', 'name productCode trackingType branchIds branchId')
+    .populate('variantId', 'sku combinationString')
+    .populate('currentBranchId', 'name branchCode')
+    .lean();
+
+  if (!item) {
+    return res.status(404).json({
+      success: false,
+      message: `${raw} was not found in inventory.`
+    });
+  }
+
+  if (String(item.status || '').toLowerCase() !== 'available') {
+    return res.status(409).json({
+      success: false,
+      message: `${raw} is ${item.status || 'not available'}.`
+    });
+  }
+
+  const product = item.productId && typeof item.productId === 'object'
+    ? item.productId
+    : null;
+  const productId = product?._id || item.productId;
+  const variantId =
+    (item.variantId && item.variantId._id) || item.variantId || null;
+
+  if (!productId || !variantId) {
+    return res.status(409).json({
+      success: false,
+      message: `Product or variant could not be resolved for ${raw}.`
+    });
+  }
+
+  const trackBranchId = item.currentBranchId
+    ? String(item.currentBranchId._id || item.currentBranchId)
+    : '';
+  const productBranchIds = [
+    ...(Array.isArray(product?.branchIds) ? product.branchIds : []),
+    product?.branchId
+  ]
+    .filter(Boolean)
+    .map((id) => String(id));
+
+  if (trackBranchId && trackBranchId !== fromBranchId) {
+    const branchName =
+      item.currentBranchId?.name ||
+      item.currentBranchId?.branchCode ||
+      'another branch';
+    return res.status(409).json({
+      success: false,
+      message: `${raw} is at ${branchName}, not the selected source branch.`
+    });
+  }
+
+  if (
+    !trackBranchId &&
+    productBranchIds.length > 0 &&
+    !productBranchIds.includes(fromBranchId)
+  ) {
+    return res.status(409).json({
+      success: false,
+      message: `${raw} is not linked to the selected source branch.`
+    });
+  }
+
+  const resolvedBranchId = trackBranchId || fromBranchId;
+
+  res.json({
+    success: true,
+    data: {
+      imei: item.imei,
+      productId,
+      variantId,
+      currentBranchId: resolvedBranchId,
+      productName: product?.name || '',
+      variantName:
+        item.variantId?.combinationString || item.variantId?.sku || '',
+      status: item.status,
+      productBranchIds
+    }
+  });
+}));
+
 // Dispatch only when every IMEI belongs to the selected product, variant and
 // source branch. Partial updates are rejected to keep a manifest atomic.
 router.put('/transfer/dispatch', vendorOrAdmin, asyncHandler(async (req, res) => {
@@ -193,9 +300,13 @@ router.put('/transfer/dispatch', vendorOrAdmin, asyncHandler(async (req, res) =>
       imei: { $in: cleanImeis },
       productId,
       variantId,
-      currentBranchId: fromBranchId,
       status: 'available',
-      ...tenant
+      ...tenant,
+      $or: [
+        { currentBranchId: fromBranchId },
+        { currentBranchId: null },
+        { currentBranchId: { $exists: false } }
+      ]
     }).lean()
   ]);
   if (!fromBranch || !toBranch) {
@@ -204,12 +315,65 @@ router.put('/transfer/dispatch', vendorOrAdmin, asyncHandler(async (req, res) =>
       message: 'Source or target branch was not found.'
     });
   }
-  if (tracks.length !== cleanImeis.length) {
-    const found = new Set(tracks.map((item) => item.imei));
-    const invalid = cleanImeis.filter((imei) => !found.has(imei));
+
+  const Product = require('../model/product');
+  const product = await Product.findOne({
+    _id: productId,
+    ...tenant,
+    isDeleted: { $ne: true }
+  })
+    .select('branchIds branchId name')
+    .lean();
+  if (!product) {
+    return res.status(404).json({
+      success: false,
+      message: 'Product was not found.'
+    });
+  }
+
+  const productBranchIds = [
+    ...(Array.isArray(product.branchIds) ? product.branchIds : []),
+    product.branchId
+  ]
+    .filter(Boolean)
+    .map((id) => String(id));
+  const sourceAllowed =
+    productBranchIds.length === 0 ||
+    productBranchIds.includes(String(fromBranchId));
+
+  const validTracks = [];
+  const invalid = [];
+  const foundByImei = new Map(
+    tracks.map((item) => [String(item.imei || '').trim().toUpperCase(), item])
+  );
+
+  for (const rawImei of cleanImeis) {
+    const key = String(rawImei || '').trim().toUpperCase();
+    const track = foundByImei.get(key);
+    if (!track) {
+      invalid.push(rawImei);
+      continue;
+    }
+    const trackBranch = track.currentBranchId
+      ? String(track.currentBranchId)
+      : '';
+    if (trackBranch && trackBranch !== String(fromBranchId)) {
+      invalid.push(rawImei);
+      continue;
+    }
+    if (!trackBranch && !sourceAllowed) {
+      invalid.push(rawImei);
+      continue;
+    }
+    validTracks.push(track);
+  }
+
+  if (invalid.length || validTracks.length !== cleanImeis.length) {
     return res.status(409).json({
       success: false,
-      message: `These IMEIs are not available at the source branch: ${invalid.join(', ')}`
+      message: `These IMEIs are not available at the source branch: ${
+        invalid.length ? invalid.join(', ') : cleanImeis.join(', ')
+      }`
     });
   }
 
@@ -226,10 +390,11 @@ router.put('/transfer/dispatch', vendorOrAdmin, asyncHandler(async (req, res) =>
   }, req.companyId));
 
   await ItemTrack.updateMany(
-    { _id: { $in: tracks.map((item) => item._id) }, status: 'available', ...tenant },
+    { _id: { $in: validTracks.map((item) => item._id) }, status: 'available', ...tenant },
     {
       $set: {
         status: 'in-transit',
+        currentBranchId: fromBranchId,
         transferInfo: {
           transferId: transfer._id,
           transferNumber,

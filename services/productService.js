@@ -992,7 +992,13 @@ const syncVariants = async (product, variantsInput, actorId = null) => {
                                     productId: product._id,
                                     variantId: variantDoc._id,
                                     vendorId,
-                                    status: "available"
+                                    status: "available",
+                                    currentBranchId:
+                                        toObjectId(
+                                            (product.branchIds || [])[0]
+                                        ) ||
+                                        toObjectId(product.branchId) ||
+                                        null
                                 },
                                 product.companyId
                             )
