@@ -211,6 +211,7 @@ const getCustomerOrderDetail = async (masterOrderId, userId) => {
     const masterOrder = await MasterOrder.findOne({
         _id: toObjectId(masterOrderId),
         userId: toObjectId(userId),
+        hiddenFromCustomer: { $ne: true },
         ...NOT_DELETED,
     }).lean();
 
@@ -320,7 +321,11 @@ const listMasterOrders = async (userId, query = {}) => {
         surface: "customer",
     });
 
-    const filter = { userId: toObjectId(userId), ...NOT_DELETED };
+    const filter = {
+        userId: toObjectId(userId),
+        hiddenFromCustomer: { $ne: true },
+        ...NOT_DELETED,
+    };
     if (query.status) {
         if (!MASTER_ORDER_STATUSES.includes(query.status)) {
             throw new AppError("Invalid order status filter.", 400);
@@ -424,11 +429,49 @@ const getCompanyOrder = async (userId, masterOrderId, companyOrderId) => {
     };
 };
 
+/**
+ * Soft-hide an order from the customer history only.
+ * Does not cancel fulfillment, payment, or seller visibility.
+ */
+const hideOrderFromCustomer = async (userId, masterOrderId) => {
+    const id = toObjectId(masterOrderId);
+    if (!id) throw new AppError("Invalid order id.", 400);
+
+    const order = await MasterOrder.findOne({
+        _id: id,
+        userId: toObjectId(userId),
+        ...NOT_DELETED,
+    });
+
+    if (!order) throw new AppError("Order not found.", 404);
+
+    if (order.hiddenFromCustomer) {
+        return {
+            id: order._id,
+            orderNumber: order.orderNumber,
+            hiddenFromCustomer: true,
+            hiddenFromCustomerAt: order.hiddenFromCustomerAt,
+        };
+    }
+
+    order.hiddenFromCustomer = true;
+    order.hiddenFromCustomerAt = new Date();
+    await order.save();
+
+    return {
+        id: order._id,
+        orderNumber: order.orderNumber,
+        hiddenFromCustomer: true,
+        hiddenFromCustomerAt: order.hiddenFromCustomerAt,
+    };
+};
+
 module.exports = {
     getCustomerOrderDetail,
     listMasterOrders,
     getMasterOrder,
     getCompanyOrder,
+    hideOrderFromCustomer,
     formatCustomerOrderItem,
     formatCustomerShipment,
     buildFulfillmentSummary,

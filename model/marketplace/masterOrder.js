@@ -60,6 +60,9 @@ const masterOrderSchema = new mongoose.Schema(
         cancelReason: { type: String, default: "", trim: true },
         idempotencyKey: { type: String, default: "", trim: true },
         inventoryReservedAt: { type: Date, default: null },
+        /** Soft-hide for the customer app only — sellers/admin still see the order. */
+        hiddenFromCustomer: { type: Boolean, default: false, index: true },
+        hiddenFromCustomerAt: { type: Date, default: null },
         isDeleted: { type: Boolean, default: false, index: true },
     },
     { timestamps: true, versionKey: false }

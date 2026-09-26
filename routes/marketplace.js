@@ -134,6 +134,13 @@ router.get(
     validate,
     orderController.getOrder
 );
+router.delete(
+    "/orders/:masterOrderId",
+    protect,
+    masterOrderIdValidator,
+    validate,
+    orderController.hideOrder
+);
 router.get(
     "/orders/:masterOrderId/company-orders/:companyOrderId",
     protect,

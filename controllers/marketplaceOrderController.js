@@ -29,3 +29,11 @@ exports.getCompanyOrder = asyncHandler(async (req, res) => {
     );
     return success(res, "Company order retrieved.", data);
 });
+
+exports.hideOrder = asyncHandler(async (req, res) => {
+    const data = await orderService.hideOrderFromCustomer(
+        req.user._id,
+        req.params.masterOrderId
+    );
+    return success(res, "Order removed from your history.", data);
+});
