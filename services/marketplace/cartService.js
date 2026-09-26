@@ -13,14 +13,49 @@ const activeCartFilter = (userId) => ({
     ...NOT_DELETED,
 });
 
+/**
+ * One MarketplaceCart document per user (userId unique). After checkout the
+ * same row is marked checked_out — never insert a second cart (that throws
+ * E11000 and surfaces as "A record with this code already exists").
+ * Re-open the existing cart with all prior lines soft-deleted / qty 0.
+ */
 const getOrCreateCart = async (userId) => {
     let cart = await MarketplaceCart.findOne(activeCartFilter(userId));
     if (cart) return cart;
 
-    // Never revive a checked_out cart — soft-deleted lines from the previous
-    // order can be restored with stale quantities and look like "random"
-    // products reappearing. Always start a fresh active cart.
-    return MarketplaceCart.create({ userId, status: "active" });
+    const existing = await MarketplaceCart.findOne({ userId });
+    if (existing) {
+        // Ensure no stale active lines survive from a prior checkout race.
+        await MarketplaceCartItem.updateMany(
+            { cartId: existing._id, isDeleted: { $ne: true } },
+            { $set: { isDeleted: true, quantity: 0, lineSubtotal: 0 } }
+        );
+        existing.status = "active";
+        existing.checkedOutAt = null;
+        existing.itemCount = 0;
+        existing.isDeleted = false;
+        existing.deletedAt = null;
+        await existing.save();
+        return existing;
+    }
+
+    try {
+        return await MarketplaceCart.create({ userId, status: "active" });
+    } catch (err) {
+        // Parallel first-add race on unique userId — load the winner.
+        if (err && (err.code === 11000 || err.code === "E11000")) {
+            cart = await MarketplaceCart.findOne(activeCartFilter(userId));
+            if (cart) return cart;
+            cart = await MarketplaceCart.findOne({ userId });
+            if (cart) {
+                cart.status = "active";
+                cart.isDeleted = false;
+                await cart.save();
+                return cart;
+            }
+        }
+        throw err;
+    }
 };
 
 const syncCartItemCount = async (cartId) => {
@@ -236,6 +271,7 @@ const addCartItem = async (userId, { productId, productVariantId = null, quantit
         existing.lineSubtotal = resolved.product.unitPrice * newQty;
         existing.isAvailable = true;
         existing.unavailableReason = "";
+        existing.isDeleted = false;
         await existing.save();
     } else {
         const lineCount = await MarketplaceCartItem.countDocuments({
@@ -250,18 +286,52 @@ const addCartItem = async (userId, { productId, productVariantId = null, quantit
             );
         }
 
-        await MarketplaceCartItem.create({
-            cartId: cart._id,
-            userId,
-            companyId: resolved.companyId,
-            seller: resolved.seller,
-            product: resolved.product,
-            quantity: qty,
-            lineSubtotal: resolved.product.unitPrice * qty,
-            lineKey: resolved.lineKey,
-            isAvailable: true,
-            unavailableReason: "",
-        });
+        try {
+            await MarketplaceCartItem.create({
+                cartId: cart._id,
+                userId,
+                companyId: resolved.companyId,
+                seller: resolved.seller,
+                product: resolved.product,
+                quantity: qty,
+                lineSubtotal: resolved.product.unitPrice * qty,
+                lineKey: resolved.lineKey,
+                isAvailable: true,
+                unavailableReason: "",
+            });
+        } catch (err) {
+            // Parallel add of the same lineKey — fold into the winner row.
+            if (!(err && (err.code === 11000 || err.code === "E11000"))) {
+                throw err;
+            }
+            const raced = await MarketplaceCartItem.findOne({
+                cartId: cart._id,
+                lineKey: resolved.lineKey,
+                ...NOT_DELETED,
+            });
+            if (!raced) throw err;
+
+            const racedQty = Number(raced.quantity) + qty;
+            const stockCheck = evaluateAvailability(
+                { allowBackorder: resolved.allowBackorder },
+                resolved.availableStock,
+                racedQty
+            );
+            if (!stockCheck.isAvailable) {
+                throw new AppError(
+                    stockCheck.reason || "Insufficient stock.",
+                    400
+                );
+            }
+            raced.quantity = racedQty;
+            raced.lineSubtotal = resolved.product.unitPrice * racedQty;
+            raced.companyId = resolved.companyId;
+            raced.seller = resolved.seller;
+            raced.product = resolved.product;
+            raced.isAvailable = true;
+            raced.unavailableReason = "";
+            await raced.save();
+        }
     }
 
     await syncCartItemCount(cart._id);
