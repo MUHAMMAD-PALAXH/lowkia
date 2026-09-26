@@ -3311,7 +3311,8 @@ const MAX_PRODUCT_CODES_EXPORT = 10000;
 
 /**
  * Export barcodes / IMEIs for selected products or the whole catalog.
- * Non-IMEI → product + variant EAN barcodes; IMEI → ItemTrack unit codes.
+ * Non-IMEI → EAN barcode repeated once per available stock unit (matches
+ * product/variant stock, same idea as sticker qty). IMEI → ItemTrack codes.
  */
 const exportProductCodes = async (
     { productIds, all = false, availableOnly = false } = {},
@@ -3322,7 +3323,9 @@ const exportProductCodes = async (
 
     if (all === true || all === "true") {
         products = await Product.find({ ...NOT_DELETED, ...tenant })
-            .select("_id name productCode trackingType barcode")
+            .select(
+                "_id name productCode trackingType barcode availableStock totalStock"
+            )
             .lean();
     } else {
         const ids = (Array.isArray(productIds) ? productIds : [])
@@ -3336,7 +3339,9 @@ const exportProductCodes = async (
             ...NOT_DELETED,
             ...tenant
         })
-            .select("_id name productCode trackingType barcode")
+            .select(
+                "_id name productCode trackingType barcode availableStock totalStock"
+            )
             .lean();
     }
 
@@ -3356,7 +3361,7 @@ const exportProductCodes = async (
               productId: { $in: nonImeiIds },
               isDeleted: { $ne: true }
           })
-              .select("productId barcode sku combinationString")
+              .select("productId barcode sku combinationString quantity")
               .lean()
         : [];
 
@@ -3365,6 +3370,42 @@ const exportProductCodes = async (
         const key = String(variant.productId);
         if (!variantsByProduct.has(key)) variantsByProduct.set(key, []);
         variantsByProduct.get(key).push(variant);
+    }
+
+    // Live warehouse qty per product + variant (Non-IMEI barcode copies).
+    const invByProductVariant = new Map();
+    const invProductTotals = new Map();
+    if (nonImeiIds.length) {
+        const invRows = await Inventory.aggregate([
+            {
+                $match: {
+                    productId: { $in: nonImeiIds },
+                    isDeleted: { $ne: true }
+                }
+            },
+            {
+                $group: {
+                    _id: {
+                        productId: "$productId",
+                        variantId: "$productVariantId"
+                    },
+                    availableStock: { $sum: "$availableStock" },
+                    currentStock: { $sum: "$currentStock" }
+                }
+            }
+        ]);
+
+        for (const row of invRows) {
+            const pid = String(row._id?.productId || "");
+            if (!pid) continue;
+            const vid = row._id?.variantId ? String(row._id.variantId) : "null";
+            const available =
+                Number(row.availableStock) || Number(row.currentStock) || 0;
+            invByProductVariant.set(`${pid}:${vid}`, available);
+
+            const prev = invProductTotals.get(pid) || 0;
+            invProductTotals.set(pid, prev + available);
+        }
     }
 
     const imeiFilter = {
@@ -3401,14 +3442,52 @@ const exportProductCodes = async (
 
     const byProduct = [];
     const codes = [];
-    const seen = new Set();
+    const seenImei = new Set();
 
-    const pushCode = (value) => {
+    const assertUnderLimit = () => {
+        if (codes.length > MAX_PRODUCT_CODES_EXPORT) {
+            throw new AppError(
+                `Too many codes to export (limit ${MAX_PRODUCT_CODES_EXPORT}). Narrow your selection.`,
+                400
+            );
+        }
+    };
+
+    /** IMEI units stay unique. */
+    const pushUniqueImei = (value) => {
         const code = String(value || "").trim();
-        if (!code || seen.has(code)) return false;
-        seen.add(code);
+        if (!code || seenImei.has(code)) return false;
+        seenImei.add(code);
         codes.push(code);
+        assertUnderLimit();
         return true;
+    };
+
+    /** Non-IMEI: same EAN once per stock unit (duplicates intentional). */
+    const pushBarcodeCopies = (value, qty) => {
+        const code = String(value || "").trim();
+        const n = Math.max(0, Math.floor(Number(qty) || 0));
+        if (!code || n < 1) return 0;
+        for (let i = 0; i < n; i++) {
+            codes.push(code);
+            assertUnderLimit();
+        }
+        return n;
+    };
+
+    const stockForVariant = (productId, variant) => {
+        const vid = variant?._id ? String(variant._id) : "null";
+        const fromInv = invByProductVariant.get(`${productId}:${vid}`) || 0;
+        const catalogQty = Math.max(Number(variant?.quantity) || 0, 0);
+        return fromInv > 0 ? fromInv : catalogQty;
+    };
+
+    const stockForSimpleProduct = (product, productId) => {
+        const fromInv = invProductTotals.get(productId) || 0;
+        if (fromInv > 0) return fromInv;
+        const available = Math.max(Number(product.availableStock) || 0, 0);
+        if (available > 0) return available;
+        return Math.max(Number(product.totalStock) || 0, 0);
     };
 
     for (const product of products) {
@@ -3420,23 +3499,27 @@ const exportProductCodes = async (
             for (const track of tracksByProduct.get(productId) || []) {
                 const imei = String(track.imei || "").trim();
                 if (!imei) continue;
-                productCodes.push(imei);
-                pushCode(imei);
+                if (pushUniqueImei(imei)) productCodes.push(imei);
             }
         } else {
             const productBarcode = String(product.barcode || "").trim();
             const productVariants = variantsByProduct.get(productId) || [];
+
             if (productVariants.length) {
+                // One sticker-line per variant unit — never also append the
+                // product barcode once (that desynced list length from stock).
                 for (const variant of productVariants) {
-                    const barcode = String(variant.barcode || "").trim();
+                    const barcode =
+                        String(variant.barcode || "").trim() || productBarcode;
                     if (!barcode) continue;
-                    productCodes.push(barcode);
-                    pushCode(barcode);
+                    const qty = stockForVariant(productId, variant);
+                    for (let i = 0; i < qty; i++) productCodes.push(barcode);
+                    pushBarcodeCopies(barcode, qty);
                 }
-            }
-            if (productBarcode) {
-                productCodes.push(productBarcode);
-                pushCode(productBarcode);
+            } else if (productBarcode) {
+                const qty = stockForSimpleProduct(product, productId);
+                for (let i = 0; i < qty; i++) productCodes.push(productBarcode);
+                pushBarcodeCopies(productBarcode, qty);
             }
         }
 
@@ -3445,8 +3528,8 @@ const exportProductCodes = async (
             name: product.name || "",
             productCode: product.productCode || "",
             trackingType,
-            codes: [...new Set(productCodes)],
-            count: [...new Set(productCodes)].length
+            codes: productCodes,
+            count: productCodes.length
         });
     }
 
