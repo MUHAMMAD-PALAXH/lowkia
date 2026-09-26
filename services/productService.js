@@ -2169,12 +2169,27 @@ const seedManualOpeningInventory = async (product, actorId = null) => {
         }
     }
 
+    await _ensureUnitsAfterOpening(product);
+
     return {
         seeded: seededRows > 0 || adjustedRows > 0,
         seededRows,
         adjustedRows,
         warehouseId
     };
+};
+
+const _ensureUnitsAfterOpening = async (product) => {
+    if (!product?._id || isImeiTracking(product.trackingType)) return;
+    try {
+        const unitBarcodeService = require("./productUnitBarcodeService");
+        await unitBarcodeService.ensureProductUnits(
+            product._id,
+            product.companyId
+        );
+    } catch (_) {
+        // Opening stock still succeeds; export/print will reconcile later.
+    }
 };
 
 const backfillManualOpeningInventory = async (companyId = null) => {
@@ -2504,7 +2519,28 @@ const getProductByBarcode = async (barcode, companyId = null) => {
         ...tenant
     });
 
-    if (!variant) throw new AppError("No product found for this barcode.", 404);
+    if (!variant) {
+        const unitBarcodeService = require("./productUnitBarcodeService");
+        const unit = await unitBarcodeService.findProductByUnitBarcode(
+            value,
+            companyId
+        );
+        if (!unit) {
+            throw new AppError("No product found for this barcode.", 404);
+        }
+        const byUnit = await populateProduct(
+            Product.findOne({
+                _id: unit.productId,
+                ...NOT_DELETED,
+                ...tenant,
+            })
+        );
+        if (!byUnit) {
+            throw new AppError("No product found for this barcode.", 404);
+        }
+        assertDocumentCompany(byUnit, companyId, "Product");
+        return byUnit;
+    }
 
     const byVariant = await populateProduct(
         Product.findOne({ _id: variant.productId, ...NOT_DELETED, ...tenant })
@@ -3311,11 +3347,19 @@ const MAX_PRODUCT_CODES_EXPORT = 10000;
 
 /**
  * Export barcodes / IMEIs for selected products or the whole catalog.
- * Non-IMEI → EAN barcode repeated once per available stock unit (matches
- * product/variant stock, same idea as sticker qty). IMEI → ItemTrack codes.
+ * Non-IMEI → unique per-unit EAN barcodes (ProductUnitBarcode).
+ * IMEI → ItemTrack unit codes.
+ *
+ * barcodeStatus: all | available | sold
+ * availableOnly (legacy): maps to available for both types when true.
  */
 const exportProductCodes = async (
-    { productIds, all = false, availableOnly = false } = {},
+    {
+        productIds,
+        all = false,
+        availableOnly = false,
+        barcodeStatus = "all",
+    } = {},
     companyId = null
 ) => {
     const tenant = companyFilter(companyId);
@@ -3323,9 +3367,7 @@ const exportProductCodes = async (
 
     if (all === true || all === "true") {
         products = await Product.find({ ...NOT_DELETED, ...tenant })
-            .select(
-                "_id name productCode trackingType barcode availableStock totalStock"
-            )
+            .select("_id name productCode trackingType barcode")
             .lean();
     } else {
         const ids = (Array.isArray(productIds) ? productIds : [])
@@ -3337,11 +3379,9 @@ const exportProductCodes = async (
         products = await Product.find({
             _id: { $in: ids },
             ...NOT_DELETED,
-            ...tenant
+            ...tenant,
         })
-            .select(
-                "_id name productCode trackingType barcode availableStock totalStock"
-            )
+            .select("_id name productCode trackingType barcode")
             .lean();
     }
 
@@ -3356,64 +3396,50 @@ const exportProductCodes = async (
         .filter((p) => p.trackingType === "IMEI")
         .map((p) => p._id);
 
-    const variants = nonImeiIds.length
-        ? await ProductVariant.find({
-              productId: { $in: nonImeiIds },
-              isDeleted: { $ne: true }
-          })
-              .select("productId barcode sku combinationString quantity")
-              .lean()
-        : [];
-
-    const variantsByProduct = new Map();
-    for (const variant of variants) {
-        const key = String(variant.productId);
-        if (!variantsByProduct.has(key)) variantsByProduct.set(key, []);
-        variantsByProduct.get(key).push(variant);
+    let statusFilter = String(barcodeStatus || "all").toLowerCase();
+    if (availableOnly === true || availableOnly === "true") {
+        statusFilter = "available";
+    }
+    if (!["all", "available", "sold"].includes(statusFilter)) {
+        statusFilter = "all";
     }
 
-    // Live warehouse qty per product + variant (Non-IMEI barcode copies).
-    const invByProductVariant = new Map();
-    const invProductTotals = new Map();
+    const unitBarcodeService = require("./productUnitBarcodeService");
     if (nonImeiIds.length) {
-        const invRows = await Inventory.aggregate([
-            {
-                $match: {
-                    productId: { $in: nonImeiIds },
-                    isDeleted: { $ne: true }
-                }
-            },
-            {
-                $group: {
-                    _id: {
-                        productId: "$productId",
-                        variantId: "$productVariantId"
-                    },
-                    availableStock: { $sum: "$availableStock" },
-                    currentStock: { $sum: "$currentStock" }
-                }
-            }
-        ]);
+        await unitBarcodeService.ensureProductsUnits(nonImeiIds, companyId);
+    }
 
-        for (const row of invRows) {
-            const pid = String(row._id?.productId || "");
-            if (!pid) continue;
-            const vid = row._id?.variantId ? String(row._id.variantId) : "null";
-            const available =
-                Number(row.availableStock) || Number(row.currentStock) || 0;
-            invByProductVariant.set(`${pid}:${vid}`, available);
+    const unitRows = nonImeiIds.length
+        ? await unitBarcodeService.listUnitBarcodes({
+              productIds: nonImeiIds,
+              companyId,
+              barcodeStatus: statusFilter,
+              limit: MAX_PRODUCT_CODES_EXPORT + 1,
+          })
+        : [];
 
-            const prev = invProductTotals.get(pid) || 0;
-            invProductTotals.set(pid, prev + available);
-        }
+    if (unitRows.length > MAX_PRODUCT_CODES_EXPORT) {
+        throw new AppError(
+            `Too many codes to export (limit ${MAX_PRODUCT_CODES_EXPORT}). Narrow your selection.`,
+            400
+        );
+    }
+
+    const unitsByProduct = new Map();
+    for (const row of unitRows) {
+        const key = String(row.productId);
+        if (!unitsByProduct.has(key)) unitsByProduct.set(key, []);
+        unitsByProduct.get(key).push(row);
     }
 
     const imeiFilter = {
         productId: { $in: imeiProductIds },
-        ...tenant
+        ...tenant,
     };
-    if (availableOnly === true || availableOnly === "true") {
+    if (statusFilter === "available") {
         imeiFilter.status = "available";
+    } else if (statusFilter === "sold") {
+        imeiFilter.status = "sold";
     } else {
         imeiFilter.status = { $ne: "deleted" };
     }
@@ -3442,7 +3468,8 @@ const exportProductCodes = async (
 
     const byProduct = [];
     const codes = [];
-    const seenImei = new Set();
+    const codeMeta = [];
+    const seen = new Set();
 
     const assertUnderLimit = () => {
         if (codes.length > MAX_PRODUCT_CODES_EXPORT) {
@@ -3453,75 +3480,68 @@ const exportProductCodes = async (
         }
     };
 
-    /** IMEI units stay unique. */
-    const pushUniqueImei = (value) => {
+    const pushUnique = (value, meta = {}) => {
         const code = String(value || "").trim();
-        if (!code || seenImei.has(code)) return false;
-        seenImei.add(code);
+        if (!code || seen.has(code)) return false;
+        seen.add(code);
         codes.push(code);
+        codeMeta.push({
+            code,
+            status: meta.status || "",
+            productId: meta.productId || "",
+        });
         assertUnderLimit();
         return true;
-    };
-
-    /** Non-IMEI: same EAN once per stock unit (duplicates intentional). */
-    const pushBarcodeCopies = (value, qty) => {
-        const code = String(value || "").trim();
-        const n = Math.max(0, Math.floor(Number(qty) || 0));
-        if (!code || n < 1) return 0;
-        for (let i = 0; i < n; i++) {
-            codes.push(code);
-            assertUnderLimit();
-        }
-        return n;
-    };
-
-    const stockForVariant = (productId, variant) => {
-        const vid = variant?._id ? String(variant._id) : "null";
-        const fromInv = invByProductVariant.get(`${productId}:${vid}`) || 0;
-        const catalogQty = Math.max(Number(variant?.quantity) || 0, 0);
-        return fromInv > 0 ? fromInv : catalogQty;
-    };
-
-    const stockForSimpleProduct = (product, productId) => {
-        const fromInv = invProductTotals.get(productId) || 0;
-        if (fromInv > 0) return fromInv;
-        const available = Math.max(Number(product.availableStock) || 0, 0);
-        if (available > 0) return available;
-        return Math.max(Number(product.totalStock) || 0, 0);
     };
 
     for (const product of products) {
         const productId = String(product._id);
         const trackingType = product.trackingType || "Non-IMEI";
         const productCodes = [];
+        const productCodeRows = [];
 
         if (trackingType === "IMEI") {
             for (const track of tracksByProduct.get(productId) || []) {
                 const imei = String(track.imei || "").trim();
                 if (!imei) continue;
-                if (pushUniqueImei(imei)) productCodes.push(imei);
+                if (
+                    pushUnique(imei, {
+                        status: track.status || "",
+                        productId,
+                    })
+                ) {
+                    productCodes.push(imei);
+                    productCodeRows.push({
+                        code: imei,
+                        status: track.status || "",
+                    });
+                }
             }
         } else {
-            const productBarcode = String(product.barcode || "").trim();
-            const productVariants = variantsByProduct.get(productId) || [];
-
-            if (productVariants.length) {
-                // One sticker-line per variant unit — never also append the
-                // product barcode once (that desynced list length from stock).
-                for (const variant of productVariants) {
-                    const barcode =
-                        String(variant.barcode || "").trim() || productBarcode;
-                    if (!barcode) continue;
-                    const qty = stockForVariant(productId, variant);
-                    for (let i = 0; i < qty; i++) productCodes.push(barcode);
-                    pushBarcodeCopies(barcode, qty);
+            for (const unit of unitsByProduct.get(productId) || []) {
+                const barcode = String(unit.barcode || "").trim();
+                if (!barcode) continue;
+                if (
+                    pushUnique(barcode, {
+                        status: unit.status || "",
+                        productId,
+                    })
+                ) {
+                    productCodes.push(barcode);
+                    productCodeRows.push({
+                        code: barcode,
+                        status: unit.status || "",
+                    });
                 }
-            } else if (productBarcode) {
-                const qty = stockForSimpleProduct(product, productId);
-                for (let i = 0; i < qty; i++) productCodes.push(productBarcode);
-                pushBarcodeCopies(productBarcode, qty);
             }
         }
+
+        const availableCount = productCodeRows.filter(
+            (r) => r.status === "available"
+        ).length;
+        const soldCount = productCodeRows.filter(
+            (r) => r.status === "sold"
+        ).length;
 
         byProduct.push({
             productId,
@@ -3529,15 +3549,20 @@ const exportProductCodes = async (
             productCode: product.productCode || "",
             trackingType,
             codes: productCodes,
-            count: productCodes.length
+            codeRows: productCodeRows,
+            count: productCodes.length,
+            availableCount,
+            soldCount,
         });
     }
 
     return {
         codes,
+        codeMeta,
         total: codes.length,
         productCount: products.length,
-        byProduct
+        barcodeStatus: statusFilter,
+        byProduct,
     };
 };
 

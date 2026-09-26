@@ -1456,6 +1456,24 @@ const applyInventoryForGrn = async (grn, actorId, session) => {
                 )
             );
             await ItemTrack.insertMany(rows, { session });
+        } else {
+            try {
+                const unitBarcodeService = require("./productUnitBarcodeService");
+                await unitBarcodeService.mintUnits({
+                    companyId: grn.companyId,
+                    productId: item.productId,
+                    productVariantId: item.productVariantId,
+                    quantity: accepted,
+                    sourceType: "grn",
+                    sourceId: grn._id,
+                    warehouseId: grn.warehouseId,
+                    branchId: grn.branchId,
+                    status: "available",
+                    session,
+                });
+            } catch (_) {
+                // Stock already received; unit reconcile on export heals gaps.
+            }
         }
 
         productIds.add(String(item.productId));

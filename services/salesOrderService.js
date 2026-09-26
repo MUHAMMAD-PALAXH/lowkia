@@ -2026,6 +2026,20 @@ const applyStockOut = async (
                     companyId: order.companyId,
                     session
                 });
+            } else {
+                try {
+                    const unitBarcodeService = require("./productUnitBarcodeService");
+                    await unitBarcodeService.markSoldFifo({
+                        companyId: order.companyId,
+                        productId: line.productId,
+                        productVariantId: line.productVariantId,
+                        quantity: qty,
+                        salesOrderId: order._id,
+                        session,
+                    });
+                } catch (_) {
+                    // Inventory already deducted; export reconcile can backfill sold units.
+                }
             }
 
             const lineWarehouseId = await resolveWarehouseForSaleLine({

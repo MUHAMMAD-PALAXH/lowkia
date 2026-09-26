@@ -97,7 +97,8 @@ exports.exportProductCodes = asyncHandler(async (req, res) => {
         {
             productIds: req.body?.productIds,
             all: req.body?.all,
-            availableOnly: req.body?.availableOnly
+            availableOnly: req.body?.availableOnly,
+            barcodeStatus: req.body?.barcodeStatus,
         },
         req.companyId
     );
