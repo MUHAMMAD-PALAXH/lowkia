@@ -51,11 +51,12 @@ const syncCartItemCount = async (cartId) => {
 const refreshLineAvailability = async (item) => {
     const productId = item.product?.productId;
     const variantId = item.product?.productVariantId;
+    const requestedQty = Math.max(Number(item.quantity) || 1, 1);
 
     const resolved = await resolveMarketplaceLine({
         productId,
         productVariantId: variantId,
-        quantity: item.quantity,
+        quantity: 1,
     }).catch(() => null);
 
     if (!resolved) {
@@ -68,18 +69,32 @@ const refreshLineAvailability = async (item) => {
         };
     }
 
+    let qty = requestedQty;
+    const stock = Number(resolved.availableStock) || 0;
+    if (!resolved.allowBackorder && stock > 0 && qty > stock) {
+        // Heal carts inflated by soft-delete restore / duplicate adds.
+        qty = stock;
+        item.quantity = qty;
+    }
+
+    const availability = evaluateAvailability(
+        { allowBackorder: resolved.allowBackorder },
+        stock,
+        qty
+    );
+
     item.companyId = resolved.companyId;
     item.seller = resolved.seller;
     item.product = resolved.product;
     item.lineKey = resolved.lineKey;
-    item.lineSubtotal = resolved.product.unitPrice * item.quantity;
-    item.isAvailable = resolved.isAvailable;
-    item.unavailableReason = resolved.unavailableReason;
+    item.lineSubtotal = resolved.product.unitPrice * qty;
+    item.isAvailable = availability.isAvailable;
+    item.unavailableReason = availability.reason;
     await item.save();
 
     return {
         ...item.toObject(),
-        availableStock: resolved.availableStock,
+        availableStock: stock,
     };
 };
 
@@ -179,21 +194,28 @@ const addCartItem = async (userId, { productId, productVariantId = null, quantit
         ...NOT_DELETED,
     });
 
+    let restoredFromDeleted = false;
     if (!existing) {
         const deleted = await MarketplaceCartItem.findOne({
             cartId: cart._id,
             lineKey: resolved.lineKey,
             isDeleted: true,
-        });
+        }).sort({ updatedAt: -1 });
 
         if (deleted) {
             existing = deleted;
             existing.isDeleted = false;
+            // Soft-delete leaves the old quantity on the row. Treating a
+            // restore as additive (oldQty + qty) inflated carts and blocked
+            // adds when stock was 1 ("Only 1 left in stock").
+            restoredFromDeleted = true;
         }
     }
 
     if (existing) {
-        const newQty = existing.quantity + qty;
+        const newQty = restoredFromDeleted
+            ? qty
+            : Number(existing.quantity) + qty;
         if (newQty > MARKETPLACE_LIMITS.cartMaxQtyPerLine) {
             throw new AppError(
                 `Maximum ${MARKETPLACE_LIMITS.cartMaxQtyPerLine} units per line.`,
@@ -214,6 +236,7 @@ const addCartItem = async (userId, { productId, productVariantId = null, quantit
         existing.companyId = resolved.companyId;
         existing.seller = resolved.seller;
         existing.product = resolved.product;
+        existing.lineKey = resolved.lineKey;
         existing.lineSubtotal = resolved.product.unitPrice * newQty;
         existing.isAvailable = true;
         existing.unavailableReason = "";
@@ -305,6 +328,8 @@ const removeCartItem = async (userId, itemId) => {
     if (!item) throw new AppError("Cart item not found.", 404);
 
     item.isDeleted = true;
+    item.quantity = 0;
+    item.lineSubtotal = 0;
     await item.save();
     await syncCartItemCount(cart._id);
 
@@ -314,9 +339,10 @@ const removeCartItem = async (userId, itemId) => {
 const clearCart = async (userId) => {
     const cart = await getOrCreateCart(userId);
 
+    // Soft-delete AND zero quantity so a later restore cannot revive stale qty.
     await MarketplaceCartItem.updateMany(
         { cartId: cart._id, ...NOT_DELETED },
-        { $set: { isDeleted: true } }
+        { $set: { isDeleted: true, quantity: 0, lineSubtotal: 0 } }
     );
 
     await syncCartItemCount(cart._id);
