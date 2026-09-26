@@ -342,7 +342,7 @@ const placeCheckout = async (userId, payload = {}) => {
 
         await MarketplaceCartItem.updateMany(
             { cartId: activeCart._id, ...NOT_DELETED },
-            { $set: { isDeleted: true } },
+            { $set: { isDeleted: true, quantity: 0, lineSubtotal: 0 } },
             { session }
         );
 

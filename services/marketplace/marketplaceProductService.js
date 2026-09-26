@@ -168,11 +168,15 @@ const sumAvailableByVariantIds = async (variantIds = []) => {
  * Prefers [preferredVariantId] when it has stock; otherwise any in-stock
  * option (default first). Used so one-click add still works when the
  * catalog default is sold out but another option remains.
+ *
+ * When [allowFallback] is false, never swap to a different variant — used for
+ * cart refresh/update so existing lines do not silently change identity.
  */
 const pickSellableVariant = async ({
     product,
     preferredVariantId = null,
     quantity = 1,
+    allowFallback = true,
 }) => {
     const pid = product._id;
     const variantScope = {
@@ -186,15 +190,22 @@ const pickSellableVariant = async ({
         ],
     };
 
+    const preferredOid = toObjectId(preferredVariantId);
+
+    if (preferredOid && !allowFallback) {
+        return ProductVariant.findOne({
+            ...variantScope,
+            _id: preferredOid,
+        }).lean();
+    }
+
     const variants = await ProductVariant.find(variantScope)
         .sort({ isDefaultVariant: -1, createdAt: 1 })
         .lean();
 
     if (!variants.length) return null;
 
-    const preferredId = preferredVariantId
-        ? String(toObjectId(preferredVariantId) || preferredVariantId)
-        : null;
+    const preferredId = preferredOid ? String(preferredOid) : null;
 
     const stockByVariant = await sumAvailableByVariantIds(
         variants.map((v) => v._id)
@@ -210,12 +221,18 @@ const pickSellableVariant = async ({
     if (preferredId) {
         const preferred = variants.find((v) => String(v._id) === preferredId);
         if (preferred && hasStock(preferred)) return preferred;
+        if (preferred && !allowFallback) return preferred;
+    }
+
+    if (!allowFallback) {
+        return preferredId
+            ? variants.find((v) => String(v._id) === preferredId) || null
+            : null;
     }
 
     const inStock = variants.find((v) => hasStock(v));
     if (inStock) return inStock;
 
-    // All sold out — keep preferred/default so caller can return a clear OOS.
     if (preferredId) {
         return (
             variants.find((v) => String(v._id) === preferredId) || variants[0]
@@ -227,11 +244,16 @@ const pickSellableVariant = async ({
 /**
  * Resolve a marketplace product line for cart writes.
  * companyId and seller are always derived server-side.
+ *
+ * @param {boolean} [allowVariantFallback=true] When false, keep the exact
+ *   productVariantId (no auto-pick / swap). Cart add/refresh/qty update all
+ *   pass false so stock issues surface instead of silently changing the line.
  */
 const resolveMarketplaceLine = async ({
     productId,
     productVariantId = null,
     quantity = 1,
+    allowVariantFallback = true,
 }) => {
     const pid = toObjectId(productId);
     if (!pid) throw new AppError("Invalid productId.", 400);
@@ -267,6 +289,7 @@ const resolveMarketplaceLine = async ({
             product,
             preferredVariantId: variantId,
             quantity,
+            allowFallback: allowVariantFallback || !variantId,
         });
 
         if (!variant) {

@@ -17,20 +17,9 @@ const getOrCreateCart = async (userId) => {
     let cart = await MarketplaceCart.findOne(activeCartFilter(userId));
     if (cart) return cart;
 
-    const checkedOut = await MarketplaceCart.findOne({
-        userId,
-        status: "checked_out",
-        ...NOT_DELETED,
-    });
-
-    if (checkedOut) {
-        checkedOut.status = "active";
-        checkedOut.checkedOutAt = null;
-        checkedOut.itemCount = 0;
-        await checkedOut.save();
-        return checkedOut;
-    }
-
+    // Never revive a checked_out cart — soft-deleted lines from the previous
+    // order can be restored with stale quantities and look like "random"
+    // products reappearing. Always start a fresh active cart.
     return MarketplaceCart.create({ userId, status: "active" });
 };
 
@@ -57,6 +46,9 @@ const refreshLineAvailability = async (item) => {
         productId,
         productVariantId: variantId,
         quantity: 1,
+        // Never swap variants on refresh — that rewrote lineKey/product and
+        // made carts look like a different item was added.
+        allowVariantFallback: false,
     }).catch(() => null);
 
     if (!resolved) {
@@ -86,7 +78,8 @@ const refreshLineAvailability = async (item) => {
     item.companyId = resolved.companyId;
     item.seller = resolved.seller;
     item.product = resolved.product;
-    item.lineKey = resolved.lineKey;
+    // Keep the stored lineKey unless empty — do not rewrite identity on refresh.
+    if (!item.lineKey) item.lineKey = resolved.lineKey;
     item.lineSubtotal = resolved.product.unitPrice * qty;
     item.isAvailable = availability.isAvailable;
     item.unavailableReason = availability.reason;
@@ -176,10 +169,13 @@ const addCartItem = async (userId, { productId, productVariantId = null, quantit
         );
     }
 
+    // Never auto-swap to another variant on add — that made carts look like
+    // "a different product was added" when the requested option was OOS.
     const resolved = await resolveMarketplaceLine({
         productId,
         productVariantId,
         quantity: qty,
+        allowVariantFallback: false,
     });
 
     if (!resolved.isAvailable) {
@@ -298,6 +294,7 @@ const updateCartItem = async (userId, itemId, { quantity }) => {
         productId: item.product.productId,
         productVariantId: item.product.productVariantId,
         quantity: qty,
+        allowVariantFallback: false,
     });
 
     if (!resolved.isAvailable) {

@@ -29,7 +29,7 @@ const cartItemSchema = new mongoose.Schema(
         },
         seller: { type: sellerSnapshotSchema, required: true },
         product: { type: productLineSnapshotSchema, required: true },
-        quantity: { type: Number, required: true, min: 1 },
+        quantity: { type: Number, required: true, min: 0 },
         lineSubtotal: { type: Number, required: true, min: 0 },
         /** `${productId}:${variantId||'base'}` — unique line identity within cart */
         lineKey: { type: String, required: true, trim: true },
