@@ -80,19 +80,53 @@ const assertSellableCompany = (company) => {
 };
 
 const getAvailableStock = async (product, variant = null) => {
+    const companyId = product.companyId;
     const baseMatch = {
         productId: product._id,
-        companyId: product.companyId,
         isDeleted: { $ne: true },
+        $and: [
+            {
+                // Include legacy inventory rows missing companyId (Admin stock does too).
+                $or: [
+                    ...(companyId ? [{ companyId }] : []),
+                    { companyId: null },
+                    { companyId: { $exists: false } },
+                ],
+            },
+        ],
     };
 
-    const sumInventory = async (extraMatch = {}) => {
+    const sumInventory = async (extraAnd = null) => {
+        const match = {
+            ...baseMatch,
+            $and: [
+                ...baseMatch.$and,
+                ...(extraAnd ? [extraAnd] : []),
+            ],
+        };
         const [agg] = await Inventory.aggregate([
-            { $match: { ...baseMatch, ...extraMatch } },
+            { $match: match },
             {
                 $group: {
                     _id: null,
-                    available: { $sum: "$availableStock" },
+                    available: {
+                        $sum: {
+                            $max: [
+                                { $ifNull: ["$availableStock", 0] },
+                                {
+                                    $max: [
+                                        {
+                                            $subtract: [
+                                                { $ifNull: ["$currentStock", 0] },
+                                                { $ifNull: ["$reservedStock", 0] },
+                                            ],
+                                        },
+                                        0,
+                                    ],
+                                },
+                            ],
+                        },
+                    },
                 },
             },
         ]);
@@ -100,13 +134,17 @@ const getAvailableStock = async (product, variant = null) => {
     };
 
     if (variant?._id) {
-        // Variant lines must use Inventory for that variant only.
-        // Do not fall back to product.availableStock / unscoped rows / raw
-        // variant.quantity — reservation only deducts Inventory rows, so any
-        // other source lets the cart accept qty checkout cannot reserve.
-        return sumInventory({
-            productVariantId: variant._id,
+        const exact = await sumInventory({ productVariantId: variant._id });
+        if (exact > 0) return exact;
+        // Legacy simple stock under null variant while product has a Default id.
+        const unscoped = await sumInventory({
+            $or: [
+                { productVariantId: null },
+                { productVariantId: { $exists: false } },
+            ],
         });
+        if (unscoped > 0) return unscoped;
+        return sumInventory();
     }
 
     const fromInventory = await sumInventory({

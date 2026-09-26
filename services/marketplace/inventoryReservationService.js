@@ -18,6 +18,81 @@ const toObjectId = (value) => {
     return new mongoose.Types.ObjectId(value);
 };
 
+/** Sellable qty — heal rows where availableStock drifted below current−reserved. */
+const effectiveAvailable = (inv) => {
+    const avail = Math.max(Number(inv?.availableStock) || 0, 0);
+    const current = Math.max(Number(inv?.currentStock) || 0, 0);
+    const reserved = Math.max(Number(inv?.reservedStock) || 0, 0);
+    const derived = Math.max(current - reserved, 0);
+    return Math.max(avail, derived);
+};
+
+/** Tenant match: stamped company OR legacy unscoped inventory for this product. */
+const companyScope = (companyId) => {
+    const cid = toObjectId(companyId);
+    return {
+        $or: [
+            ...(cid ? [{ companyId: cid }] : []),
+            { companyId: null },
+            { companyId: { $exists: false } },
+        ],
+    };
+};
+
+const buildInventoryFilter = ({
+    companyId,
+    productId,
+    productVariantId,
+    variantMode = "exact",
+}) => {
+    const filter = {
+        productId: toObjectId(productId),
+        isDeleted: { $ne: true },
+        ...companyScope(companyId),
+    };
+
+    const variantId = toObjectId(productVariantId);
+    if (variantMode === "exact" && variantId) {
+        filter.productVariantId = variantId;
+    } else if (variantMode === "null") {
+        filter.$and = [
+            ...(filter.$and || []),
+            {
+                $or: [
+                    { productVariantId: null },
+                    { productVariantId: { $exists: false } },
+                ],
+            },
+        ];
+    }
+    // variantMode === "any" → no productVariantId constraint
+    return filter;
+};
+
+const pickInventoryRow = async ({
+    companyId,
+    productId,
+    productVariantId,
+    qty,
+    session,
+    variantMode,
+}) => {
+    const rows = await Inventory.find(
+        buildInventoryFilter({
+            companyId,
+            productId,
+            productVariantId,
+            variantMode,
+        })
+    )
+        .sort({ availableStock: -1, currentStock: -1 })
+        .session(session || null);
+
+    return (
+        rows.find((row) => effectiveAvailable(row) >= qty) || null
+    );
+};
+
 const findInventoryWithStock = async ({
     companyId,
     productId,
@@ -25,26 +100,41 @@ const findInventoryWithStock = async ({
     qty,
     session,
 }) => {
-    const filter = {
-        companyId: toObjectId(companyId),
-        productId: toObjectId(productId),
-        isDeleted: { $ne: true },
-        availableStock: { $gte: qty },
-    };
-
     const variantId = toObjectId(productVariantId);
+
+    // 1) Exact variant (or null-variant when no id)
+    let inv = await pickInventoryRow({
+        companyId,
+        productId,
+        productVariantId,
+        qty,
+        session,
+        variantMode: variantId ? "exact" : "null",
+    });
+    if (inv) return inv;
+
+    // 2) Simple/legacy stock under null variant while line carries a default id
     if (variantId) {
-        filter.productVariantId = variantId;
-    } else {
-        filter.$or = [
-            { productVariantId: null },
-            { productVariantId: { $exists: false } },
-        ];
+        inv = await pickInventoryRow({
+            companyId,
+            productId,
+            productVariantId,
+            qty,
+            session,
+            variantMode: "null",
+        });
+        if (inv) return inv;
     }
 
-    return Inventory.findOne(filter)
-        .sort({ availableStock: -1 })
-        .session(session || null);
+    // 3) Any warehouse row for this product (matches Admin total stock view)
+    return pickInventoryRow({
+        companyId,
+        productId,
+        productVariantId,
+        qty,
+        session,
+        variantMode: "any",
+    });
 };
 
 /** Sum available stock across warehouses for a product/variant. */
@@ -54,27 +144,48 @@ const sumAvailableStock = async ({
     productVariantId,
     session,
 }) => {
-    const filter = {
-        companyId: toObjectId(companyId),
-        productId: toObjectId(productId),
-        isDeleted: { $ne: true },
-    };
     const variantId = toObjectId(productVariantId);
-    if (variantId) {
-        filter.productVariantId = variantId;
-    } else {
-        filter.$or = [
-            { productVariantId: null },
-            { productVariantId: { $exists: false } },
-        ];
-    }
-
-    const rows = await Inventory.find(filter)
-        .select("availableStock")
+    let rows = await Inventory.find(
+        buildInventoryFilter({
+            companyId,
+            productId,
+            productVariantId,
+            variantMode: variantId ? "exact" : "null",
+        })
+    )
         .session(session || null)
         .lean();
 
-    return rows.reduce((sum, row) => sum + (Number(row.availableStock) || 0), 0);
+    let total = rows.reduce((sum, row) => sum + effectiveAvailable(row), 0);
+    if (total > 0) return total;
+
+    if (variantId) {
+        rows = await Inventory.find(
+            buildInventoryFilter({
+                companyId,
+                productId,
+                productVariantId,
+                variantMode: "null",
+            })
+        )
+            .session(session || null)
+            .lean();
+        total = rows.reduce((sum, row) => sum + effectiveAvailable(row), 0);
+        if (total > 0) return total;
+    }
+
+    rows = await Inventory.find(
+        buildInventoryFilter({
+            companyId,
+            productId,
+            productVariantId,
+            variantMode: "any",
+        })
+    )
+        .session(session || null)
+        .lean();
+
+    return rows.reduce((sum, row) => sum + effectiveAvailable(row), 0);
 };
 
 const reserveInventoryLine = async ({
@@ -145,7 +256,7 @@ const reserveInventoryLine = async ({
         );
     }
 
-    const available = Number(inv.availableStock) || 0;
+    const available = effectiveAvailable(inv);
     const reserved = Number(inv.reservedStock) || 0;
     const current = Number(inv.currentStock) || 0;
 
@@ -156,6 +267,10 @@ const reserveInventoryLine = async ({
         );
     }
 
+    // Heal drifted availableStock and stamp legacy tenant before reserving.
+    if (!inv.companyId && companyId) {
+        inv.companyId = toObjectId(companyId);
+    }
     inv.availableStock = Math.max(available - quantity, 0);
     inv.reservedStock = reserved + quantity;
     inv.lastMovementDate = new Date();
