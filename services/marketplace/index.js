@@ -33,6 +33,7 @@ module.exports = {
     refundService: require("./refundService"),
     companyMarketplaceOrderService: require("./companyMarketplaceOrderService"),
     marketplaceSalesOrderBridgeService: require("./marketplaceSalesOrderBridgeService"),
+    marketplaceOnlineOrderBridgeService: require("./marketplaceOnlineOrderBridgeService"),
     platformMarketplaceService: require("./platformMarketplaceService"),
     marketplaceSecurityService: require("./marketplaceSecurityService"),
     marketplaceAuditService: require("./marketplaceAuditService"),

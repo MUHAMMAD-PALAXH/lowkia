@@ -72,6 +72,13 @@ const companyOrderSchema = new mongoose.Schema(
             default: null,
             index: true,
         },
+        /** Admin Online Orders (legacy Order) mirror for Sales → Online orders UI. */
+        onlineOrderId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Order",
+            default: null,
+            index: true,
+        },
         erpCustomerId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Customer",

@@ -75,9 +75,33 @@ const orderSchema = new mongoose.Schema({
   trackingUrl: {
     type: String
   },
+  /** Set when mirrored from marketplace CompanyOrder (USER_APP checkout). */
+  companyOrderId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'CompanyOrder',
+    default: null,
+    index: true,
+  },
+  masterOrderId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'MasterOrder',
+    default: null,
+    index: true,
+  },
+  orderNumber: {
+    type: String,
+    trim: true,
+    uppercase: true,
+    default: '',
+  },
 }, {
   timestamps: true 
 });
+
+orderSchema.index(
+  { companyId: 1, companyOrderId: 1 },
+  { unique: true, partialFilterExpression: { companyOrderId: { $type: 'objectId' } } }
+);
 
 orderSchema.plugin(tenantPlugin);
 

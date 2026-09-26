@@ -16,6 +16,9 @@ const { resolveTenant, requireCompany } = require('../middleware/tenant');
 const { companyFilter, stampCompany } = require('../utils/tenantScope');
 const { assertDocumentCompany } = require('../services/companyService');
 const { exportOnlineOrdersExcel } = require('../services/onlineOrderService');
+const {
+  backfillOnlineOrdersForCompany,
+} = require('../services/marketplace/marketplaceOnlineOrderBridgeService');
 
 router.use(protect, resolveTenant, requireCompany);
 
@@ -275,8 +278,15 @@ router.get('/', asyncHandler(async (req, res) => {
   const tenant = companyFilter(req.companyId);
   const filter = userId ? { userID: userId, ...tenant } : { ...tenant };
 
+  // Catch marketplace checkouts completed before the Online Order bridge.
+  try {
+    await backfillOnlineOrdersForCompany(req.companyId, { limit: 200 });
+  } catch (err) {
+    console.error('[orders] marketplace online-order backfill failed:', err?.message || err);
+  }
+
   let orders = await Order.find(filter)
-    .populate('userID', 'name email')
+    .populate('userID', 'name email firstName lastName')
     .populate('couponCode', 'couponCode discountType discountAmount')
     .sort({ createdAt: -1 })
     .lean();

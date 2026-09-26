@@ -23,6 +23,9 @@ const {
     notifyPaymentFailed,
 } = require("./marketplaceNotificationService");
 const {
+    syncMasterOrderToOnlineOrders,
+} = require("./marketplaceOnlineOrderBridgeService");
+const {
     verifyMarketplaceWebhook,
     buildWebhookEventKey,
     hasProcessedWebhookEvent,
@@ -150,6 +153,10 @@ const formatPaymentResponse = (payment, masterOrder = null) => ({
 const applySuccessfulPayment = async (payment, session) => {
     if (payment.status === "successful") {
         await reserveMasterOrderInventory(payment.masterOrderId, session);
+        await syncMasterOrderToOnlineOrders(payment.masterOrderId, {
+            session,
+            paymentMethod: payment.paymentMethod,
+        });
         return payment;
     }
 
@@ -167,6 +174,10 @@ const applySuccessfulPayment = async (payment, session) => {
         const current = await CheckoutPayment.findById(payment._id).session(session);
         if (current?.status === "successful") {
             await reserveMasterOrderInventory(payment.masterOrderId, session);
+            await syncMasterOrderToOnlineOrders(payment.masterOrderId, {
+                session,
+                paymentMethod: current.paymentMethod,
+            });
             return current;
         }
         throw new AppError(
@@ -211,6 +222,12 @@ const applySuccessfulPayment = async (payment, session) => {
     }
 
     await syncMasterOrderStatus(payment.masterOrderId, { session });
+
+    // Mirror into Admin Online Orders (legacy Order collection).
+    await syncMasterOrderToOnlineOrders(payment.masterOrderId, {
+        session,
+        paymentMethod: payment.paymentMethod,
+    });
 
     return payment;
 };
