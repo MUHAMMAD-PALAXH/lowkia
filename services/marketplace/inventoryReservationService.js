@@ -57,9 +57,18 @@ const reserveInventoryLine = async ({
     sku,
     qty,
     session,
+    createdBy = null,
 }) => {
     const quantity = Math.max(Number(qty) || 0, 0);
     if (!quantity) return null;
+
+    const actorId = toObjectId(createdBy);
+    if (!actorId) {
+        throw new AppError(
+            "Inventory reservation requires a createdBy actor.",
+            500
+        );
+    }
 
     let inv = await findInventoryWithStock({
         companyId,
@@ -88,6 +97,13 @@ const reserveInventoryLine = async ({
 
         throw new AppError(
             `Insufficient stock for "${productName}". Required: ${quantity}.`,
+            400
+        );
+    }
+
+    if (!inv.warehouseId) {
+        throw new AppError(
+            `Inventory for "${productName}" is missing a warehouse.`,
             400
         );
     }
@@ -132,6 +148,7 @@ const reserveInventoryLine = async ({
                 referenceType: "Marketplace Order",
                 referenceId: toObjectId(companyOrderId),
                 remarks: `Marketplace reservation for ${companyOrderNumber} (available→reserved)`,
+                createdBy: actorId,
             },
         ],
         { session }
@@ -157,9 +174,18 @@ const releaseInventoryLine = async ({
     sku,
     qty,
     session,
+    createdBy = null,
 }) => {
     const quantity = Math.max(Number(qty) || 0, 0);
     if (!quantity) return null;
+
+    const actorId = toObjectId(createdBy);
+    if (!actorId) {
+        throw new AppError(
+            "Inventory release requires a createdBy actor.",
+            500
+        );
+    }
 
     const filter = {
         companyId: toObjectId(companyId),
@@ -177,6 +203,13 @@ const releaseInventoryLine = async ({
     if (!inv) {
         throw new AppError(
             `Cannot release reservation for "${productName}" — reserved stock not found.`,
+            400
+        );
+    }
+
+    if (!inv.warehouseId) {
+        throw new AppError(
+            `Inventory for "${productName}" is missing a warehouse.`,
             400
         );
     }
@@ -214,6 +247,7 @@ const releaseInventoryLine = async ({
                 referenceType: "Marketplace Order",
                 referenceId: toObjectId(companyOrderId),
                 remarks: `Marketplace reservation release for ${companyOrderNumber} (reserved→available)`,
+                createdBy: actorId,
             },
         ],
         { session }
@@ -234,10 +268,7 @@ const syncProductsForLines = async (lines = []) => {
     ];
 
     for (const productId of productIds) {
-        const product = await Product.findById(productId);
-        if (product) {
-            await productService.syncProductStockSummary(product);
-        }
+        await productService.refreshStockSummary(productId);
     }
 };
 
@@ -263,6 +294,7 @@ const reserveCompanyOrderInventory = async (companyOrder, session) => {
             sku: item.product.sku,
             qty: item.quantity,
             session,
+            createdBy: companyOrder.userId,
         });
         if (result) reservedLines.push(result);
     }
@@ -299,6 +331,7 @@ const releaseCompanyOrderInventory = async (companyOrder, session) => {
             sku: item.product.sku,
             qty: item.quantity,
             session,
+            createdBy: companyOrder.userId,
         });
         if (result) releasedLines.push(result);
     }
@@ -396,9 +429,18 @@ const fulfillReservedInventoryLine = async ({
     sku,
     qty,
     session,
+    createdBy = null,
 }) => {
     const quantity = Math.max(Number(qty) || 0, 0);
     if (!quantity) return null;
+
+    const actorId = toObjectId(createdBy);
+    if (!actorId) {
+        throw new AppError(
+            "Inventory fulfillment requires a createdBy actor.",
+            500
+        );
+    }
 
     const filter = {
         companyId: toObjectId(companyId),
@@ -416,6 +458,13 @@ const fulfillReservedInventoryLine = async ({
     if (!inv) {
         throw new AppError(
             `Cannot fulfill shipment for "${productName}" — reserved stock not found.`,
+            400
+        );
+    }
+
+    if (!inv.warehouseId) {
+        throw new AppError(
+            `Inventory for "${productName}" is missing a warehouse.`,
             400
         );
     }
@@ -460,6 +509,7 @@ const fulfillReservedInventoryLine = async ({
                 referenceType: "Marketplace Order",
                 referenceId: toObjectId(companyOrderId),
                 remarks: `Marketplace shipment for ${companyOrderNumber} (reserved→out)`,
+                createdBy: actorId,
             },
         ],
         { session }
@@ -493,6 +543,7 @@ const releaseOrderItemReservation = async ({
         sku: orderItem.product.sku,
         qty: quantity,
         session,
+        createdBy: companyOrder.userId,
     });
 
     orderItem.refundedQuantity = (Number(orderItem.refundedQuantity) || 0) + quantity;

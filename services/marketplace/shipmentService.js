@@ -349,6 +349,7 @@ const createShipment = async (companyOrderId, payload = {}, actorId = null, comp
                 sku: line.orderItem.product.sku,
                 qty: line.quantity,
                 session,
+                createdBy: actorId || companyOrder.userId,
             });
 
             const [item] = await MarketplaceShipmentItem.create(

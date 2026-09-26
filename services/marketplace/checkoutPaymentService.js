@@ -391,6 +391,7 @@ const confirmPayment = async (userId, payload = {}, context = {}) => {
 
     const session = await mongoose.startSession();
     session.startTransaction();
+    let committed = false;
 
     try {
         const lockedPayment = await CheckoutPayment.findOne({
@@ -402,7 +403,14 @@ const confirmPayment = async (userId, payload = {}, context = {}) => {
         if (!lockedPayment) throw new AppError("Payment not found.", 404);
         await applySuccessfulPayment(lockedPayment, session);
         await session.commitTransaction();
-        await syncOrderProducts(lockedPayment.masterOrderId);
+        committed = true;
+
+        try {
+            await syncOrderProducts(lockedPayment.masterOrderId);
+        } catch (syncErr) {
+            console.error("Marketplace stock summary sync failed:", syncErr.message);
+        }
+
         void dispatchPaymentNotification(lockedPayment, "success");
         void auditMarketplaceAction({
             actor: context.actor || { _id: userId },
@@ -431,7 +439,13 @@ const confirmPayment = async (userId, payload = {}, context = {}) => {
             order,
         };
     } catch (error) {
-        await session.abortTransaction();
+        if (!committed) {
+            try {
+                await session.abortTransaction();
+            } catch (_) {
+                // Session may already be aborted / ended.
+            }
+        }
         throw error;
     } finally {
         session.endSession();
