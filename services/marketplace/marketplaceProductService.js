@@ -138,6 +138,92 @@ const evaluateAvailability = (product, availableStock, requestedQty = 1) => {
     return { isAvailable: true, reason: "" };
 };
 
+/** Batch available stock keyed by productVariantId string. */
+const sumAvailableByVariantIds = async (variantIds = []) => {
+    const ids = [...new Set(variantIds.map(toObjectId).filter(Boolean))];
+    if (!ids.length) return new Map();
+
+    const rows = await Inventory.aggregate([
+        {
+            $match: {
+                productVariantId: { $in: ids },
+                isDeleted: { $ne: true },
+            },
+        },
+        {
+            $group: {
+                _id: "$productVariantId",
+                available: { $sum: "$availableStock" },
+            },
+        },
+    ]);
+
+    return new Map(
+        rows.map((row) => [String(row._id), Number(row.available) || 0])
+    );
+};
+
+/**
+ * Choose an Active variant that can fulfill [quantity].
+ * Prefers [preferredVariantId] when it has stock; otherwise any in-stock
+ * option (default first). Used so one-click add still works when the
+ * catalog default is sold out but another option remains.
+ */
+const pickSellableVariant = async ({
+    product,
+    preferredVariantId = null,
+    quantity = 1,
+}) => {
+    const pid = product._id;
+    const variantScope = {
+        productId: pid,
+        isDeleted: { $ne: true },
+        status: "Active",
+        $or: [
+            { companyId: product.companyId },
+            { companyId: null },
+            { companyId: { $exists: false } },
+        ],
+    };
+
+    const variants = await ProductVariant.find(variantScope)
+        .sort({ isDefaultVariant: -1, createdAt: 1 })
+        .lean();
+
+    if (!variants.length) return null;
+
+    const preferredId = preferredVariantId
+        ? String(toObjectId(preferredVariantId) || preferredVariantId)
+        : null;
+
+    const stockByVariant = await sumAvailableByVariantIds(
+        variants.map((v) => v._id)
+    );
+    const qty = Math.max(Number(quantity) || 1, 1);
+    const allowBackorder = Boolean(product.allowBackorder);
+
+    const hasStock = (variant) => {
+        const available = stockByVariant.get(String(variant._id)) || 0;
+        return available >= qty || allowBackorder;
+    };
+
+    if (preferredId) {
+        const preferred = variants.find((v) => String(v._id) === preferredId);
+        if (preferred && hasStock(preferred)) return preferred;
+    }
+
+    const inStock = variants.find((v) => hasStock(v));
+    if (inStock) return inStock;
+
+    // All sold out — keep preferred/default so caller can return a clear OOS.
+    if (preferredId) {
+        return (
+            variants.find((v) => String(v._id) === preferredId) || variants[0]
+        );
+    }
+    return variants[0];
+};
+
 /**
  * Resolve a marketplace product line for cart writes.
  * companyId and seller are always derived server-side.
@@ -176,29 +262,12 @@ const resolveMarketplaceLine = async ({
     let variant = null;
     const variantId = toObjectId(productVariantId);
 
-    const variantScope = {
-        productId: pid,
-        isDeleted: { $ne: true },
-        status: "Active",
-        $or: [
-            { companyId: product.companyId },
-            { companyId: null },
-            { companyId: { $exists: false } },
-        ],
-    };
-
     if (product.hasVariants) {
-        if (variantId) {
-            variant = await ProductVariant.findOne({
-                ...variantScope,
-                _id: variantId,
-            }).lean();
-        } else {
-            // One-click add: pick default / first Active option.
-            variant = await ProductVariant.findOne(variantScope)
-                .sort({ isDefaultVariant: -1, createdAt: 1 })
-                .lean();
-        }
+        variant = await pickSellableVariant({
+            product,
+            preferredVariantId: variantId,
+            quantity,
+        });
 
         if (!variant) {
             throw new AppError(
@@ -272,6 +341,8 @@ module.exports = {
     resolveUnitPrice,
     buildSellerSnapshot,
     getAvailableStock,
+    sumAvailableByVariantIds,
+    pickSellableVariant,
     evaluateAvailability,
     resolveMarketplaceLine,
     loadSellerSnapshots,

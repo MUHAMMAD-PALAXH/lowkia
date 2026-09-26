@@ -17,6 +17,7 @@ const {
     resolveUnitPrice,
     buildSellerSnapshot,
     getAvailableStock,
+    sumAvailableByVariantIds,
 } = require("./marketplaceProductService");
 
 /** Companies whose products may appear in browse/preview catalog. */
@@ -80,7 +81,7 @@ const formatCatalogProduct = (
     seller,
 });
 
-/** First Active variant per product — used for one-click add-to-cart. */
+/** Prefer default Active variant when in stock; else first in-stock option. */
 const getDefaultVariantMap = async (products = []) => {
     const ids = products
         .filter((p) => p && p.hasVariants && p._id)
@@ -99,24 +100,41 @@ const getDefaultVariantMap = async (products = []) => {
         .sort({ isDefaultVariant: -1, createdAt: 1 })
         .lean();
 
+    const stockByVariant = await sumAvailableByVariantIds(
+        rows.map((row) => row._id)
+    );
+
     const map = new Map();
+    const fallback = new Map();
+
     for (const row of rows) {
         const key = String(row.productId);
-        if (map.has(key)) continue;
-        const label =
-            (row.combinationString || "").toString().trim() ||
-            (row.sku || "").toString().trim() ||
-            "Option";
-        map.set(key, {
+        const payload = {
             id: row._id,
-            label,
+            label:
+                (row.combinationString || "").toString().trim() ||
+                (row.sku || "").toString().trim() ||
+                "Option",
             sellingPrice: resolveUnitPrice(row),
             offerPrice:
                 row.offerPrice != null && Number(row.offerPrice) > 0
                     ? Number(row.offerPrice)
                     : null,
-        });
+        };
+
+        if (!fallback.has(key)) fallback.set(key, payload);
+
+        const available = stockByVariant.get(String(row._id)) || 0;
+        if (available <= 0) continue;
+        if (map.has(key)) continue;
+        map.set(key, payload);
     }
+
+    // If every option is sold out, still expose a default for price display.
+    for (const [key, payload] of fallback.entries()) {
+        if (!map.has(key)) map.set(key, payload);
+    }
+
     return map;
 };
 
