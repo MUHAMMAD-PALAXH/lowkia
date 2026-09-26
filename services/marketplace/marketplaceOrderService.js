@@ -363,11 +363,12 @@ const listMasterOrders = async (userId, query = {}) => {
               masterOrderId: { $in: masterIds },
               ...NOT_DELETED,
           })
-              .select("masterOrderId seller status itemCount totals")
+              .select("masterOrderId companyId seller status itemCount totals")
               .lean()
         : [];
 
     const sellersByMaster = new Map();
+    const itemCountByMaster = new Map();
     for (const companyOrder of companyOrders) {
         const key = String(companyOrder.masterOrderId);
         if (!sellersByMaster.has(key)) sellersByMaster.set(key, []);
@@ -378,6 +379,10 @@ const listMasterOrders = async (userId, query = {}) => {
             status: companyOrder.status,
             itemCount: companyOrder.itemCount,
         });
+        itemCountByMaster.set(
+            key,
+            (itemCountByMaster.get(key) || 0) + (Number(companyOrder.itemCount) || 0)
+        );
     }
 
     return {
@@ -389,6 +394,7 @@ const listMasterOrders = async (userId, query = {}) => {
             currency: order.currency,
             totals: order.totals,
             companyOrderCount: order.companyOrderCount,
+            itemCount: itemCountByMaster.get(String(order._id)) || 0,
             placedAt: order.placedAt,
             createdAt: order.createdAt,
             sellers: sellersByMaster.get(String(order._id)) || [],
