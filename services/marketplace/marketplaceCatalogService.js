@@ -36,7 +36,7 @@ const formatCatalogProduct = (
     productCode: product.productCode,
     name: product.name,
     description: product.description || "",
-    sellingPrice: resolveUnitPrice(product),
+    sellingPrice: Number(product.sellingPrice) || 0,
     offerPrice:
         product.offerPrice != null && Number(product.offerPrice) > 0
             ? Number(product.offerPrice)
@@ -115,7 +115,8 @@ const getDefaultVariantMap = async (products = []) => {
                 (row.combinationString || "").toString().trim() ||
                 (row.sku || "").toString().trim() ||
                 "Option",
-            sellingPrice: resolveUnitPrice(row),
+            // Raw base price — collapsing offer into sellingPrice hides discounts.
+            sellingPrice: Number(row.sellingPrice) || 0,
             offerPrice:
                 row.offerPrice != null && Number(row.offerPrice) > 0
                     ? Number(row.offerPrice)
@@ -552,7 +553,7 @@ const getProductById = async (productId) => {
                     id: variant._id,
                     label,
                     sku: variant.sku || "",
-                    sellingPrice: resolveUnitPrice(variant),
+                    sellingPrice: Number(variant.sellingPrice) || 0,
                     offerPrice:
                         variant.offerPrice != null &&
                         Number(variant.offerPrice) > 0
