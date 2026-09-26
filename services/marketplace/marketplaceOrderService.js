@@ -367,6 +367,24 @@ const listMasterOrders = async (userId, query = {}) => {
               .lean()
         : [];
 
+    const payments = masterIds.length
+        ? await CheckoutPayment.find({
+              masterOrderId: { $in: masterIds },
+              ...NOT_DELETED,
+          })
+              .select("masterOrderId paymentMethod status createdAt")
+              .sort({ createdAt: -1 })
+              .lean()
+        : [];
+
+    const paymentMethodByMaster = new Map();
+    for (const payment of payments) {
+        const key = String(payment.masterOrderId);
+        if (!paymentMethodByMaster.has(key)) {
+            paymentMethodByMaster.set(key, payment.paymentMethod || null);
+        }
+    }
+
     const sellersByMaster = new Map();
     const itemCountByMaster = new Map();
     for (const companyOrder of companyOrders) {
@@ -391,6 +409,7 @@ const listMasterOrders = async (userId, query = {}) => {
             orderNumber: order.orderNumber,
             status: order.status,
             paymentStatus: order.paymentStatus,
+            paymentMethod: paymentMethodByMaster.get(String(order._id)) || null,
             currency: order.currency,
             totals: order.totals,
             companyOrderCount: order.companyOrderCount,
