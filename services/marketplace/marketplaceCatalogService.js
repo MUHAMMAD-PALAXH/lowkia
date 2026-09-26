@@ -50,11 +50,21 @@ const formatCatalogProduct = (
                   _id: img._id || undefined,
               }))
         : [],
-    hasVariants: Boolean(defaultVariant),
-    defaultVariantId: defaultVariant?.id || null,
-    defaultVariantLabel: defaultVariant?.label || null,
-    defaultVariantPrice: defaultVariant?.sellingPrice ?? null,
-    defaultVariantOfferPrice: defaultVariant?.offerPrice ?? null,
+    // Trust the product document flag — orphan ProductVariant rows must not
+    // advertise variants on simple products (breaks add-to-cart).
+    hasVariants: Boolean(product.hasVariants),
+    defaultVariantId:
+        product.hasVariants && defaultVariant ? defaultVariant.id || null : null,
+    defaultVariantLabel:
+        product.hasVariants && defaultVariant ? defaultVariant.label || null : null,
+    defaultVariantPrice:
+        product.hasVariants && defaultVariant
+            ? defaultVariant.sellingPrice ?? null
+            : null,
+    defaultVariantOfferPrice:
+        product.hasVariants && defaultVariant
+            ? defaultVariant.offerPrice ?? null
+            : null,
     availableStock:
         availableStock !== null
             ? availableStock
@@ -73,7 +83,7 @@ const formatCatalogProduct = (
 /** First Active variant per product — used for one-click add-to-cart. */
 const getDefaultVariantMap = async (products = []) => {
     const ids = products
-        .filter((p) => p && (p.hasVariants || p._id))
+        .filter((p) => p && p.hasVariants && p._id)
         .map((p) => p._id)
         .filter(Boolean);
     if (!ids.length) return new Map();
@@ -467,87 +477,94 @@ const getProductById = async (productId) => {
     const seller = company ? buildSellerSnapshot(company) : null;
     const availableStock = await getAvailableStock(product);
 
-    // Always load live variant rows by productId. Do not rely only on
-    // hasVariants / companyId — older or mismatched rows were being hidden.
-    const variantFilter = {
-        productId: pid,
-        isDeleted: { $ne: true },
-        // Cart add only accepts Active — keep catalog options consistent.
-        status: "Active",
-    };
-    if (product.companyId) {
-        variantFilter.$or = [
-            { companyId: product.companyId },
-            { companyId: null },
-            { companyId: { $exists: false } },
-        ];
+    // Only expose variants when the product is configured for them. Orphan
+    // ProductVariant rows on simple products must not flip hasVariants or
+    // force clients to send productVariantId (cart rejects that).
+    let variants = [];
+    if (product.hasVariants) {
+        const variantFilter = {
+            productId: pid,
+            isDeleted: { $ne: true },
+            status: "Active",
+        };
+        if (product.companyId) {
+            variantFilter.$or = [
+                { companyId: product.companyId },
+                { companyId: null },
+                { companyId: { $exists: false } },
+            ];
+        }
+
+        const rows = await ProductVariant.find(variantFilter)
+            .select(
+                "combinationString sku sellingPrice offerPrice images quantity status attributes"
+            )
+            .populate({
+                path: "attributes.variantId",
+                select: "name",
+            })
+            .populate({
+                path: "attributes.variantTypeId",
+                select: "type name",
+            })
+            .sort({ isDefaultVariant: -1, createdAt: 1 })
+            .lean();
+
+        variants = await Promise.all(
+            rows.map(async (variant, index) => {
+                const attrLabel = Array.isArray(variant.attributes)
+                    ? variant.attributes
+                          .map((attr) => {
+                              const name =
+                                  attr?.variantId?.name ||
+                                  attr?.variantId?.type ||
+                                  "";
+                              return String(name).trim();
+                          })
+                          .filter(Boolean)
+                          .join(" / ")
+                    : "";
+                const label =
+                    (variant.combinationString || "").toString().trim() ||
+                    attrLabel ||
+                    (variant.sku || "").toString().trim() ||
+                    `Option ${index + 1}`;
+
+                return {
+                    id: variant._id,
+                    label,
+                    sku: variant.sku || "",
+                    sellingPrice: resolveUnitPrice(variant),
+                    offerPrice:
+                        variant.offerPrice != null &&
+                        Number(variant.offerPrice) > 0
+                            ? Number(variant.offerPrice)
+                            : null,
+                    imageUrl:
+                        pickImageUrl(variant.images) ||
+                        pickImageUrl(product.images),
+                    availableStock: await getAvailableStock(product, variant),
+                    attributes: Array.isArray(variant.attributes)
+                        ? variant.attributes.map((attr) => ({
+                              variantTypeId:
+                                  attr?.variantTypeId?._id ||
+                                  attr?.variantTypeId ||
+                                  null,
+                              variantTypeName:
+                                  attr?.variantTypeId?.type ||
+                                  attr?.variantTypeId?.name ||
+                                  "",
+                              variantId:
+                                  attr?.variantId?._id ||
+                                  attr?.variantId ||
+                                  null,
+                              variantName: attr?.variantId?.name || "",
+                          }))
+                        : [],
+                };
+            })
+        );
     }
-
-    const rows = await ProductVariant.find(variantFilter)
-        .select(
-            "combinationString sku sellingPrice offerPrice images quantity status attributes"
-        )
-        .populate({
-            path: "attributes.variantId",
-            select: "name",
-        })
-        .populate({
-            path: "attributes.variantTypeId",
-            select: "type name",
-        })
-        .sort({ isDefaultVariant: -1, createdAt: 1 })
-        .lean();
-
-    const variants = await Promise.all(
-        rows.map(async (variant, index) => {
-            const attrLabel = Array.isArray(variant.attributes)
-                ? variant.attributes
-                      .map((attr) => {
-                          const name =
-                              attr?.variantId?.name ||
-                              attr?.variantId?.type ||
-                              "";
-                          return String(name).trim();
-                      })
-                      .filter(Boolean)
-                      .join(" / ")
-                : "";
-            const label =
-                (variant.combinationString || "").toString().trim() ||
-                attrLabel ||
-                (variant.sku || "").toString().trim() ||
-                `Option ${index + 1}`;
-
-            return {
-                id: variant._id,
-                label,
-                sku: variant.sku || "",
-                sellingPrice: resolveUnitPrice(variant),
-                offerPrice:
-                    variant.offerPrice != null && Number(variant.offerPrice) > 0
-                        ? Number(variant.offerPrice)
-                        : null,
-                imageUrl:
-                    pickImageUrl(variant.images) || pickImageUrl(product.images),
-                availableStock: await getAvailableStock(product, variant),
-                attributes: Array.isArray(variant.attributes)
-                    ? variant.attributes.map((attr) => ({
-                          variantTypeId:
-                              attr?.variantTypeId?._id ||
-                              attr?.variantTypeId ||
-                              null,
-                          variantTypeName:
-                              attr?.variantTypeId?.type ||
-                              attr?.variantTypeId?.name ||
-                              "",
-                          variantId:
-                              attr?.variantId?._id || attr?.variantId || null,
-                          variantName: attr?.variantId?.name || "",
-                      }))
-                    : [],
-            };
-        })
-    );
 
     const ratingMap = await getRatingStatsMap([product._id]);
 
@@ -558,7 +575,7 @@ const getProductById = async (productId) => {
             availableStock,
             ratingMap.get(String(product._id)) || null
         ),
-        hasVariants: variants.length > 0 || Boolean(product.hasVariants),
+        hasVariants: Boolean(product.hasVariants),
         variants,
     };
 };

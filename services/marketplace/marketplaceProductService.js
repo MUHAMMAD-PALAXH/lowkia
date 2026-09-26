@@ -80,32 +80,47 @@ const assertSellableCompany = (company) => {
 };
 
 const getAvailableStock = async (product, variant = null) => {
-    const match = {
+    const baseMatch = {
         productId: product._id,
         companyId: product.companyId,
         isDeleted: { $ne: true },
     };
 
-    if (variant?._id) {
-        match.productVariantId = variant._id;
-    }
-
-    const [agg] = await Inventory.aggregate([
-        { $match: match },
-        {
-            $group: {
-                _id: null,
-                available: { $sum: "$availableStock" },
+    const sumInventory = async (extraMatch = {}) => {
+        const [agg] = await Inventory.aggregate([
+            { $match: { ...baseMatch, ...extraMatch } },
+            {
+                $group: {
+                    _id: null,
+                    available: { $sum: "$availableStock" },
+                },
             },
-        },
-    ]);
+        ]);
+        return Number(agg?.available) || 0;
+    };
 
-    const fromInventory = Number(agg?.available) || 0;
-    if (fromInventory > 0) return fromInventory;
+    if (variant?._id) {
+        const variantStock = await sumInventory({
+            productVariantId: variant._id,
+        });
+        if (variantStock > 0) return variantStock;
 
-    if (variant) {
-        return Math.max(Number(variant.quantity) || 0, 0);
+        const unscopedStock = await sumInventory({
+            $or: [
+                { productVariantId: null },
+                { productVariantId: { $exists: false } },
+            ],
+        });
+        if (unscopedStock > 0) return unscopedStock;
+
+        const variantQty = Math.max(Number(variant.quantity) || 0, 0);
+        if (variantQty > 0) return variantQty;
+
+        return Math.max(Number(product.availableStock) || 0, 0);
     }
+
+    const fromInventory = await sumInventory();
+    if (fromInventory > 0) return fromInventory;
 
     return Math.max(Number(product.availableStock) || 0, 0);
 };
@@ -135,9 +150,12 @@ const resolveMarketplaceLine = async ({
     const pid = toObjectId(productId);
     if (!pid) throw new AppError("Invalid productId.", 400);
 
+    // Match catalog browseability: anything visible in the storefront must be
+    // purchasable. Strict publish/approval gates blocked Active-looking stock
+    // rows that still appear in MARKETPLACE_CATALOG_QUERY.
     const product = await Product.findOne({
         _id: pid,
-        ...MARKETPLACE_PRODUCT_QUERY,
+        ...MARKETPLACE_CATALOG_QUERY,
     }).lean();
 
     if (!product) {
@@ -158,24 +176,42 @@ const resolveMarketplaceLine = async ({
     let variant = null;
     const variantId = toObjectId(productVariantId);
 
-    if (product.hasVariants) {
-        if (!variantId) {
-            throw new AppError("Product variant is required.", 400);
-        }
+    const variantScope = {
+        productId: pid,
+        isDeleted: { $ne: true },
+        status: "Active",
+        $or: [
+            { companyId: product.companyId },
+            { companyId: null },
+            { companyId: { $exists: false } },
+        ],
+    };
 
-        variant = await ProductVariant.findOne({
-            _id: variantId,
-            productId: pid,
-            companyId: product.companyId,
-            isDeleted: false,
-            status: "Active",
-        }).lean();
+    if (product.hasVariants) {
+        if (variantId) {
+            variant = await ProductVariant.findOne({
+                ...variantScope,
+                _id: variantId,
+            }).lean();
+        } else {
+            // One-click add: pick default / first Active option.
+            variant = await ProductVariant.findOne(variantScope)
+                .sort({ isDefaultVariant: -1, createdAt: 1 })
+                .lean();
+        }
 
         if (!variant) {
-            throw new AppError("Product variant is not available.", 404);
+            throw new AppError(
+                variantId
+                    ? "Product variant is not available."
+                    : "Product variant is required.",
+                variantId ? 404 : 400
+            );
         }
-    } else if (variantId) {
-        throw new AppError("This product does not use variants.", 400);
+    } else {
+        // Non-variant products must not carry a variant id. Ignore stale client
+        // payloads instead of failing with "does not use variants".
+        variant = null;
     }
 
     const availableStock = await getAvailableStock(product, variant);
