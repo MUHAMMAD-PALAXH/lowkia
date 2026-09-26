@@ -100,27 +100,27 @@ const getAvailableStock = async (product, variant = null) => {
     };
 
     if (variant?._id) {
-        const variantStock = await sumInventory({
+        // Variant lines must use Inventory for that variant only.
+        // Do not fall back to product.availableStock / unscoped rows / raw
+        // variant.quantity — reservation only deducts Inventory rows, so any
+        // other source lets the cart accept qty checkout cannot reserve.
+        return sumInventory({
             productVariantId: variant._id,
         });
-        if (variantStock > 0) return variantStock;
-
-        const unscopedStock = await sumInventory({
-            $or: [
-                { productVariantId: null },
-                { productVariantId: { $exists: false } },
-            ],
-        });
-        if (unscopedStock > 0) return unscopedStock;
-
-        const variantQty = Math.max(Number(variant.quantity) || 0, 0);
-        if (variantQty > 0) return variantQty;
-
-        return Math.max(Number(product.availableStock) || 0, 0);
     }
 
-    const fromInventory = await sumInventory();
+    const fromInventory = await sumInventory({
+        $or: [
+            { productVariantId: null },
+            { productVariantId: { $exists: false } },
+        ],
+    });
     if (fromInventory > 0) return fromInventory;
+
+    // Legacy rows may still store stock against orphan variant ids on
+    // simple products — include them only when unscoped stock is empty.
+    const anyStock = await sumInventory();
+    if (anyStock > 0) return anyStock;
 
     return Math.max(Number(product.availableStock) || 0, 0);
 };

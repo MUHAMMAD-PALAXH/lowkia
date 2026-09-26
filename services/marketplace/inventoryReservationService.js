@@ -47,6 +47,36 @@ const findInventoryWithStock = async ({
         .session(session || null);
 };
 
+/** Sum available stock across warehouses for a product/variant. */
+const sumAvailableStock = async ({
+    companyId,
+    productId,
+    productVariantId,
+    session,
+}) => {
+    const filter = {
+        companyId: toObjectId(companyId),
+        productId: toObjectId(productId),
+        isDeleted: { $ne: true },
+    };
+    const variantId = toObjectId(productVariantId);
+    if (variantId) {
+        filter.productVariantId = variantId;
+    } else {
+        filter.$or = [
+            { productVariantId: null },
+            { productVariantId: { $exists: false } },
+        ];
+    }
+
+    const rows = await Inventory.find(filter)
+        .select("availableStock")
+        .session(session || null)
+        .lean();
+
+    return rows.reduce((sum, row) => sum + (Number(row.availableStock) || 0), 0);
+};
+
 const reserveInventoryLine = async ({
     companyId,
     companyOrderId,
@@ -95,8 +125,15 @@ const reserveInventoryLine = async ({
             };
         }
 
+        const availableTotal = await sumAvailableStock({
+            companyId,
+            productId,
+            productVariantId,
+            session,
+        });
+
         throw new AppError(
-            `Insufficient stock for "${productName}". Required: ${quantity}.`,
+            `Insufficient stock for "${productName}". Available: ${availableTotal}, required: ${quantity}.`,
             400
         );
     }
