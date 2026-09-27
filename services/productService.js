@@ -2115,7 +2115,9 @@ const seedManualOpeningInventory = async (product, actorId = null) => {
 
         const previous = Math.max(Number(inv.currentStock) || 0, 0);
         const reserved = Math.max(Number(inv.reservedStock) || 0, 0);
-        const nextCurrent = Math.max(target, reserved);
+        // variant.quantity is sellable (refreshStockSummary stores on hand − reserved);
+        // IMEI target counts on-hand units, which already include reserved ones.
+        const nextCurrent = imeiMode ? Math.max(target, reserved) : target + reserved;
         const delta = nextCurrent - previous;
         const cost =
             Number(inv.averageCost) > 0

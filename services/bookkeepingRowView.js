@@ -352,6 +352,51 @@ const loadDocs = async (companyId, refs) => {
     return { docs, checkouts };
 };
 
+const stockKey = (m) => `${m.warehouseId}|${m.productId}|${m.productVariantId || ""}`;
+
+/**
+ * Reserved units on the same inventory row right after each movement.
+ * Only online-order holds change reservedStock, and each writes a movement:
+ * hold (Adjustment OUT) +q, release (Adjustment IN) −q, ship from hold (Sale reserved→out) −q.
+ */
+const reservedBalances = async (companyId, movements, StockMovement) => {
+    const result = new Map();
+    const keyed = movements.filter((m) => m.warehouseId && m.productId);
+    if (!keyed.length) return result;
+    const maxId = keyed.reduce((max, m) => (String(m._id) > String(max) ? m._id : max), keyed[0]._id);
+    const holds = await StockMovement.find({
+        ...companyFilter(companyId),
+        referenceType: "Marketplace Order",
+        productId: { $in: [...new Set(keyed.map((m) => String(m.productId)))].map(toOid) },
+        warehouseId: { $in: [...new Set(keyed.map((m) => String(m.warehouseId)))].map(toOid) },
+        _id: { $lte: maxId },
+    })
+        .select("warehouseId productId productVariantId movementType movementDirection quantity remarks")
+        .sort({ _id: 1 })
+        .lean();
+
+    const byKey = new Map();
+    for (const h of holds) {
+        const q = Number(h.quantity) || 0;
+        let delta = 0;
+        if (h.movementType === "Adjustment") delta = h.movementDirection === "OUT" ? q : -q;
+        else if (h.movementType === "Sale" && String(h.remarks || "").includes("reserved→out")) delta = -q;
+        if (!delta) continue;
+        const key = stockKey(h);
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push({ id: String(h._id), delta });
+    }
+    for (const m of keyed) {
+        let reserved = 0;
+        for (const h of byKey.get(stockKey(m)) || []) {
+            if (h.id > String(m._id)) break;
+            reserved = Math.max(reserved + h.delta, 0);
+        }
+        result.set(String(m._id), reserved);
+    }
+    return result;
+};
+
 /** Adds display fields to lean ledger rows (in place) and returns them. */
 const presentRows = async (companyId, rows = []) => {
     if (!rows.length) return rows;
@@ -360,16 +405,17 @@ const presentRows = async (companyId, rows = []) => {
         .filter((r) => r.sourceType === "StockMovement")
         .map((r) => toOid(r.sourceId))
         .filter(Boolean);
+    const StockMovement = require("../model/StockMovement");
     const [{ docs, checkouts }, movements] = await Promise.all([
         loadDocs(companyId, refs),
         movementIds.length
-            ? require("../model/StockMovement")
-                  .find({ _id: { $in: movementIds }, ...companyFilter(companyId) })
-                  .select("previousStock currentStock")
+            ? StockMovement.find({ _id: { $in: movementIds }, ...companyFilter(companyId) })
+                  .select("previousStock currentStock warehouseId productId productVariantId")
                   .lean()
             : [],
     ]);
     const onHand = new Map(movements.map((m) => [String(m._id), m]));
+    const reservedAfter = await reservedBalances(companyId, movements, StockMovement);
 
     rows.forEach((row, i) => {
         const ref = refs[i];
@@ -406,8 +452,11 @@ const presentRows = async (companyId, rows = []) => {
         row.qtyChange = qtyChange(row, kind);
         const movement = onHand.get(String(row.sourceId));
         if (movement) {
+            const stock = Number(movement.currentStock) || 0;
+            const reserved = reservedAfter.get(String(movement._id)) || 0;
             row.stockBefore = Number(movement.previousStock) || 0;
-            row.stockAfter = Number(movement.currentStock) || 0;
+            row.stockAfter = stock;
+            row.balanceAfter = { stock, reserved, available: Math.max(stock - reserved, 0) };
         }
     });
     return rows;
