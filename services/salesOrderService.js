@@ -3033,6 +3033,7 @@ module.exports = {
     lookupByOrderCode,
     getBranchCatalog,
     exportSalesOrdersExcel,
+    soMethodToFinance,
     // Exported for focused tenant unit tests
     markImeisSold,
     unmarkImeisSold

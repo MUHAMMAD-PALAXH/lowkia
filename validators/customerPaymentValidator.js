@@ -45,7 +45,8 @@ const createCheckoutValidator = [
 const listValidator = [
     query("page").optional().isInt({ min: 1 }),
     query("limit").optional().isInt({ min: 1, max: 100 }),
-    query("status").optional().isIn(PAYMENT_STATUSES),
+    query("status").optional().isIn([...PAYMENT_STATUSES, "pending"]),
+    query("includePending").optional().isIn(["true", "false"]),
     query("salesOrderId").optional().isMongoId(),
     query("repairTicketId").optional().isMongoId(),
     query("customerId").optional().isMongoId(),

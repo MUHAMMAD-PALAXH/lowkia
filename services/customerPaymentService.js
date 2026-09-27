@@ -27,7 +27,7 @@ const {
     isCloverConfigured,
     getStripePublishableKey,
 } = require("./paymentProviders");
-const { markPaid } = require("./salesOrderService");
+const { markPaid, soMethodToFinance } = require("./salesOrderService");
 const {
     applyPaymentToRepairTicket,
 } = require("./repairTicketService");
@@ -1345,13 +1345,102 @@ const listCustomerPayments = async (companyId, query = {}) => {
         }
     }
 
+    let rows = items.map(serializePayment);
+    let rowTotal = total;
+    if (
+        String(query.includePending) === "true" &&
+        page === 1 &&
+        !query.repairTicketId &&
+        (!query.status || query.status === "pending")
+    ) {
+        const pending = await listPendingSalesOrderRows(companyId, query, limit);
+        rows = [...rows, ...pending]
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+            .slice(0, limit);
+        rowTotal += pending.length;
+    }
+
     return {
-        items: items.map(serializePayment),
+        items: rows,
         page,
         limit,
-        total,
-        pages: Math.ceil(total / limit) || 1,
+        total: rowTotal,
+        pages: Math.ceil(rowTotal / limit) || 1,
     };
+};
+
+const OPEN_PAYMENT_STATUSES = ["draft", "pendingApproval", "approved", "processing"];
+
+/**
+ * Sales orders with money still due and no open checkout, as read-only "pending" rows.
+ * These are not Payment documents: no ledger, bookkeeping or balance effect.
+ */
+const listPendingSalesOrderRows = async (companyId, query, limit) => {
+    const filter = {
+        companyId,
+        ...NOT_DELETED,
+        status: { $ne: "Cancelled" },
+        paymentStatus: { $in: ["Pending", "Partial"] },
+        dueAmount: { $gt: 0.009 },
+    };
+    if (query.salesOrderId && toObjectId(query.salesOrderId)) {
+        filter._id = toObjectId(query.salesOrderId);
+    }
+    if (query.customerId && toObjectId(query.customerId)) {
+        filter.customerId = toObjectId(query.customerId);
+    }
+    const s = String(query.search || "").trim();
+    if (s) {
+        const rx = { $regex: s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
+        filter.$or = [{ orderNumber: rx }, { customerName: rx }];
+    }
+    const orders = await SalesOrder.find(filter)
+        .select(
+            "orderNumber orderDate createdAt grandTotal paidAmount dueAmount paymentStatus paymentMethod status customerId customerName"
+        )
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .lean();
+    if (!orders.length) return [];
+
+    const open = await Payment.distinct("salesOrderId", {
+        companyId,
+        ...NOT_DELETED,
+        paymentType: "CustomerPayment",
+        status: { $in: OPEN_PAYMENT_STATUSES },
+        salesOrderId: { $in: orders.map((o) => o._id) },
+    });
+    const openIds = new Set(open.map(String));
+    const method = query.paymentMethod
+        ? String(query.paymentMethod).trim().toUpperCase().replace(/\s+/g, "_")
+        : "";
+
+    return orders
+        .filter((o) => !openIds.has(String(o._id)))
+        .map((o) => {
+            const due = Number(o.dueAmount) || 0;
+            const amountMinor = toMinor(due, DEFAULT_CURRENCY);
+            return {
+                _id: `pending-${o._id}`,
+                isPendingSalesOrder: true,
+                paymentNumber: null,
+                paymentType: "CustomerPayment",
+                status: "pending",
+                paymentMethod: soMethodToFinance(o.paymentMethod),
+                salesOrderId: o,
+                partyId: null,
+                currency: DEFAULT_CURRENCY,
+                amountMinor,
+                amounts: {
+                    amount: toMajor(amountMinor, DEFAULT_CURRENCY),
+                    paidAmount: 0,
+                    dueAmount: toMajor(amountMinor, DEFAULT_CURRENCY),
+                },
+                transactionDate: o.orderDate || o.createdAt,
+                createdAt: o.createdAt,
+            };
+        })
+        .filter((row) => !method || row.paymentMethod === method);
 };
 
 const getProviderInfo = () => ({
