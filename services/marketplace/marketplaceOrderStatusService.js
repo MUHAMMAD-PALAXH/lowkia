@@ -272,6 +272,7 @@ const transitionCompanyOrderStatus = async (
 
     companyOrder.status = normalizedNext;
     applyCompanyStatusSideEffects(companyOrder, normalizedNext, reason);
+    if (actorId) companyOrder.$locals.bookkeepingActorId = actorId;
     await companyOrder.save({ session });
 
     await syncOnlineOrderMirrorStatus(companyOrder, session);

@@ -102,7 +102,7 @@ const buildTrackingUrl = (template, trackingNumber) => {
     return tpl.replace(/\{trackingNumber\}/gi, encodeURIComponent(number));
 };
 
-const syncCompanyOrderShipmentStatus = async (companyOrder, session) => {
+const syncCompanyOrderShipmentStatus = async (companyOrder, session, actorId = null) => {
     const orderItems = await MarketplaceOrderItem.find({
         companyOrderId: companyOrder._id,
         ...NOT_DELETED,
@@ -135,6 +135,7 @@ const syncCompanyOrderShipmentStatus = async (companyOrder, session) => {
             {
                 session,
                 allowSystem: true,
+                actorId,
             }
         );
     }
@@ -374,7 +375,8 @@ const createShipment = async (companyOrderId, payload = {}, actorId = null, comp
 
         const { transitionResult } = await syncCompanyOrderShipmentStatus(
             companyOrder,
-            session
+            session,
+            actorId
         );
         await syncMasterOrderStatus(companyOrder.masterOrderId, { session });
 
@@ -548,7 +550,7 @@ const updateShipment = async (
             transitionResult = await transitionCompanyOrderStatus(
                 companyOrder,
                 nextStatus,
-                { allowSystem: true }
+                { allowSystem: true, actorId }
             );
         } else {
             await syncMasterOrderStatus(companyOrder.masterOrderId);

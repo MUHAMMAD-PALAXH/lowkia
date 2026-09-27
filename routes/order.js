@@ -939,6 +939,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
     }
   }
 
+  order.$locals.bookkeepingActorId = req.user?._id || null;
   await order.save();
 
   if (companyOrder) {

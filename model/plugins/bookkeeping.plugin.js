@@ -30,9 +30,12 @@ function bookkeepingPlugin(schema, { kind } = {}) {
     schema.post("save", async function postToLedger(doc) {
         if (!doc?.$locals?.bookkeepingSync) return;
         doc.$locals.bookkeepingSync = false;
+        // Staff user behind this save; callers set it before save() when known.
+        const actorId = doc.$locals.bookkeepingActorId || null;
+        doc.$locals.bookkeepingActorId = null;
         try {
             const { syncDocument } = require("../../services/bookkeepingSyncService");
-            await syncDocument(kind, doc, { session: doc.$session() || null });
+            await syncDocument(kind, doc, { session: doc.$session() || null, actorId });
         } catch (err) {
             console.error(`[bookkeeping] ${kind} ${doc._id} sync failed:`, err?.message || err);
         }

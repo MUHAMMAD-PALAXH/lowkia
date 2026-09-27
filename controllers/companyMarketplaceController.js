@@ -115,6 +115,7 @@ exports.updateCompanyOrderStatus = asyncHandler(async (req, res) => {
     const result = await updateCompanyOrderStatus(
         req.params.companyOrderId,
         req.body,
+        getActorId(req),
         req.companyId
     );
     return success(res, "Company order status updated.", {

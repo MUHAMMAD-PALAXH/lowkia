@@ -566,7 +566,7 @@ const ONLINE_INACTIVE = new Set(["pending", "cancelled", "refunded"]);
 
 const syncCompanyOrder = async (companyOrder, opts = {}) => {
     if (!companyOrder?.companyId) return;
-    const { session = null, dryRun = false } = opts;
+    const { session = null, dryRun = false, actorId = null } = opts;
     const total = Number(companyOrder.totals?.total) || 0;
 
     const [refunds, checkout, mirror] = await Promise.all([
@@ -620,7 +620,9 @@ const syncCompanyOrder = async (companyOrder, opts = {}) => {
         partyId: companyOrder.erpCustomerId || null,
         partyName: companyOrder.shippingAddress?.recipientName || "",
         currency: companyOrder.currency || "",
-        createdByName: await adminName(companyOrder.userId, session),
+        // Staff who changed the status; the buyer for automatic steps (checkout).
+        createdBy: actorId || null,
+        createdByName: await adminName(actorId || companyOrder.userId, session),
         metadata: { orderSource: mirror?.orderSource || "unknown" },
     };
 
@@ -743,14 +745,14 @@ const syncMarketplaceRefund = async (refund, opts = {}) => {
         },
         { session, dryRun }
     );
-    await syncCompanyOrder(companyOrder, { session, dryRun });
+    await syncCompanyOrder(companyOrder, { session, dryRun, actorId: refund.processedBy || null });
 };
 
 // ── Legacy Admin online orders (not mirrored from marketplace) ─────────────
 
 const syncLegacyOrder = async (order, opts = {}) => {
     if (!order?.companyId || order.companyOrderId) return;
-    const { session = null, dryRun = false } = opts;
+    const { session = null, dryRun = false, actorId = null } = opts;
     const total = Number(order.totalPrice) || 0;
     const delivered = order.orderStatus === "delivered";
     const number = order.orderNumber || String(order._id).slice(-8).toUpperCase();
@@ -766,7 +768,12 @@ const syncLegacyOrder = async (order, opts = {}) => {
             `${buyer?.firstName || ""} ${buyer?.lastName || ""}`.trim() ||
             order.shippingAddress?.phone ||
             "",
-        createdByName: buyer ? `${personLabel(buyer) || "Customer"} (customer)` : "",
+        createdBy: actorId || null,
+        createdByName: actorId
+            ? await adminName(actorId, session)
+            : buyer
+              ? `${personLabel(buyer) || "Customer"} (customer)`
+              : "",
         metadata: { orderSource: order.orderSource || "unknown" },
     };
     await syncTarget({

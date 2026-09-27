@@ -382,7 +382,7 @@ const completeRefund = async (refundId, payload = {}, companyId, actorId) => {
                 transitionResult = await transitionCompanyOrderStatus(
                     companyOrder,
                     "refunded",
-                    { session, allowSystem: true, reason: refund.reason }
+                    { session, allowSystem: true, reason: refund.reason, actorId }
                 );
             }
         }
