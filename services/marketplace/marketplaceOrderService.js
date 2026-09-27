@@ -377,6 +377,25 @@ const listMasterOrders = async (userId, query = {}) => {
               .lean()
         : [];
 
+    const lineRows = masterIds.length
+        ? await MarketplaceOrderItem.find({
+              masterOrderId: { $in: masterIds },
+              ...NOT_DELETED,
+          })
+              .select("masterOrderId quantity product.productName product.variantLabel")
+              .lean()
+        : [];
+    const linesByMaster = new Map();
+    for (const line of lineRows) {
+        const key = String(line.masterOrderId);
+        if (!linesByMaster.has(key)) linesByMaster.set(key, []);
+        linesByMaster.get(key).push({
+            productName: line.product?.productName || "Product",
+            variantLabel: line.product?.variantLabel || "",
+            quantity: Number(line.quantity) || 0,
+        });
+    }
+
     const paymentMethodByMaster = new Map();
     for (const payment of payments) {
         const key = String(payment.masterOrderId);
@@ -417,6 +436,7 @@ const listMasterOrders = async (userId, query = {}) => {
             placedAt: order.placedAt,
             createdAt: order.createdAt,
             sellers: sellersByMaster.get(String(order._id)) || [],
+            items: linesByMaster.get(String(order._id)) || [],
             canPay: ["pending", "failed", "processing"].includes(order.paymentStatus),
             canTrack: [
                 "partially_shipped",

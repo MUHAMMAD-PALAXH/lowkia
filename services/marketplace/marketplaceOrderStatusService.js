@@ -203,6 +203,18 @@ const syncMasterOrderStatus = async (
     return { masterOrder, previousStatus, nextStatus, changed: true };
 };
 
+/** Keep the Admin Online Order copy on the same status as its company order. */
+const syncOnlineOrderMirrorStatus = async (companyOrder, session = null) => {
+    if (!companyOrder.onlineOrderId) return;
+    const { mapCompanyStatusToOnline } = require("./marketplaceOnlineOrderBridgeService");
+    const onlineStatus = mapCompanyStatusToOnline(companyOrder.status);
+    await require("../../model/order").updateOne(
+        { _id: companyOrder.onlineOrderId, orderStatus: { $ne: onlineStatus } },
+        { $set: { orderStatus: onlineStatus } },
+        { session: session || undefined }
+    );
+};
+
 /**
  * Transition a company order with validation and sync master aggregate.
  */
@@ -248,16 +260,34 @@ const transitionCompanyOrderStatus = async (
         assertCompanyTransition(current, normalizedNext);
     }
 
+    // Lazy: the reservation service pulls in product/inventory services.
+    const {
+        releaseOpenCompanyInventory,
+        syncProductsForLines,
+    } = require("./inventoryReservationService");
+    let releasedLines = [];
+    if (normalizedNext === "cancelled" && current !== "cancelled") {
+        releasedLines = await releaseOpenCompanyInventory({ companyOrder, actorId, session });
+    }
+
     companyOrder.status = normalizedNext;
     applyCompanyStatusSideEffects(companyOrder, normalizedNext, reason);
     await companyOrder.save({ session });
+
+    await syncOnlineOrderMirrorStatus(companyOrder, session);
 
     const syncResult = await syncMasterOrderStatus(companyOrder.masterOrderId, {
         session,
         reason,
     });
 
+    // With a session the caller refreshes after commit (summaries read committed stock).
+    if (!session && releasedLines.length) {
+        await syncProductsForLines(releasedLines.map((line) => ({ product: line })));
+    }
+
     return {
+        releasedLines,
         companyOrder,
         masterOrder: syncResult.masterOrder,
         previousStatus: current,
@@ -307,6 +337,11 @@ const updateCompanyOrderStatus = async (
             actorId,
         });
         await session.commitTransaction();
+        if (result.releasedLines.length) {
+            await require("./inventoryReservationService").syncProductsForLines(
+                result.releasedLines.map((line) => ({ product: line }))
+            );
+        }
         void emitStatusNotificationsFromTransition(result);
         void auditMarketplaceAction({
             actor: { _id: actorId, role: "admin", companyId },

@@ -22,6 +22,15 @@ const { assertDocumentCompany } = require('../services/companyService');
 const { isCompanyEmployee } = require('../utils/roleAccess');
 const unitBarcodeService = require('../services/productUnitBarcodeService');
 const CompanyOrder = require('../model/marketplace/companyOrder');
+const MasterOrder = require('../model/marketplace/masterOrder');
+const StockMovement = require('../model/StockMovement');
+const Warehouse = require('../model/warehouse');
+const SalesOrder = require('../model/salesOrder');
+const {
+  fulfillCompanyOrderInventory,
+  releaseOpenCompanyInventory,
+  syncProductsForLines,
+} = require('../services/marketplace/inventoryReservationService');
 const {
   CANCELLABLE_COMPANY_STATUSES,
   transitionCompanyOrderStatus,
@@ -76,6 +85,100 @@ async function resolveStaffBranchScope(req) {
 
 const scopeAllows = (scope, branchId) =>
   !scope || scope.branchIds.includes(String(branchId));
+
+/**
+ * Adds what the Admin needs to match the customer app: the checkout number the
+ * buyer sees, the buyer's name, and for unassigned orders the branch that holds
+ * the stock (where the reservation sits, else the ordered products' branch).
+ * `candidateBranchIds` is internal — strip it before responding.
+ */
+async function decorateOnlineOrders(orders, tenant) {
+  const companyOrderIds = orders.map((o) => o.companyOrderId).filter(Boolean);
+  const companyOrders = companyOrderIds.length
+    ? await CompanyOrder.find({ _id: { $in: companyOrderIds }, ...tenant })
+        .select('masterOrderId shippingAddress.recipientName')
+        .lean()
+    : [];
+  const masters = companyOrders.length
+    ? await MasterOrder.find({ _id: { $in: companyOrders.map((c) => c.masterOrderId) } })
+        .select('orderNumber')
+        .lean()
+    : [];
+  const masterNumber = new Map(masters.map((m) => [String(m._id), m.orderNumber]));
+  const companyOrderById = new Map(companyOrders.map((c) => [String(c._id), c]));
+
+  const unassigned = orders.filter((o) => !o.branchId);
+  const stockBranch = new Map();
+  const unassignedCompanyOrderIds = unassigned.map((o) => o.companyOrderId).filter(Boolean);
+  if (unassignedCompanyOrderIds.length) {
+    const moves = await StockMovement.find({
+      ...tenant,
+      referenceType: 'Marketplace Order',
+      referenceId: { $in: unassignedCompanyOrderIds },
+      movementDirection: 'OUT'
+    })
+      .select('referenceId branchId warehouseId')
+      .sort({ createdAt: -1 })
+      .lean();
+    const warehouseIds = moves.filter((m) => !m.branchId && m.warehouseId).map((m) => m.warehouseId);
+    const warehouses = warehouseIds.length
+      ? await Warehouse.find({ _id: { $in: warehouseIds }, ...tenant }).select('branchId branchIds').lean()
+      : [];
+    const warehouseBranch = new Map(
+      warehouses.map((w) => [String(w._id), w.branchId || w.branchIds?.[0] || null])
+    );
+    for (const move of moves) {
+      const key = String(move.referenceId);
+      if (stockBranch.has(key)) continue;
+      const branchId = move.branchId || warehouseBranch.get(String(move.warehouseId));
+      if (branchId) stockBranch.set(key, String(branchId));
+    }
+  }
+
+  const productIds = [
+    ...new Set(
+      unassigned
+        .flatMap((o) => (o.items || []).map((i) => String(i.productID || '')))
+        .filter((id) => mongoose.isValidObjectId(id))
+    )
+  ];
+  const products = productIds.length
+    ? await Product.find({ _id: { $in: productIds }, ...tenant }).select('branchIds').lean()
+    : [];
+  const productBranches = new Map(
+    products.map((p) => [String(p._id), (p.branchIds || []).map(String)])
+  );
+
+  for (const order of orders) {
+    const companyOrder = order.companyOrderId
+      ? companyOrderById.get(String(order.companyOrderId))
+      : null;
+    order.customerOrderNumber =
+      (companyOrder && masterNumber.get(String(companyOrder.masterOrderId))) ||
+      order.orderNumber ||
+      null;
+    const user = order.userID && typeof order.userID === 'object' ? order.userID : null;
+    order.customerName =
+      [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
+      user?.name ||
+      companyOrder?.shippingAddress?.recipientName ||
+      '';
+    if (!order.branchId) {
+      const reserved = order.companyOrderId ? stockBranch.get(String(order.companyOrderId)) : null;
+      const fromProducts = [
+        ...new Set((order.items || []).flatMap((i) => productBranches.get(String(i.productID)) || []))
+      ];
+      order.suggestedBranchId =
+        reserved || (fromProducts.length === 1 ? fromProducts[0] : null);
+      order.candidateBranchIds = reserved ? [reserved] : fromProducts;
+    }
+  }
+  return orders;
+}
+
+/** Branch staff may see an unassigned order only if its stock/products belong to their branch. */
+const scopeSeesUnassigned = (scope, order) =>
+  !scope || (order.candidateBranchIds || []).some((id) => scope.branchIds.includes(id));
 
 /**
  * Admin online-order status → marketplace CompanyOrder status (what USER_APP
@@ -521,7 +624,11 @@ router.get('/', asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 })
     .lean();
 
+  await decorateOnlineOrders(orders, tenant);
+  if (scope) orders = orders.filter((o) => o.branchId || scopeSeesUnassigned(scope, o));
+
   for (const order of orders) {
+    delete order.candidateBranchIds;
     for (const item of order.items) {
       if (item.productID && mongoose.isValidObjectId(item.productID)) {
         const product = await Product.findOne({ _id: item.productID, ...tenant }).select('images').lean();
@@ -538,14 +645,19 @@ router.get('/', asyncHandler(async (req, res) => {
 router.get('/:id', asyncHandler(async (req, res) => {
   const tenant = companyFilter(req.companyId);
   const order = await Order.findOne({ _id: req.params.id, ...tenant })
-    .populate('userID', 'name email')
+    .populate('userID', 'name email firstName lastName')
     .populate('couponCode', 'couponCode')
     .lean();
 
   if (!order) return res.status(404).json({ success: false, message: 'Not found' });
 
+  await decorateOnlineOrders([order], tenant);
   const scope = await resolveStaffBranchScope(req);
-  if (order.branchId && !scopeAllows(scope, order.branchId)) {
+  const visible = order.branchId
+    ? scopeAllows(scope, order.branchId)
+    : scopeSeesUnassigned(scope, order);
+  delete order.candidateBranchIds;
+  if (!visible) {
     return res.status(403).json({
       success: false,
       message: 'This online order belongs to another branch.'
@@ -714,7 +826,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
   }
 
   // Marketplace orders (USER_APP) mirror this status on their CompanyOrder.
-  const companyOrder = order.companyOrderId
+  let companyOrder = order.companyOrderId
     ? await CompanyOrder.findOne({
         _id: order.companyOrderId,
         isDeleted: { $ne: true },
@@ -734,6 +846,51 @@ router.put('/:id', asyncHandler(async (req, res) => {
       success: false,
       message: `This marketplace order is already ${companyOrder.status} and can no longer be cancelled.`
     });
+  }
+
+  // Shipping/delivering here is the marketplace order's stock-out (idempotent).
+  let stockLines = [];
+  if (companyOrder && ['shipped', 'delivered'].includes(orderStatus)) {
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        const fresh = await CompanyOrder.findById(companyOrder._id).session(session);
+        const soDeducted = fresh.salesOrderId
+          ? await SalesOrder.exists({ _id: fresh.salesOrderId, stockUpdated: true }).session(session)
+          : null;
+        if (soDeducted) {
+          // A bridged Sales Order already took the stock out; only free the reservation.
+          stockLines = await releaseOpenCompanyInventory({
+            companyOrder: fresh,
+            actorId: req.user?._id,
+            session
+          });
+          await fresh.save({ session });
+          return;
+        }
+        const warehouseIds = targetBranchId
+          ? await Warehouse.distinct('_id', {
+              ...tenant,
+              isDeleted: { $ne: true },
+              $or: [{ branchId: targetBranchId }, { branchIds: targetBranchId }]
+            }).session(session)
+          : [];
+        stockLines = await fulfillCompanyOrderInventory({
+          companyOrder: fresh,
+          warehouseIds,
+          actorId: req.user?._id,
+          session
+        });
+      });
+    } catch (err) {
+      return res.status(err.statusCode || 400).json({
+        success: false,
+        message: err.message || 'Could not update stock for this order.'
+      });
+    } finally {
+      session.endSession();
+    }
+    companyOrder = await CompanyOrder.findById(companyOrder._id);
   }
 
   if (delivering && resolved) {
@@ -834,6 +991,14 @@ router.put('/:id', asyncHandler(async (req, res) => {
         success: false,
         message: `Order saved, but the customer app status could not be updated: ${err?.message || 'sync failed'}. Save again to retry.`
       });
+    }
+  }
+
+  if (stockLines.length) {
+    try {
+      await syncProductsForLines(stockLines.map((line) => ({ product: line })));
+    } catch (err) {
+      console.error('[orders] product stock refresh failed:', err?.message || err);
     }
   }
 

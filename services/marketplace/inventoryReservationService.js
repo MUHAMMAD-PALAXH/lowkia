@@ -44,12 +44,16 @@ const buildInventoryFilter = ({
     productId,
     productVariantId,
     variantMode = "exact",
+    warehouseIds = null,
 }) => {
     const filter = {
         productId: toObjectId(productId),
         isDeleted: { $ne: true },
         ...companyScope(companyId),
     };
+    if (warehouseIds?.length) {
+        filter.warehouseId = { $in: warehouseIds.map(toObjectId).filter(Boolean) };
+    }
 
     const variantId = toObjectId(productVariantId);
     if (variantMode === "exact" && variantId) {
@@ -76,6 +80,7 @@ const pickInventoryRow = async ({
     qty,
     session,
     variantMode,
+    warehouseIds = null,
 }) => {
     const rows = await Inventory.find(
         buildInventoryFilter({
@@ -83,6 +88,7 @@ const pickInventoryRow = async ({
             productId,
             productVariantId,
             variantMode,
+            warehouseIds,
         })
     )
         .sort({ availableStock: -1, currentStock: -1 })
@@ -99,6 +105,7 @@ const findInventoryWithStock = async ({
     productVariantId,
     qty,
     session,
+    warehouseIds = null,
 }) => {
     const variantId = toObjectId(productVariantId);
 
@@ -110,6 +117,7 @@ const findInventoryWithStock = async ({
         qty,
         session,
         variantMode: variantId ? "exact" : "null",
+        warehouseIds,
     });
     if (inv) return inv;
 
@@ -122,6 +130,7 @@ const findInventoryWithStock = async ({
             qty,
             session,
             variantMode: "null",
+            warehouseIds,
         });
         if (inv) return inv;
     }
@@ -134,7 +143,67 @@ const findInventoryWithStock = async ({
         qty,
         session,
         variantMode: "any",
+        warehouseIds,
     });
+};
+
+/** Warehouses where this order's reservation for the product was taken. */
+const reservationWarehouseIds = async ({ companyId, companyOrderId, productId, session }) => {
+    const orderId = toObjectId(companyOrderId);
+    if (!orderId) return [];
+    const ids = await StockMovement.distinct("warehouseId", {
+        companyId: toObjectId(companyId),
+        referenceType: "Marketplace Order",
+        referenceId: orderId,
+        productId: toObjectId(productId),
+        movementType: "Adjustment",
+        movementDirection: "OUT",
+    }).session(session || null);
+    return ids.filter(Boolean);
+};
+
+/**
+ * Reserved row for an order line. The reservation may sit on a null-variant
+ * row (simple stock), so its own warehouse is searched first, any variant;
+ * elsewhere only the exact variant is trusted.
+ */
+const findReservedInventoryRow = async ({
+    companyId,
+    companyOrderId,
+    productId,
+    productVariantId,
+    quantity,
+    session,
+}) => {
+    const base = {
+        companyId: toObjectId(companyId),
+        productId: toObjectId(productId),
+        isDeleted: { $ne: true },
+        reservedStock: { $gte: quantity },
+    };
+    const variantId = toObjectId(productVariantId);
+    const reservedIn = await reservationWarehouseIds({
+        companyId,
+        companyOrderId,
+        productId,
+        session,
+    });
+
+    const attempts = [];
+    if (reservedIn.length) {
+        const inReserved = { ...base, warehouseId: { $in: reservedIn } };
+        if (variantId) attempts.push({ ...inReserved, productVariantId: variantId });
+        attempts.push(inReserved);
+    }
+    attempts.push(variantId ? { ...base, productVariantId: variantId } : base);
+
+    for (const filter of attempts) {
+        const inv = await Inventory.findOne(filter)
+            .sort({ reservedStock: -1 })
+            .session(session || null);
+        if (inv) return inv;
+    }
+    return null;
 };
 
 /** Sum available stock across warehouses for a product/variant. */
@@ -339,18 +408,14 @@ const releaseInventoryLine = async ({
         );
     }
 
-    const filter = {
-        companyId: toObjectId(companyId),
-        productId: toObjectId(productId),
-        isDeleted: { $ne: true },
-        reservedStock: { $gte: quantity },
-    };
-    const variantId = toObjectId(productVariantId);
-    if (variantId) filter.productVariantId = variantId;
-
-    const inv = await Inventory.findOne(filter)
-        .sort({ reservedStock: -1 })
-        .session(session || null);
+    const inv = await findReservedInventoryRow({
+        companyId,
+        companyOrderId,
+        productId,
+        productVariantId,
+        quantity,
+        session,
+    });
 
     if (!inv) {
         throw new AppError(
@@ -594,18 +659,14 @@ const fulfillReservedInventoryLine = async ({
         );
     }
 
-    const filter = {
-        companyId: toObjectId(companyId),
-        productId: toObjectId(productId),
-        isDeleted: { $ne: true },
-        reservedStock: { $gte: quantity },
-    };
-    const variantId = toObjectId(productVariantId);
-    if (variantId) filter.productVariantId = variantId;
-
-    const inv = await Inventory.findOne(filter)
-        .sort({ reservedStock: -1 })
-        .session(session || null);
+    const inv = await findReservedInventoryRow({
+        companyId,
+        companyOrderId,
+        productId,
+        productVariantId,
+        quantity,
+        session,
+    });
 
     if (!inv) {
         throw new AppError(
@@ -751,6 +812,206 @@ const releaseUnshippedCompanyInventory = async ({
     return releasedLines;
 };
 
+const outKey = (productId, variantId) => `${productId}:${variantId || ""}`;
+
+/** Qty already taken out per order item (shipments and online deliveries both post Sale movements). */
+const fulfilledQtyByItem = async (companyOrder, items, session) => {
+    const rows = await StockMovement.aggregate([
+        {
+            $match: {
+                companyId: toObjectId(companyOrder.companyId),
+                referenceType: "Marketplace Order",
+                referenceId: toObjectId(companyOrder._id),
+                movementType: "Sale",
+                movementDirection: "OUT",
+            },
+        },
+        {
+            $group: {
+                _id: { p: "$productId", v: "$productVariantId" },
+                qty: { $sum: "$quantity" },
+            },
+        },
+    ]).session(session || null);
+
+    const pool = new Map(rows.map((r) => [outKey(r._id.p, r._id.v), Number(r.qty) || 0]));
+    const byItem = new Map();
+    for (const item of items) {
+        const key = outKey(item.product.productId, item.product.productVariantId);
+        const left = pool.get(key) || 0;
+        const take = Math.min(left, Number(item.quantity) || 0);
+        pool.set(key, left - take);
+        byItem.set(String(item._id), take);
+    }
+    return byItem;
+};
+
+const openQty = (item, out) =>
+    (Number(item.quantity) || 0) -
+    (Number(item.refundedQuantity) || 0) -
+    (out.get(String(item._id)) || 0);
+
+/** Sell straight from available stock (no reservation to consume). */
+const deductInventoryRow = async (inv, line) => {
+    const { companyId, companyOrderId, companyOrderNumber, productId, productVariantId } = line;
+    const current = Number(inv.currentStock) || 0;
+    const available = effectiveAvailable(inv);
+
+    if (!inv.companyId && companyId) inv.companyId = toObjectId(companyId);
+    inv.currentStock = Math.max(current - line.qty, 0);
+    inv.availableStock = Math.max(available - line.qty, 0);
+    inv.inventoryValue = (Number(inv.averageCost) || 0) * inv.currentStock;
+    inv.lastMovementDate = new Date();
+    applyStockStatus(inv);
+    await inv.save({ session: line.session });
+
+    const movementNumber = await generateStockMovementCode({ session: line.session });
+    await StockMovement.create(
+        [
+            {
+                movementNumber,
+                movementDate: new Date(),
+                companyId: toObjectId(companyId),
+                warehouseId: inv.warehouseId,
+                branchId: inv.branchId || null,
+                productId: toObjectId(productId),
+                productVariantId: toObjectId(productVariantId) || null,
+                sku: line.sku || "",
+                productName: line.productName,
+                movementType: "Sale",
+                movementDirection: "OUT",
+                quantity: line.qty,
+                previousStock: current,
+                currentStock: inv.currentStock,
+                unitCost: Number(inv.averageCost) || 0,
+                totalCost: (Number(inv.averageCost) || 0) * line.qty,
+                referenceType: "Marketplace Order",
+                referenceId: toObjectId(companyOrderId),
+                remarks: `Online order ${companyOrderNumber} fulfilled (available→out)`,
+                createdBy: toObjectId(line.createdBy),
+            },
+        ],
+        { session: line.session }
+    );
+
+    return { productId, productVariantId, quantity: line.qty, warehouseId: inv.warehouseId };
+};
+
+/**
+ * Take out every unit of a company order not yet deducted. Admin Online Orders
+ * marks shipped/delivered without marketplace shipments, so this is its stock-out.
+ * `warehouseIds` = fulfilling branch's warehouses: stock leaves there, and a
+ * reservation held in another branch is released back to available.
+ */
+const fulfillCompanyOrderInventory = async ({
+    companyOrder,
+    warehouseIds = [],
+    actorId = null,
+    session = null,
+}) => {
+    const items = await MarketplaceOrderItem.find({
+        companyOrderId: companyOrder._id,
+        ...NOT_DELETED,
+    }).session(session || null);
+    const out = await fulfilledQtyByItem(companyOrder, items, session);
+    const preferred = warehouseIds.map(String).filter(Boolean);
+    const lines = [];
+
+    for (const item of items) {
+        const qty = openQty(item, out);
+        if (qty <= 0) continue;
+
+        const line = {
+            companyId: companyOrder.companyId,
+            companyOrderId: companyOrder._id,
+            companyOrderNumber: companyOrder.orderNumber,
+            productId: item.product.productId,
+            productVariantId: item.product.productVariantId,
+            productName: item.product.productName,
+            sku: item.product.sku,
+            qty,
+            session,
+            createdBy: actorId || companyOrder.userId,
+        };
+
+        const reserved = companyOrder.inventoryReservedAt
+            ? await findReservedInventoryRow({ ...line, quantity: qty })
+            : null;
+        if (reserved && (!preferred.length || preferred.includes(String(reserved.warehouseId)))) {
+            lines.push(await fulfillReservedInventoryLine(line));
+            continue;
+        }
+
+        let row = preferred.length
+            ? await findInventoryWithStock({ ...line, warehouseIds: preferred })
+            : null;
+        if (!row && reserved) {
+            // Chosen branch lacks free stock — ship what was reserved for this order.
+            lines.push(await fulfillReservedInventoryLine(line));
+            continue;
+        }
+        if (!row) row = await findInventoryWithStock(line);
+        if (!row) {
+            const available = await sumAvailableStock(line);
+            throw new AppError(
+                `Insufficient stock for "${line.productName}". Available: ${available}, required: ${qty}.`,
+                400
+            );
+        }
+        if (reserved) await releaseInventoryLine(line);
+        lines.push(await deductInventoryRow(row, line));
+    }
+
+    if (companyOrder.inventoryReservedAt) {
+        companyOrder.inventoryReservedAt = null;
+        await companyOrder.save({ session: session || undefined });
+    }
+    return lines;
+};
+
+/**
+ * Return still-reserved units to available when an order is cancelled before
+ * shipping. Clears `inventoryReservedAt` on the doc; the caller saves it.
+ */
+const releaseOpenCompanyInventory = async ({ companyOrder, actorId = null, session = null }) => {
+    if (!companyOrder.inventoryReservedAt) return [];
+    const items = await MarketplaceOrderItem.find({
+        companyOrderId: companyOrder._id,
+        ...NOT_DELETED,
+    }).session(session || null);
+    const out = await fulfilledQtyByItem(companyOrder, items, session);
+    const lines = [];
+
+    for (const item of items) {
+        const qty = openQty(item, out);
+        if (qty <= 0) continue;
+        try {
+            lines.push(
+                await releaseInventoryLine({
+                    companyId: companyOrder.companyId,
+                    companyOrderId: companyOrder._id,
+                    companyOrderNumber: companyOrder.orderNumber,
+                    productId: item.product.productId,
+                    productVariantId: item.product.productVariantId,
+                    productName: item.product.productName,
+                    sku: item.product.sku,
+                    qty,
+                    session,
+                    createdBy: actorId || companyOrder.userId,
+                })
+            );
+        } catch (err) {
+            // A drifted reservation must not block the cancellation itself.
+            console.error(
+                `[marketplace] reservation release skipped for ${companyOrder.orderNumber}:`,
+                err?.message || err
+            );
+        }
+    }
+    companyOrder.inventoryReservedAt = null;
+    return lines;
+};
+
 module.exports = {
     reserveInventoryLine,
     releaseInventoryLine,
@@ -762,4 +1023,6 @@ module.exports = {
     reserveMasterOrderInventory,
     releaseMasterOrderInventory,
     syncProductsForLines,
+    fulfillCompanyOrderInventory,
+    releaseOpenCompanyInventory,
 };

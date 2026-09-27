@@ -1684,7 +1684,10 @@ const getLiveProductStock = async (productId) => {
                 .includes("NON");
         return {
             totalStock: isImei ? totalImeiCount : invTotal,
-            availableStock: isImei ? totalImeiCount : invAvailable,
+            // Reserved IMEIs stay "available" in ItemTrack until delivery scans them.
+            availableStock: isImei
+                ? Math.max(totalImeiCount - invReserved, 0)
+                : invAvailable,
             reservedStock: invReserved,
             stockValue: invValue,
             warehouseStock: rows.map((row) => ({
@@ -2972,7 +2975,7 @@ const refreshStockSummary = async (id) => {
             $group: {
                 _id: "$productVariantId",
                 qty: { $sum: "$currentStock" },
-                avail: { $sum: "$availableStock" },
+                reserved: { $sum: "$reservedStock" },
                 lastPurchasePrice: { $max: "$lastPurchasePrice" },
                 inventoryValue: {
                     $sum: {
@@ -2988,13 +2991,16 @@ const refreshStockSummary = async (id) => {
 
     for (const row of byVariant) {
         if (!row._id) continue;
-        let qty = Number(row.avail) || Number(row.qty) || 0;
+        // Sellable = on hand − reserved for open online orders.
+        const reserved = Number(row.reserved) || 0;
+        let qty = Math.max((Number(row.qty) || 0) - reserved, 0);
         if (isImei) {
-            qty = await ItemTrack.countDocuments({
+            const onHand = await ItemTrack.countDocuments({
                 productId: productObjectId,
                 variantId: row._id,
                 status: "available"
             });
+            qty = Math.max(onHand - reserved, 0);
         }
         await ProductVariant.updateOne(
             { _id: row._id, isDeleted: { $ne: true } },
