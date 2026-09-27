@@ -48,10 +48,15 @@ const findLean = (modelKey, id, select, session) => {
     return withSession(Models[modelKey]().findById(oid).select(select).lean(), session);
 };
 
+const personLabel = (u) =>
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email || "";
+
+/** Staff name; marketplace flows store the buyer's User id as the actor instead. */
 const adminName = async (id, session) => {
     const user = await findLean("AdminUser", id, "firstName lastName email", session);
-    if (!user) return "";
-    return `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || "";
+    if (user) return personLabel(user);
+    const buyer = await findLean("User", id, "firstName lastName email", session);
+    return buyer ? `${personLabel(buyer) || "Customer"} (customer)` : "";
 };
 
 const partyName = async (partyType, partyId, session) => {
@@ -599,6 +604,7 @@ const syncCompanyOrder = async (companyOrder, opts = {}) => {
         partyId: companyOrder.erpCustomerId || null,
         partyName: companyOrder.shippingAddress?.recipientName || "",
         currency: companyOrder.currency || "",
+        createdByName: await adminName(companyOrder.userId, session),
         metadata: { orderSource: mirror?.orderSource || "unknown" },
     };
 
@@ -744,6 +750,7 @@ const syncLegacyOrder = async (order, opts = {}) => {
             `${buyer?.firstName || ""} ${buyer?.lastName || ""}`.trim() ||
             order.shippingAddress?.phone ||
             "",
+        createdByName: buyer ? `${personLabel(buyer) || "Customer"} (customer)` : "",
         metadata: { orderSource: order.orderSource || "unknown" },
     };
     await syncTarget({
