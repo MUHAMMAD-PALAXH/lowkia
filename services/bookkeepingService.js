@@ -320,11 +320,23 @@ const buildLedgerMatch = (companyId, query = {}, managedBranchIds = null) => {
     return { match, from, to };
 };
 
+/**
+ * A sales order's stock movements are shown on the order row itself (presentRows),
+ * so the list hides them unless the user searches or filters by type.
+ * Summaries/reports keep using the plain match.
+ */
+const withMergedOrderStock = (match, query = {}) =>
+    String(query.search || "").trim() || csvList(query.transactionType).length
+        ? match
+        : { ...match, $nor: [{ sourceType: "StockMovement", "relatedDocuments.type": "Sales Order" }] };
+
 const LEDGER_LIST_FIELDS =
     "entryNumber transactionDate transactionType sourceModule sourceType sourceId sourceNumber description partyType partyId partyName branchId toBranchId warehouseId toWarehouseId productId productName sku imeis quantity amount account direction cashIn cashOut currency paymentMethod paymentProvider paymentReference status isReversal createdByName createdAt relatedDocuments metadata.movementType";
 
 const listEntries = async (companyId, query = {}, managedBranchIds = null) => {
-    const { match, from, to } = buildLedgerMatch(companyId, query, managedBranchIds);
+    const built = buildLedgerMatch(companyId, query, managedBranchIds);
+    const { from, to } = built;
+    const match = withMergedOrderStock(built.match, query);
     const limit = LEDGER_PAGE_SIZES.includes(Number(query.limit)) ? Number(query.limit) : 50;
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const sortField = LEDGER_SORTS[query.sortBy] || "transactionDate";
@@ -656,7 +668,7 @@ const exportLedger = async (companyId, query = {}, managedBranchIds = null) => {
     const ExcelJS = require("exceljs");
     const format = query.format === "csv" ? "csv" : "xlsx";
     const { match, from, to } = buildLedgerMatch(companyId, query, managedBranchIds);
-    const rows = await BookkeepingEntry.find(match)
+    const rows = await BookkeepingEntry.find(withMergedOrderStock(match, query))
         .select(LEDGER_LIST_FIELDS)
         .populate("branchId", "name")
         .sort({ transactionDate: -1, _id: -1 })

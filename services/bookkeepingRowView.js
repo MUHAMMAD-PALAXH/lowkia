@@ -10,7 +10,7 @@ const { companyFilter } = require("../utils/tenantScope");
 const DOCS = {
     SalesOrder: {
         model: "../model/salesOrder",
-        fields: "orderNumber status paymentStatus paymentMethod",
+        fields: "orderNumber status paymentStatus paymentMethod grandTotal paidAmount",
         label: "Sales Order",
         number: (d) => d.orderNumber,
     },
@@ -209,12 +209,19 @@ const kindOf = (row) => {
 };
 
 /**
- * Change caused by one stock movement row, using the inventory screen's terms:
- * stock = on hand (includes reserved), reserved = held for online orders,
- * sold = units that left through a sale, available = stock − reserved.
+ * Quantity buckets: stock = units taken into stock (on hand + sold, so a sale does not
+ * lower it), reserved = held for online orders, sold = units that left through a sale,
+ * available = on hand − reserved.
  */
+const change = (onHand, reserved, sold) => ({
+    stock: onHand + sold,
+    reserved,
+    sold,
+    available: onHand - reserved,
+});
+
+/** Change caused by one stock movement row. */
 const qtyChange = (row, kind) => {
-    const change = (stock, reserved, sold) => ({ stock, reserved, sold, available: stock - reserved });
     if (row.sourceType !== "StockMovement") return change(0, 0, 0);
     const q = Number(row.quantity) || 0;
     const sign = row.direction === "in" ? 1 : -1;
@@ -354,47 +361,134 @@ const loadDocs = async (companyId, refs) => {
 
 const stockKey = (m) => `${m.warehouseId}|${m.productId}|${m.productVariantId || ""}`;
 
+const MOVEMENT_FIELDS =
+    "previousStock currentStock warehouseId productId productVariantId movementType movementDirection quantity remarks referenceType salesOrderId productName sku serialNumbers movementDate createdAt";
+
+const isFromReservation = (m) => String(m.remarks || "").includes("reserved→out");
+
 /**
- * Reserved units on the same inventory row right after each movement.
- * Only online-order holds change reservedStock, and each writes a movement:
- * hold (Adjustment OUT) +q, release (Adjustment IN) −q, ship from hold (Sale reserved→out) −q.
+ * Reserved and cumulative sold units on the same inventory row right after each movement.
+ * reserved (only online-order holds change reservedStock): hold (Adjustment OUT) +q,
+ * release (Adjustment IN) −q, ship from hold (Sale reserved→out) −q.
+ * sold: Sale OUT +q, Sales Return IN −q, stocked sales order trashed (Sales Order Adjustment IN) −q.
  */
-const reservedBalances = async (companyId, movements, StockMovement) => {
+const bucketBalances = async (companyId, movements, StockMovement) => {
     const result = new Map();
     const keyed = movements.filter((m) => m.warehouseId && m.productId);
     if (!keyed.length) return result;
     const maxId = keyed.reduce((max, m) => (String(m._id) > String(max) ? m._id : max), keyed[0]._id);
-    const holds = await StockMovement.find({
+    const history = await StockMovement.find({
         ...companyFilter(companyId),
-        referenceType: "Marketplace Order",
         productId: { $in: [...new Set(keyed.map((m) => String(m.productId)))].map(toOid) },
         warehouseId: { $in: [...new Set(keyed.map((m) => String(m.warehouseId)))].map(toOid) },
         _id: { $lte: maxId },
+        $or: [
+            { referenceType: "Marketplace Order" },
+            { movementType: { $in: ["Sale", "Sales Return"] } },
+            { referenceType: "Sales Order", movementType: "Adjustment" },
+        ],
     })
-        .select("warehouseId productId productVariantId movementType movementDirection quantity remarks")
+        .select("warehouseId productId productVariantId movementType movementDirection quantity remarks referenceType")
         .sort({ _id: 1 })
         .lean();
 
     const byKey = new Map();
-    for (const h of holds) {
+    for (const h of history) {
         const q = Number(h.quantity) || 0;
-        let delta = 0;
-        if (h.movementType === "Adjustment") delta = h.movementDirection === "OUT" ? q : -q;
-        else if (h.movementType === "Sale" && String(h.remarks || "").includes("reserved→out")) delta = -q;
-        if (!delta) continue;
+        const out = h.movementDirection === "OUT";
+        let reserved = 0;
+        let sold = 0;
+        if (h.movementType === "Adjustment") {
+            if (h.referenceType === "Marketplace Order") reserved = out ? q : -q;
+            else if (h.referenceType === "Sales Order" && !out) sold = -q;
+        } else if (h.movementType === "Sale" || h.movementType === "Sales Return") {
+            sold = out ? q : -q;
+            if (isFromReservation(h)) reserved = -q;
+        }
+        if (!reserved && !sold) continue;
         const key = stockKey(h);
         if (!byKey.has(key)) byKey.set(key, []);
-        byKey.get(key).push({ id: String(h._id), delta });
+        byKey.get(key).push({ id: String(h._id), reserved, sold });
     }
     for (const m of keyed) {
         let reserved = 0;
+        let sold = 0;
         for (const h of byKey.get(stockKey(m)) || []) {
             if (h.id > String(m._id)) break;
-            reserved = Math.max(reserved + h.delta, 0);
+            reserved = Math.max(reserved + h.reserved, 0);
+            sold = Math.max(sold + h.sold, 0);
         }
-        result.set(String(m._id), reserved);
+        result.set(String(m._id), { reserved, sold });
     }
     return result;
+};
+
+const balanceOf = (m, buckets) => {
+    const onHand = Number(m.currentStock) || 0;
+    const reserved = buckets?.reserved || 0;
+    return {
+        stock: onHand + (buckets?.sold || 0),
+        reserved,
+        available: Math.max(onHand - reserved, 0),
+    };
+};
+
+/** Quantity change of a sales order's own stock movement. */
+const orderMovementChange = (m) => {
+    const q = Number(m.quantity) || 0;
+    if (m.movementType === "Sale") return isFromReservation(m) ? change(-q, -q, q) : change(-q, 0, q);
+    return change(q, 0, -q);
+};
+
+const sumChanges = (lines) =>
+    lines.reduce(
+        (acc, l) => ({
+            stock: acc.stock + l.qtyChange.stock,
+            reserved: acc.reserved + l.qtyChange.reserved,
+            sold: acc.sold + l.qtyChange.sold,
+            available: acc.available + l.qtyChange.available,
+        }),
+        { stock: 0, reserved: 0, sold: 0, available: 0 }
+    );
+
+/** Puts a sales order's product lines on its ledger row (one row per order event). */
+const applyLines = (row, lines) => {
+    if (!lines.length) return;
+    const first = lines[0];
+    row.lines = lines;
+    if (!row.productName) {
+        row.productName =
+            lines.length > 1 ? `${first.productName} +${lines.length - 1} more` : first.productName;
+    }
+    if (!row.sku && lines.length === 1) row.sku = first.sku;
+    if (!Number(row.quantity)) row.quantity = lines.reduce((n, l) => n + l.quantity, 0);
+    if (!row.imeis?.length) row.imeis = lines.flatMap((l) => l.imeis || []);
+    row.qtyChange = sumChanges(lines);
+    if (lines.length === 1) {
+        row.balanceAfter = first.balanceAfter;
+        if (first.stockBefore !== undefined) {
+            row.stockBefore = first.stockBefore;
+            row.stockAfter = first.stockAfter;
+        }
+    }
+};
+
+const timeOf = (v) => new Date(v || 0).getTime();
+const ORDER_ROW_WINDOW_MS = 5 * 60 * 1000;
+/** Payments posted right after the stock-out belong to the same counter checkout. */
+const SAME_CHECKOUT_MS = 10 * 1000;
+
+/**
+ * Sales-order payment status as it was when the row was posted: ledger payments
+ * up to that moment, plus any paid amount the ledger never recorded (legacy orders).
+ */
+const orderStatusAt = (doc, payments, cutoff) => {
+    if (!doc || doc.status === "Cancelled") return "";
+    const ledgerPaid = payments.reduce((n, p) => n + p.net, 0);
+    const untracked = Math.max((Number(doc.paidAmount) || 0) - ledgerPaid, 0);
+    const paid = untracked + payments.filter((p) => p.at <= cutoff).reduce((n, p) => n + p.net, 0);
+    if (paid >= (Number(doc.grandTotal) || 0) - 0.009) return "paid";
+    return paid > 0.009 ? "partially_paid" : "due";
 };
 
 /** Stock rows written by the product add/edit form (productService remarks end in "product save"). */
@@ -413,12 +507,19 @@ const presentRows = async (companyId, rows = []) => {
         .filter(isProductFormRow)
         .map((r) => toOid(r.productId))
         .filter(Boolean);
+    const isOrderRow = (row, i) =>
+        refs[i]?.kind === "SalesOrder" &&
+        (row.sourceType === "SalesOrder" ||
+            (row.sourceType === "Payment" && row.transactionType === "customer_payment"));
+    const orderIds = [
+        ...new Set(rows.map((r, i) => (isOrderRow(r, i) ? String(toOid(refs[i].id) || "") : "")).filter(Boolean)),
+    ].map(toOid);
     const StockMovement = require("../model/StockMovement");
-    const [{ docs, checkouts }, movements, products] = await Promise.all([
+    const [{ docs, checkouts }, movements, products, orderMovements, orderPayments] = await Promise.all([
         loadDocs(companyId, refs),
         movementIds.length
             ? StockMovement.find({ _id: { $in: movementIds }, ...companyFilter(companyId) })
-                  .select("previousStock currentStock warehouseId productId productVariantId")
+                  .select(MOVEMENT_FIELDS)
                   .lean()
             : [],
         productIds.length
@@ -427,10 +528,101 @@ const presentRows = async (companyId, rows = []) => {
                   .select("productCode")
                   .lean()
             : [],
+        orderIds.length
+            ? StockMovement.find({
+                  ...companyFilter(companyId),
+                  salesOrderId: { $in: orderIds },
+                  referenceType: "Sales Order",
+              })
+                  .select(MOVEMENT_FIELDS)
+                  .sort({ _id: 1 })
+                  .lean()
+            : [],
+        orderIds.length
+            ? require("../model/bookkeepingEntry")
+                  .find({
+                      ...companyFilter(companyId),
+                      sourceType: "Payment",
+                      transactionType: { $in: ["customer_payment", "payment_reversal"] },
+                      relatedDocuments: { $elemMatch: { type: "SalesOrder", id: { $in: orderIds } } },
+                  })
+                  .select("relatedDocuments cashIn cashOut createdAt")
+                  .lean()
+            : [],
     ]);
     const onHand = new Map(movements.map((m) => [String(m._id), m]));
     const productCodes = new Map(products.map((p) => [String(p._id), p.productCode || ""]));
-    const reservedAfter = await reservedBalances(companyId, movements, StockMovement);
+
+    const orderIdSet = new Set(orderIds.map(String));
+    const paymentsByOrder = new Map();
+    for (const p of orderPayments) {
+        for (const d of p.relatedDocuments || []) {
+            const id = String(d.id);
+            if (d.type !== "SalesOrder" || !orderIdSet.has(id)) continue;
+            if (!paymentsByOrder.has(id)) paymentsByOrder.set(id, []);
+            paymentsByOrder
+                .get(id)
+                .push({ at: timeOf(p.createdAt), net: (Number(p.cashIn) || 0) - (Number(p.cashOut) || 0) });
+        }
+    }
+
+    // Order rows (sale / sale reversal) take their own stock movements; payment rows
+    // show the order's products as they stood when the payment was posted.
+    const orderSales = (orderId) =>
+        orderMovements.filter((m) => String(m.salesOrderId) === orderId && m.movementType === "Sale");
+    const ownMovements = new Map();
+    const paymentAnchors = new Map();
+    const anchorQueries = [];
+    rows.forEach((row, i) => {
+        if (!isOrderRow(row, i)) return;
+        const orderId = String(toOid(refs[i].id));
+        if (row.sourceType === "SalesOrder") {
+            if (!["sale", "sale_reversal"].includes(row.transactionType)) return;
+            const wanted = orderMovements.filter(
+                (m) =>
+                    String(m.salesOrderId) === orderId &&
+                    (row.transactionType === "sale"
+                        ? m.movementType === "Sale"
+                        : m.movementType === "Adjustment" && m.movementDirection === "IN")
+            );
+            const at = timeOf(row.transactionDate);
+            const near = wanted.filter(
+                (m) => Math.abs(timeOf(m.movementDate || m.createdAt) - at) <= ORDER_ROW_WINDOW_MS
+            );
+            ownMovements.set(i, near.length ? near : wanted);
+            return;
+        }
+        const sales = orderSales(orderId);
+        if (!sales.length) return;
+        const before = mongoose.Types.ObjectId.createFromTime(Math.floor(timeOf(row.createdAt) / 1000) + 1);
+        paymentAnchors.set(i, []);
+        for (const sale of sales) {
+            anchorQueries.push(
+                StockMovement.findOne({
+                    ...companyFilter(companyId),
+                    warehouseId: sale.warehouseId,
+                    productId: sale.productId,
+                    productVariantId: sale.productVariantId || null,
+                    _id: { $lt: before },
+                })
+                    .select(MOVEMENT_FIELDS)
+                    .sort({ _id: -1 })
+                    .lean()
+                    .then((anchor) => paymentAnchors.get(i).push({ sale, anchor: anchor || sale }))
+            );
+        }
+    });
+    await Promise.all(anchorQueries);
+
+    const buckets = await bucketBalances(
+        companyId,
+        [
+            ...movements,
+            ...orderMovements,
+            ...[...paymentAnchors.values()].flat().map((p) => p.anchor),
+        ],
+        StockMovement
+    );
 
     rows.forEach((row, i) => {
         const ref = refs[i];
@@ -454,6 +646,10 @@ const presentRows = async (companyId, rows = []) => {
         }
 
         let status = paymentStatusOf(ref?.kind, doc, checkout);
+        if (isOrderRow(row, i) && (row.transactionType === "sale" || row.sourceType === "Payment")) {
+            const cutoff = timeOf(row.createdAt) + (row.sourceType === "Payment" ? 0 : SAME_CHECKOUT_MS);
+            status = orderStatusAt(doc, paymentsByOrder.get(String(toOid(ref.id))) || [], cutoff);
+        }
         if (!status && row.sourceType === "Payment" && kind !== "payment_reversed") status = "paid";
         row.paymentStatus = status;
 
@@ -471,11 +667,42 @@ const presentRows = async (companyId, rows = []) => {
         row.qtyChange = qtyChange(row, kind);
         const movement = onHand.get(String(row.sourceId));
         if (movement) {
-            const stock = Number(movement.currentStock) || 0;
-            const reserved = reservedAfter.get(String(movement._id)) || 0;
             row.stockBefore = Number(movement.previousStock) || 0;
-            row.stockAfter = stock;
-            row.balanceAfter = { stock, reserved, available: Math.max(stock - reserved, 0) };
+            row.stockAfter = Number(movement.currentStock) || 0;
+            row.balanceAfter = balanceOf(movement, buckets.get(String(movement._id)));
+        }
+        if (ownMovements.has(i)) {
+            applyLines(
+                row,
+                ownMovements.get(i).map((m) => ({
+                    productName: m.productName || "",
+                    sku: m.sku || "",
+                    quantity: Number(m.quantity) || 0,
+                    imeis: m.serialNumbers || [],
+                    qtyChange: orderMovementChange(m),
+                    stockBefore: Number(m.previousStock) || 0,
+                    stockAfter: Number(m.currentStock) || 0,
+                    balanceAfter: balanceOf(m, buckets.get(String(m._id))),
+                }))
+            );
+        }
+        if (paymentAnchors.has(i)) {
+            applyLines(
+                row,
+                [...paymentAnchors.get(i)]
+                    .sort((a, b) => (String(a.sale._id) < String(b.sale._id) ? -1 : 1))
+                    .map(({ sale, anchor }) => {
+                    const q = Number(sale.quantity) || 0;
+                    return {
+                        productName: sale.productName || "",
+                        sku: sale.sku || "",
+                        quantity: q,
+                        imeis: sale.serialNumbers || [],
+                        qtyChange: { stock: 0, reserved: 0, sold: q, available: 0 },
+                        balanceAfter: balanceOf(anchor, buckets.get(String(anchor._id))),
+                    };
+                })
+            );
         }
     });
     return rows;
