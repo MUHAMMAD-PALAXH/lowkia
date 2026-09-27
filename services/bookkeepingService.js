@@ -481,6 +481,18 @@ const sumIfType = (types, field = "$amount") => ({
     $sum: { $cond: [{ $in: ["$transactionType", types] }, field, 0] },
 });
 
+/** Reservation rows posted before they got their own type (on-hand stock unchanged). */
+const NOT_LEGACY_RESERVATION = {
+    $not: [
+        {
+            $and: [
+                { $eq: ["$sourceType", "StockMovement"] },
+                { $regexMatch: { input: { $ifNull: ["$description", ""] }, regex: "Marketplace reservation" } },
+            ],
+        },
+    ],
+};
+
 const periodGroupFields = {
     count: { $sum: 1 },
     revenue: sumEffect("REVENUE"),
@@ -494,7 +506,13 @@ const periodGroupFields = {
     stockInQty: {
         $sum: {
             $cond: [
-                { $and: [{ $eq: ["$account", "INVENTORY"] }, { $eq: ["$direction", "in"] }] },
+                {
+                    $and: [
+                        { $eq: ["$account", "INVENTORY"] },
+                        { $eq: ["$direction", "in"] },
+                        NOT_LEGACY_RESERVATION,
+                    ],
+                },
                 "$quantity",
                 0,
             ],
@@ -503,7 +521,13 @@ const periodGroupFields = {
     stockOutQty: {
         $sum: {
             $cond: [
-                { $and: [{ $eq: ["$account", "INVENTORY"] }, { $eq: ["$direction", "out"] }] },
+                {
+                    $and: [
+                        { $eq: ["$account", "INVENTORY"] },
+                        { $eq: ["$direction", "out"] },
+                        NOT_LEGACY_RESERVATION,
+                    ],
+                },
                 "$quantity",
                 0,
             ],

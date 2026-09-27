@@ -38,6 +38,7 @@ const Models = {
     CompanyOrder: lazy("../model/marketplace/companyOrder"),
     CheckoutPayment: lazy("../model/marketplace/checkoutPayment"),
     MarketplaceRefund: lazy("../model/marketplace/refund"),
+    StockMovement: lazy("../model/StockMovement"),
 };
 
 const withSession = (query, session) => (session ? query.session(session) : query);
@@ -589,9 +590,24 @@ const syncCompanyOrder = async (companyOrder, opts = {}) => {
     ]);
     const refunded = refunds.reduce((s, r) => s + (Number(r.amount) || 0), 0);
     const active = !ONLINE_INACTIVE.has(companyOrder.status) && !companyOrder.isDeleted;
+    // Unassigned online orders: use the branch whose stock holds the order.
+    const stockBranch = mirror?.branchId
+        ? null
+        : await withSession(
+              Models.StockMovement()
+                  .findOne({
+                      companyId: companyOrder.companyId,
+                      referenceType: "Marketplace Order",
+                      referenceId: companyOrder._id,
+                      branchId: { $ne: null },
+                  })
+                  .select("branchId")
+                  .lean(),
+              session
+          );
 
     const common = {
-        branchId: mirror?.branchId || null,
+        branchId: mirror?.branchId || stockBranch?.branchId || null,
         sourceModule: "Online Order",
         sourceType: "CompanyOrder",
         sourceNumber: companyOrder.orderNumber || "",
@@ -818,7 +834,14 @@ const STOCK_MODULE = {
     "Marketplace Order": "Online Order",
 };
 
+/** Online-order reservations move stock available↔reserved; on-hand stock is unchanged. */
+const isReservationMovement = (movement) =>
+    movement.referenceType === "Marketplace Order" && movement.movementType === "Adjustment";
+
 const stockType = (movement) => {
+    if (isReservationMovement(movement)) {
+        return movement.movementDirection === "IN" ? "stock_released" : "stock_reserved";
+    }
     if (["Transfer In", "Transfer Out"].includes(movement.movementType)) return "stock_transfer";
     if (["Adjustment", "Damage"].includes(movement.movementType)) return "adjustment";
     return movement.movementDirection === "IN" ? "stock_in" : "stock_out";
@@ -836,6 +859,7 @@ const syncStockMovement = async (movement, opts = {}) => {
         movement.stockTransferId ||
         null;
     const qty = Number(movement.quantity) || 0;
+    const reservation = isReservationMovement(movement);
     await postEntry(
         {
             companyId: movement.companyId,
@@ -859,11 +883,11 @@ const syncStockMovement = async (movement, opts = {}) => {
             sku: movement.sku || "",
             imeis: movement.serialNumbers || [],
             quantity: qty,
-            unitAmount: round2(movement.unitCost),
-            amount: round2(movement.totalCost),
+            unitAmount: reservation ? 0 : round2(movement.unitCost),
+            amount: reservation ? 0 : round2(movement.totalCost),
             netAmount: 0,
             account: "INVENTORY",
-            direction: movement.movementDirection === "IN" ? "in" : "out",
+            direction: reservation ? "none" : movement.movementDirection === "IN" ? "in" : "out",
             effects: [],
             createdBy: movement.createdBy || null,
             createdByName: await adminName(movement.createdBy, session),

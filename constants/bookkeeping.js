@@ -64,6 +64,8 @@ const BK_TRANSACTION_TYPES = Object.freeze([
     "stock_transfer",
     "branch_transfer",
     "adjustment",
+    "stock_reserved",
+    "stock_released",
 ]);
 
 const BK_STATUSES = Object.freeze([
