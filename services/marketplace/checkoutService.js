@@ -221,7 +221,12 @@ const previewCheckout = async (userId, payload = {}) => {
 /**
  * Place checkout — persists MasterOrder, CompanyOrders, and line items in a transaction.
  */
-const placeCheckout = async (userId, payload = {}) => {
+const ORDER_SOURCES = new Set(["app", "website"]);
+
+const placeCheckout = async (userId, payload = {}, requestContext = {}) => {
+    const orderSource = ORDER_SOURCES.has(requestContext.orderSource)
+        ? requestContext.orderSource
+        : "unknown";
     const idempotencyKey = String(payload.idempotencyKey || "").trim();
 
     if (idempotencyKey) {
@@ -270,6 +275,7 @@ const placeCheckout = async (userId, payload = {}) => {
                     companyOrderCount: companyOrders.length,
                     shippingAddress,
                     customerNote,
+                    orderSource,
                     placedAt,
                     ...(idempotencyKey ? { idempotencyKey } : {}),
                 },
@@ -424,7 +430,7 @@ const resolveGuestUser = async (guest = {}) => {
     return user;
 };
 
-const guestPlaceCheckout = async (payload = {}) => {
+const guestPlaceCheckout = async (payload = {}, context = {}) => {
     const items = Array.isArray(payload.items) ? payload.items : [];
     if (!items.length) {
         throw new AppError("At least one checkout item is required.", 400);
@@ -441,11 +447,15 @@ const guestPlaceCheckout = async (payload = {}) => {
         });
     }
 
-    return placeCheckout(user._id, {
-        shippingAddress: payload.shippingAddress,
-        customerNote: payload.customerNote,
-        idempotencyKey: payload.idempotencyKey,
-    });
+    return placeCheckout(
+        user._id,
+        {
+            shippingAddress: payload.shippingAddress,
+            customerNote: payload.customerNote,
+            idempotencyKey: payload.idempotencyKey,
+        },
+        context
+    );
 };
 
 module.exports = {

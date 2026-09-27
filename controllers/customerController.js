@@ -19,6 +19,14 @@ exports.createCustomer = asyncHandler(async (req, res) => {
 });
 
 exports.getCustomers = asyncHandler(async (req, res) => {
+    try {
+        const {
+            backfillOnlineCustomersForCompany,
+        } = require("../services/marketplace/marketplaceOnlineOrderBridgeService");
+        await backfillOnlineCustomersForCompany(req.companyId, { limit: 50 });
+    } catch (err) {
+        console.error("[customers] online-order customer backfill failed:", err?.message || err);
+    }
     const result = await customerService.getCustomers(
         req.query,
         req.companyId,

@@ -4,6 +4,7 @@ const CompanyOrder = require("../../model/marketplace/companyOrder");
 const MasterOrder = require("../../model/marketplace/masterOrder");
 const MarketplaceOrderItem = require("../../model/marketplace/marketplaceOrderItem");
 const CheckoutPayment = require("../../model/marketplace/checkoutPayment");
+const User = require("../../model/user");
 const { NOT_DELETED } = require("../../constants/marketplace");
 const { companyFilter, stampCompany } = require("../../utils/tenantScope");
 
@@ -171,6 +172,7 @@ const ensureOnlineOrderForCompanyOrder = async (
                     companyOrderId: companyOrder._id,
                     masterOrderId: companyOrder.masterOrderId,
                     orderNumber: companyOrder.orderNumber,
+                    orderSource: masterOrder?.orderSource || "unknown",
                 },
                 companyOrder.companyId
             ),
@@ -245,9 +247,77 @@ const backfillOnlineOrdersForCompany = async (companyId, { limit = 100 } = {}) =
     return count;
 };
 
+/**
+ * Store the marketplace buyer in the seller company's Customer dashboard
+ * (source "OnlineOrder"). Must run outside checkout transactions.
+ */
+const ensureCustomerForCompanyOrder = async (companyOrder) => {
+    if (!companyOrder || companyOrder.erpCustomerId) return null;
+    // Lazy require: the sales-order bridge pulls in heavier ERP services.
+    const { ensureErpCustomer } = require("./marketplaceSalesOrderBridgeService");
+    const user = await User.findById(companyOrder.userId)
+        .select("firstName lastName email")
+        .lean();
+    return ensureErpCustomer({
+        companyOrder,
+        user,
+        companyId: companyOrder.companyId,
+        actorId: null,
+    });
+};
+
+const ensureCustomersForMasterOrder = async (masterOrderId) => {
+    const mid = toObjectId(masterOrderId);
+    if (!mid) return 0;
+    const companyOrders = await CompanyOrder.find({
+        masterOrderId: mid,
+        erpCustomerId: null,
+        ...NOT_DELETED,
+    });
+    let count = 0;
+    for (const companyOrder of companyOrders) {
+        try {
+            if (await ensureCustomerForCompanyOrder(companyOrder)) count += 1;
+        } catch (err) {
+            console.error(
+                `[marketplace] customer sync failed for ${companyOrder.orderNumber}:`,
+                err?.message || err
+            );
+        }
+    }
+    return count;
+};
+
+/** Backfill customers for online orders mirrored before customer sync existed. */
+const backfillOnlineCustomersForCompany = async (companyId, { limit = 100 } = {}) => {
+    const pending = await CompanyOrder.find({
+        ...companyFilter(companyId),
+        ...NOT_DELETED,
+        onlineOrderId: { $ne: null },
+        erpCustomerId: null,
+    })
+        .sort({ createdAt: -1 })
+        .limit(limit);
+
+    let count = 0;
+    for (const companyOrder of pending) {
+        try {
+            if (await ensureCustomerForCompanyOrder(companyOrder)) count += 1;
+        } catch (err) {
+            console.error(
+                `[marketplace] customer backfill failed for ${companyOrder.orderNumber}:`,
+                err?.message || err
+            );
+        }
+    }
+    return count;
+};
+
 module.exports = {
     mapCompanyStatusToOnline,
     ensureOnlineOrderForCompanyOrder,
     syncMasterOrderToOnlineOrders,
     backfillOnlineOrdersForCompany,
+    ensureCustomersForMasterOrder,
+    backfillOnlineCustomersForCompany,
 };

@@ -24,6 +24,7 @@ const {
 } = require("./marketplaceNotificationService");
 const {
     syncMasterOrderToOnlineOrders,
+    ensureCustomersForMasterOrder,
 } = require("./marketplaceOnlineOrderBridgeService");
 const {
     verifyMarketplaceWebhook,
@@ -428,6 +429,9 @@ const confirmPayment = async (userId, payload = {}, context = {}) => {
             console.error("Marketplace stock summary sync failed:", syncErr.message);
         }
 
+        void ensureCustomersForMasterOrder(lockedPayment.masterOrderId).catch((err) =>
+            console.error("Marketplace customer sync failed:", err?.message || err)
+        );
         void dispatchPaymentNotification(lockedPayment, "success");
         void auditMarketplaceAction({
             actor: context.actor || { _id: userId },
@@ -588,6 +592,9 @@ const handleProviderWebhook = async (provider, payload = {}, context = {}) => {
 
         if (["successful", "paid", "succeeded"].includes(webhookStatus)) {
             await syncOrderProducts(payment.masterOrderId);
+            void ensureCustomersForMasterOrder(payment.masterOrderId).catch((err) =>
+                console.error("Marketplace customer sync failed:", err?.message || err)
+            );
             void dispatchPaymentNotification(payment, "success");
             void auditMarketplaceAction({
                 actor: { _id: payment.userId, role: "customer" },

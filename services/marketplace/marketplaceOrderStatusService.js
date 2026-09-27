@@ -331,6 +331,7 @@ const updateCompanyOrderStatus = async (
 
 module.exports = {
     COMPANY_ORDER_TRANSITIONS,
+    CANCELLABLE_COMPANY_STATUSES,
     deriveMasterOrderStatus,
     assertCompanyTransition,
     syncMasterOrderStatus,

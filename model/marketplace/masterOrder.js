@@ -49,6 +49,12 @@ const masterOrderSchema = new mongoose.Schema(
         companyOrderCount: { type: Number, default: 0, min: 0 },
         shippingAddress: { type: addressSnapshotSchema, required: true },
         customerNote: { type: String, default: "", trim: true },
+        /** Storefront the customer checked out from. */
+        orderSource: {
+            type: String,
+            enum: ["app", "website", "unknown"],
+            default: "unknown",
+        },
         checkoutPaymentId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "CheckoutPayment",

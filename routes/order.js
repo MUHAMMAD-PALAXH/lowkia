@@ -21,9 +21,19 @@ const { companyFilter, stampCompany } = require('../utils/tenantScope');
 const { assertDocumentCompany } = require('../services/companyService');
 const { isCompanyEmployee } = require('../utils/roleAccess');
 const unitBarcodeService = require('../services/productUnitBarcodeService');
+const CompanyOrder = require('../model/marketplace/companyOrder');
+const {
+  CANCELLABLE_COMPANY_STATUSES,
+  transitionCompanyOrderStatus,
+  syncMasterOrderStatus,
+} = require('../services/marketplace/marketplaceOrderStatusService');
+const {
+  emitStatusNotificationsFromTransition,
+} = require('../services/marketplace/marketplaceNotificationService');
 const { exportOnlineOrdersExcel } = require('../services/onlineOrderService');
 const {
   backfillOnlineOrdersForCompany,
+  backfillOnlineCustomersForCompany,
 } = require('../services/marketplace/marketplaceOnlineOrderBridgeService');
 
 router.use(protect, resolveTenant, requireCompany);
@@ -33,18 +43,61 @@ router.use(protect, resolveTenant, requireCompany);
 // ────────────────────────────────────────────────
 
 /**
- * Employee / branch_manager → their assigned branch id (string).
- * Owners, or staff without an assigned branch → null (no branch restriction).
+ * Employee / branch_manager → { defaultBranchId, branchIds } where branchIds is
+ * the assigned branch plus branches they manage (Branch.managerIds / managerId).
+ * Owners, or staff with no branch at all → null (no branch restriction).
  */
-async function resolveStaffBranchId(req) {
+async function resolveStaffBranchScope(req) {
   if (!isCompanyEmployee(req.user?.role) || !req.user?._id) return null;
   const employee = await Employee.findOne({
     userId: req.user._id,
     isDeleted: { $ne: true }
   })
-    .select('branchId')
+    .select('_id branchId')
     .lean();
-  return employee?.branchId ? String(employee.branchId) : null;
+
+  const managerMatch = [{ managerId: req.user._id }];
+  if (employee?._id) managerMatch.push({ managerIds: employee._id });
+  const managed = await Branch.find({
+    ...companyFilter(req.companyId),
+    isDeleted: { $ne: true },
+    $or: managerMatch
+  })
+    .select('_id')
+    .lean();
+
+  const defaultBranchId = employee?.branchId ? String(employee.branchId) : null;
+  const branchIds = [
+    ...new Set([defaultBranchId, ...managed.map((b) => String(b._id))].filter(Boolean))
+  ];
+  if (!branchIds.length) return null;
+  return { defaultBranchId: defaultBranchId || branchIds[0], branchIds };
+}
+
+const scopeAllows = (scope, branchId) =>
+  !scope || scope.branchIds.includes(String(branchId));
+
+/**
+ * Admin online-order status → marketplace CompanyOrder status (what USER_APP
+ * shows via MasterOrder). Keeps finer company states that map to the same
+ * online bucket (confirmed ⇄ pending, packed ⇄ processing, partially_shipped ⇄ shipped).
+ */
+function companyStatusForOnline(onlineStatus, currentCompanyStatus) {
+  const current = String(currentCompanyStatus || '');
+  switch (String(onlineStatus || '').toLowerCase()) {
+    case 'pending':
+      return ['pending', 'confirmed'].includes(current) ? current : 'confirmed';
+    case 'processing':
+      return ['processing', 'packed'].includes(current) ? current : 'processing';
+    case 'shipped':
+      return ['shipped', 'partially_shipped'].includes(current) ? current : 'shipped';
+    case 'delivered':
+      return 'delivered';
+    case 'cancelled':
+      return 'cancelled';
+    default:
+      return current;
+  }
 }
 
 const normalizeCode = (value) =>
@@ -411,6 +464,21 @@ router.get('/daily-profit-by-status', asyncHandler(async (req, res) => {
 // STANDARD CRUD ROUTES
 // ────────────────────────────────────────────────
 
+/**
+ * GET /orders/branch-access
+ * Branches the signed-in user may fulfill online orders from.
+ * unrestricted=true → owner (any company branch).
+ */
+router.get('/branch-access', asyncHandler(async (req, res) => {
+  const scope = await resolveStaffBranchScope(req);
+  res.json({
+    success: true,
+    data: scope
+      ? { unrestricted: false, defaultBranchId: scope.defaultBranchId, branchIds: scope.branchIds }
+      : { unrestricted: true, defaultBranchId: null, branchIds: [] }
+  });
+}));
+
 router.get('/export/excel', asyncHandler(async (req, res) => {
   const { buffer, filename } = await exportOnlineOrdersExcel(
     req.query,
@@ -431,10 +499,10 @@ router.get('/', asyncHandler(async (req, res) => {
   const tenant = companyFilter(req.companyId);
   const filter = userId ? { userID: userId, ...tenant } : { ...tenant };
 
-  // Branch staff see their own branch's orders plus unassigned ones they can claim.
-  const staffBranchId = await resolveStaffBranchId(req);
-  if (staffBranchId) {
-    filter.$or = [{ branchId: staffBranchId }, { branchId: null }];
+  // Branch staff see their accessible branches' orders plus unassigned ones they can claim.
+  const scope = await resolveStaffBranchScope(req);
+  if (scope) {
+    filter.$or = [{ branchId: { $in: scope.branchIds } }, { branchId: null }];
   }
 
   // Catch marketplace checkouts completed before the Online Order bridge.
@@ -443,6 +511,9 @@ router.get('/', asyncHandler(async (req, res) => {
   } catch (err) {
     console.error('[orders] marketplace online-order backfill failed:', err?.message || err);
   }
+  void backfillOnlineCustomersForCompany(req.companyId, { limit: 100 }).catch((err) =>
+    console.error('[orders] online-order customer backfill failed:', err?.message || err)
+  );
 
   let orders = await Order.find(filter)
     .populate('userID', 'name email firstName lastName')
@@ -473,8 +544,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
   if (!order) return res.status(404).json({ success: false, message: 'Not found' });
 
-  const staffBranchId = await resolveStaffBranchId(req);
-  if (staffBranchId && order.branchId && String(order.branchId) !== staffBranchId) {
+  const scope = await resolveStaffBranchScope(req);
+  if (order.branchId && !scopeAllows(scope, order.branchId)) {
     return res.status(403).json({
       success: false,
       message: 'This online order belongs to another branch.'
@@ -556,9 +627,9 @@ router.put('/:id', asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: 'Order not found' });
   }
 
-  const staffBranchId = await resolveStaffBranchId(req);
+  const scope = await resolveStaffBranchScope(req);
   const currentBranchId = order.branchId ? String(order.branchId) : null;
-  if (staffBranchId && currentBranchId && currentBranchId !== staffBranchId) {
+  if (currentBranchId && !scopeAllows(scope, currentBranchId)) {
     return res.status(403).json({
       success: false,
       message: 'This online order belongs to another branch.'
@@ -571,10 +642,10 @@ router.put('/:id', asyncHandler(async (req, res) => {
     if (!mongoose.isValidObjectId(requestedBranchId)) {
       return res.status(400).json({ success: false, message: 'Invalid branch.' });
     }
-    if (staffBranchId && requestedBranchId !== staffBranchId) {
+    if (!scopeAllows(scope, requestedBranchId)) {
       return res.status(403).json({
         success: false,
-        message: 'You can only fulfill online orders for your own branch.'
+        message: 'You can only fulfill online orders for branches you have access to.'
       });
     }
     const branch = await Branch.findOne({
@@ -588,8 +659,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
       return res.status(404).json({ success: false, message: 'Branch not found.' });
     }
     targetBranchId = requestedBranchId;
-  } else if (staffBranchId && !currentBranchId) {
-    targetBranchId = staffBranchId;
+  } else if (scope && !currentBranchId) {
+    targetBranchId = scope.defaultBranchId;
   }
   if (targetBranchId !== currentBranchId) {
     order.branchId = targetBranchId;
@@ -640,6 +711,29 @@ router.put('/:id', asyncHandler(async (req, res) => {
     const preview = resolved.errors.slice(0, 5).join('; ');
     const more = resolved.errors.length > 5 ? ` (+${resolved.errors.length - 5} more)` : '';
     return res.status(400).json({ success: false, message: `${preview}${more}` });
+  }
+
+  // Marketplace orders (USER_APP) mirror this status on their CompanyOrder.
+  const companyOrder = order.companyOrderId
+    ? await CompanyOrder.findOne({
+        _id: order.companyOrderId,
+        isDeleted: { $ne: true },
+        ...tenant
+      })
+    : null;
+  const companyTarget = companyOrder
+    ? companyStatusForOnline(orderStatus, companyOrder.status)
+    : null;
+  if (
+    companyOrder &&
+    companyTarget === 'cancelled' &&
+    companyOrder.status !== 'cancelled' &&
+    !CANCELLABLE_COMPANY_STATUSES.has(companyOrder.status)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: `This marketplace order is already ${companyOrder.status} and can no longer be cancelled.`
+    });
   }
 
   if (delivering && resolved) {
@@ -720,6 +814,29 @@ router.put('/:id', asyncHandler(async (req, res) => {
   }
 
   await order.save();
+
+  if (companyOrder) {
+    try {
+      if (companyTarget && companyTarget !== companyOrder.status) {
+        const result = await transitionCompanyOrderStatus(companyOrder, companyTarget, {
+          allowSystem: true,
+          actorId: req.user?._id,
+          reason: companyTarget === 'cancelled' ? 'Cancelled by seller' : ''
+        });
+        void emitStatusNotificationsFromTransition(result);
+      } else {
+        // Same company status — still repair a drifted MasterOrder aggregate.
+        await syncMasterOrderStatus(companyOrder.masterOrderId);
+      }
+    } catch (err) {
+      console.error('[orders] marketplace status sync failed:', err?.message || err);
+      return res.status(500).json({
+        success: false,
+        message: `Order saved, but the customer app status could not be updated: ${err?.message || 'sync failed'}. Save again to retry.`
+      });
+    }
+  }
+
   res.json({ success: true, message: 'Updated', data: order });
 }));
 

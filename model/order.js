@@ -94,6 +94,12 @@ const orderSchema = new mongoose.Schema({
     uppercase: true,
     default: '',
   },
+  /** Storefront the customer checked out from (copied from MasterOrder). */
+  orderSource: {
+    type: String,
+    enum: ['app', 'website', 'unknown'],
+    default: 'unknown',
+  },
 }, {
   timestamps: true 
 });

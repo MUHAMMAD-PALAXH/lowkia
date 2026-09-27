@@ -114,20 +114,31 @@ const ensureErpCustomer = async ({
     }
 
     if (!customer) {
-        customer = await createCustomer(
-            {
-                name,
-                phone,
-                email,
-                address: formatAddress(address),
-                customerType: "Retail",
-                paymentTerms: "Cash",
-                source: "OnlineOrder",
-                note: `Auto-created from online order ${companyOrder.orderNumber}`,
-            },
-            actorId,
-            companyId
-        );
+        const payload = {
+            name,
+            phone,
+            email,
+            address: formatAddress(address),
+            city: String(address.city || "").trim(),
+            shippingAddress: formatAddress(address),
+            shippingCity: String(address.city || "").trim(),
+            customerType: "Retail",
+            paymentTerms: "Cash",
+            source: "OnlineOrder",
+            note: `Auto-created from online order ${companyOrder.orderNumber}`,
+        };
+        try {
+            customer = await createCustomer(payload, actorId, companyId);
+        } catch (err) {
+            // Different buyer with the same display name: keep them distinct.
+            if (err?.statusCode !== 409 || !/name/i.test(err?.message || "")) throw err;
+            const suffix = phone || email || companyOrder.orderNumber;
+            customer = await createCustomer(
+                { ...payload, name: `${name} (${suffix})` },
+                actorId,
+                companyId
+            );
+        }
     } else if (!customer.source) {
         customer.source = "OnlineOrder";
         await customer.save();
