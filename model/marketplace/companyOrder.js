@@ -96,4 +96,6 @@ companyOrderSchema.index({ companyId: 1, status: 1, createdAt: -1 });
 companyOrderSchema.index({ masterOrderId: 1, companyId: 1 }, { unique: true });
 companyOrderSchema.index({ userId: 1, createdAt: -1 });
 
+companyOrderSchema.plugin(require("../plugins/bookkeeping.plugin"), { kind: "CompanyOrder" });
+
 module.exports = mongoose.model("CompanyOrder", companyOrderSchema);

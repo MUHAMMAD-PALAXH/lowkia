@@ -67,5 +67,6 @@ const branchTransferSchema = new mongoose.Schema(
 branchTransferSchema.index({ status: 1, dispatchedAt: -1 });
 
 branchTransferSchema.plugin(tenantPlugin);
+branchTransferSchema.plugin(require("./plugins/bookkeeping.plugin"), { kind: "BranchTransfer" });
 
 module.exports = mongoose.model('BranchTransfer', branchTransferSchema);

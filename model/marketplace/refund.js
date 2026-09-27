@@ -90,4 +90,6 @@ refundSchema.index({ checkoutPaymentId: 1, companyOrderId: 1 });
 refundSchema.index({ companyId: 1, status: 1, createdAt: -1 });
 refundSchema.index({ masterOrderId: 1, createdAt: -1 });
 
+refundSchema.plugin(require("../plugins/bookkeeping.plugin"), { kind: "MarketplaceRefund" });
+
 module.exports = mongoose.model("MarketplaceRefund", refundSchema);

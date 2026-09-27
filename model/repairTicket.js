@@ -646,4 +646,6 @@ repairTicketSchema.index({companyId:1,branchId:1,status:1,receivedDate:-1});
 repairTicketSchema.index({companyId:1,isDeleted:1,createdAt:-1});
 
 
+repairTicketSchema.plugin(require("./plugins/bookkeeping.plugin"), { kind: "RepairTicket" });
+
 module.exports = mongoose.model("RepairTicket",repairTicketSchema);

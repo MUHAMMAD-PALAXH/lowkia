@@ -663,4 +663,6 @@ paymentSchema.set("toObject", {
     virtuals: true,
 });
 
+paymentSchema.plugin(require("./plugins/bookkeeping.plugin"), { kind: "Payment" });
+
 module.exports = mongoose.model("Payment", paymentSchema);

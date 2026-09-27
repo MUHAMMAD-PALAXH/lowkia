@@ -860,6 +860,7 @@ salesReturnSchema.set(
 
 
 salesReturnSchema.plugin(tenantPlugin);
+salesReturnSchema.plugin(require("./plugins/bookkeeping.plugin"), { kind: "SalesReturn" });
 
 module.exports = mongoose.model(
     "SalesReturn",

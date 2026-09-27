@@ -1177,6 +1177,8 @@ salesOrderSchema.set(
 // ==========================================================
 
 
+salesOrderSchema.plugin(require("./plugins/bookkeeping.plugin"), { kind: "SalesOrder" });
+
 module.exports = mongoose.model(
     "SalesOrder",
     salesOrderSchema

@@ -879,6 +879,13 @@ const completeCheckout = async (paymentId, user, meta = {}) => {
                     },
                 }
             );
+            await require("./bookkeepingPostingService").voidEntries({
+                companyId,
+                sourceId: paymentId,
+                keyPrefix: "payment",
+                reason: `Payment rolled back: ${String(err.message || err).slice(0, 200)}`,
+                actorId: user?._id || null,
+            });
         } catch (_) {
             /* ignore rollback noise */
         }

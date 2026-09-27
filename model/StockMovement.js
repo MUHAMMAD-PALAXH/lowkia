@@ -633,5 +633,6 @@ stockMovementSchema.set("toJSON", {
 // EXPORT
 // ==========================================================
 stockMovementSchema.plugin(tenantPlugin);
+stockMovementSchema.plugin(require("./plugins/bookkeeping.plugin"), { kind: "StockMovement" });
 
 module.exports = mongoose.model("StockMovement", stockMovementSchema);

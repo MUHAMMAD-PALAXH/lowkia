@@ -214,4 +214,6 @@ supplierPayableSchema.virtual("id").get(function () {
 supplierPayableSchema.set("toJSON", { virtuals: true });
 supplierPayableSchema.set("toObject", { virtuals: true });
 
+supplierPayableSchema.plugin(require("./plugins/bookkeeping.plugin"), { kind: "SupplierPayable" });
+
 module.exports = mongoose.model("SupplierPayable", supplierPayableSchema);

@@ -110,6 +110,7 @@ orderSchema.index(
 );
 
 orderSchema.plugin(tenantPlugin);
+orderSchema.plugin(require('./plugins/bookkeeping.plugin'), { kind: 'Order' });
 
 const Order = mongoose.model('Order', orderSchema);
 module.exports = Order;
