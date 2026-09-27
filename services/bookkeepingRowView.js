@@ -362,7 +362,7 @@ const loadDocs = async (companyId, refs) => {
 const stockKey = (m) => `${m.warehouseId}|${m.productId}|${m.productVariantId || ""}`;
 
 const MOVEMENT_FIELDS =
-    "previousStock currentStock warehouseId productId productVariantId movementType movementDirection quantity remarks referenceType salesOrderId productName sku serialNumbers movementDate createdAt";
+    "previousStock currentStock warehouseId productId productVariantId movementType movementDirection quantity remarks referenceType referenceId salesOrderId productName sku serialNumbers movementDate createdAt";
 
 const isFromReservation = (m) => String(m.remarks || "").includes("reserved→out");
 
@@ -420,12 +420,18 @@ const balanceOf = (m, buckets, soldInRow = 0) => {
     };
 };
 
-/** Quantity change of a sales order's own stock movement. */
+/** Quantity change of an order's own stock movement (sales order stock-out / online-order hold). */
 const orderMovementChange = (m) => {
     const q = Number(m.quantity) || 0;
     if (m.movementType === "Sale") return isFromReservation(m) ? change(-q, -q, q) : change(-q, 0, q);
+    if (m.referenceType === "Marketplace Order") {
+        return m.movementDirection === "OUT" ? change(0, q, 0) : change(0, -q, 0);
+    }
     return change(q, 0, -q);
 };
+
+const isOnlineOrderRow = (row) =>
+    row.sourceType === "CompanyOrder" && ["online_sale", "online_sale_reversal"].includes(row.transactionType);
 
 const sumChanges = (lines) =>
     lines.reduce(
@@ -501,8 +507,11 @@ const presentRows = async (companyId, rows = []) => {
     const orderIds = [
         ...new Set(rows.map((r, i) => (isOrderRow(r, i) ? String(toOid(refs[i].id) || "") : "")).filter(Boolean)),
     ].map(toOid);
+    const onlineIds = [
+        ...new Set(rows.filter(isOnlineOrderRow).map((r) => String(toOid(r.sourceId) || "")).filter(Boolean)),
+    ].map(toOid);
     const StockMovement = require("../model/StockMovement");
-    const [{ docs, checkouts }, movements, products, orderMovements, orderPayments] = await Promise.all([
+    const [{ docs, checkouts }, movements, products, orderMovements, orderPayments, onlineHolds] = await Promise.all([
         loadDocs(companyId, refs),
         movementIds.length
             ? StockMovement.find({ _id: { $in: movementIds }, ...companyFilter(companyId) })
@@ -536,6 +545,17 @@ const presentRows = async (companyId, rows = []) => {
                   .select("relatedDocuments cashIn cashOut createdAt")
                   .lean()
             : [],
+        onlineIds.length
+            ? StockMovement.find({
+                  ...companyFilter(companyId),
+                  referenceType: "Marketplace Order",
+                  referenceId: { $in: onlineIds },
+                  movementType: "Adjustment",
+              })
+                  .select(MOVEMENT_FIELDS)
+                  .sort({ _id: 1 })
+                  .lean()
+            : [],
     ]);
     const onHand = new Map(movements.map((m) => [String(m._id), m]));
     const productCodes = new Map(products.map((p) => [String(p._id), p.productCode || ""]));
@@ -553,30 +573,52 @@ const presentRows = async (companyId, rows = []) => {
         }
     }
 
-    // Order rows (sale / sale reversal) take their own stock movements; payment rows
-    // show the order's products as they stood when the payment was posted.
+    // Order rows (sale / sale reversal, online order / cancellation) take their own stock
+    // movements; payment rows show the order's products as they stood when posted.
     const orderSales = (orderId) =>
         orderMovements.filter((m) => String(m.salesOrderId) === orderId && m.movementType === "Sale");
+    const nearRow = (row, wanted) => {
+        const at = timeOf(row.transactionDate);
+        const near = wanted.filter(
+            (m) => Math.abs(timeOf(m.movementDate || m.createdAt) - at) <= ORDER_ROW_WINDOW_MS
+        );
+        return near.length ? near : wanted;
+    };
     const ownMovements = new Map();
     const paymentAnchors = new Map();
     const anchorQueries = [];
     rows.forEach((row, i) => {
+        if (isOnlineOrderRow(row)) {
+            const orderId = String(toOid(row.sourceId));
+            const holds = row.transactionType === "online_sale";
+            ownMovements.set(
+                i,
+                nearRow(
+                    row,
+                    onlineHolds.filter(
+                        (m) => String(m.referenceId) === orderId && (m.movementDirection === "OUT") === holds
+                    )
+                )
+            );
+            return;
+        }
         if (!isOrderRow(row, i)) return;
         const orderId = String(toOid(refs[i].id));
         if (row.sourceType === "SalesOrder") {
             if (!["sale", "sale_reversal"].includes(row.transactionType)) return;
-            const wanted = orderMovements.filter(
-                (m) =>
-                    String(m.salesOrderId) === orderId &&
-                    (row.transactionType === "sale"
-                        ? m.movementType === "Sale"
-                        : m.movementType === "Adjustment" && m.movementDirection === "IN")
+            ownMovements.set(
+                i,
+                nearRow(
+                    row,
+                    orderMovements.filter(
+                        (m) =>
+                            String(m.salesOrderId) === orderId &&
+                            (row.transactionType === "sale"
+                                ? m.movementType === "Sale"
+                                : m.movementType === "Adjustment" && m.movementDirection === "IN")
+                    )
+                )
             );
-            const at = timeOf(row.transactionDate);
-            const near = wanted.filter(
-                (m) => Math.abs(timeOf(m.movementDate || m.createdAt) - at) <= ORDER_ROW_WINDOW_MS
-            );
-            ownMovements.set(i, near.length ? near : wanted);
             return;
         }
         const sales = orderSales(orderId);
@@ -606,6 +648,7 @@ const presentRows = async (companyId, rows = []) => {
         [
             ...movements,
             ...orderMovements,
+            ...onlineHolds,
             ...[...paymentAnchors.values()].flat().map((p) => p.anchor),
         ],
         StockMovement

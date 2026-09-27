@@ -321,14 +321,24 @@ const buildLedgerMatch = (companyId, query = {}, managedBranchIds = null) => {
 };
 
 /**
- * A sales order's stock movements are shown on the order row itself (presentRows),
- * so the list hides them unless the user searches or filters by type.
- * Summaries/reports keep using the plain match.
+ * A sales order's stock movements and an online order's holds/releases are shown on
+ * the order row itself (presentRows), so the list hides them unless the user searches
+ * or filters by type. Summaries/reports keep using the plain match.
  */
 const withMergedOrderStock = (match, query = {}) =>
     String(query.search || "").trim() || csvList(query.transactionType).length
         ? match
-        : { ...match, $nor: [{ sourceType: "StockMovement", "relatedDocuments.type": "Sales Order" }] };
+        : {
+              ...match,
+              $nor: [
+                  { sourceType: "StockMovement", "relatedDocuments.type": "Sales Order" },
+                  {
+                      sourceType: "StockMovement",
+                      "relatedDocuments.type": "Marketplace Order",
+                      transactionType: { $in: ["stock_reserved", "stock_released", "adjustment"] },
+                  },
+              ],
+          };
 
 const LEDGER_LIST_FIELDS =
     "entryNumber transactionDate transactionType sourceModule sourceType sourceId sourceNumber description partyType partyId partyName branchId toBranchId warehouseId toWarehouseId productId productName sku imeis quantity amount account direction cashIn cashOut currency paymentMethod paymentProvider paymentReference status isReversal createdByName createdAt relatedDocuments metadata.movementType";
@@ -722,7 +732,7 @@ const exportLedger = async (companyId, query = {}, managedBranchIds = null) => {
             productName: r.productName,
             partyName: r.partyName,
             branch: r.branchId?.name || "",
-            qtyMoved: q.stock || q.reserved || null,
+            qtyMoved: q.stock || null,
             stock: r.balanceAfter ? r.balanceAfter.stock : null,
             reserved: r.balanceAfter ? r.balanceAfter.reserved : null,
             sold: q.sold || null,
