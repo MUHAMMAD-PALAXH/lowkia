@@ -397,6 +397,10 @@ const reservedBalances = async (companyId, movements, StockMovement) => {
     return result;
 };
 
+/** Stock rows written by the product add/edit form (productService remarks end in "product save"). */
+const isProductFormRow = (row) =>
+    row.sourceType === "StockMovement" && /product save/i.test(row.description || "");
+
 /** Adds display fields to lean ledger rows (in place) and returns them. */
 const presentRows = async (companyId, rows = []) => {
     if (!rows.length) return rows;
@@ -405,16 +409,27 @@ const presentRows = async (companyId, rows = []) => {
         .filter((r) => r.sourceType === "StockMovement")
         .map((r) => toOid(r.sourceId))
         .filter(Boolean);
+    const productIds = rows
+        .filter(isProductFormRow)
+        .map((r) => toOid(r.productId))
+        .filter(Boolean);
     const StockMovement = require("../model/StockMovement");
-    const [{ docs, checkouts }, movements] = await Promise.all([
+    const [{ docs, checkouts }, movements, products] = await Promise.all([
         loadDocs(companyId, refs),
         movementIds.length
             ? StockMovement.find({ _id: { $in: movementIds }, ...companyFilter(companyId) })
                   .select("previousStock currentStock warehouseId productId productVariantId")
                   .lean()
             : [],
+        productIds.length
+            ? require("../model/product")
+                  .find({ _id: { $in: productIds }, ...companyFilter(companyId) })
+                  .select("productCode")
+                  .lean()
+            : [],
     ]);
     const onHand = new Map(movements.map((m) => [String(m._id), m]));
+    const productCodes = new Map(products.map((p) => [String(p._id), p.productCode || ""]));
     const reservedAfter = await reservedBalances(companyId, movements, StockMovement);
 
     rows.forEach((row, i) => {
@@ -433,6 +448,10 @@ const presentRows = async (companyId, rows = []) => {
             "";
         row.documentNumber =
             (doc && DOCS[ref.kind].number(doc)) || ref?.number || row.sourceNumber || "";
+        if (isProductFormRow(row)) {
+            row.sourceLabel = "Products";
+            row.documentNumber = productCodes.get(String(row.productId)) || row.documentNumber;
+        }
 
         let status = paymentStatusOf(ref?.kind, doc, checkout);
         if (!status && row.sourceType === "Payment" && kind !== "payment_reversed") status = "paid";

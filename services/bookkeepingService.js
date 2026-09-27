@@ -321,7 +321,7 @@ const buildLedgerMatch = (companyId, query = {}, managedBranchIds = null) => {
 };
 
 const LEDGER_LIST_FIELDS =
-    "entryNumber transactionDate transactionType sourceModule sourceType sourceId sourceNumber description partyType partyId partyName branchId toBranchId warehouseId toWarehouseId productName sku imeis quantity amount account direction cashIn cashOut currency paymentMethod paymentProvider paymentReference status isReversal createdByName createdAt relatedDocuments metadata.movementType";
+    "entryNumber transactionDate transactionType sourceModule sourceType sourceId sourceNumber description partyType partyId partyName branchId toBranchId warehouseId toWarehouseId productId productName sku imeis quantity amount account direction cashIn cashOut currency paymentMethod paymentProvider paymentReference status isReversal createdByName createdAt relatedDocuments metadata.movementType";
 
 const listEntries = async (companyId, query = {}, managedBranchIds = null) => {
     const { match, from, to } = buildLedgerMatch(companyId, query, managedBranchIds);
