@@ -209,9 +209,9 @@ const kindOf = (row) => {
 };
 
 /**
- * Quantity buckets: stock = units taken into stock (on hand + sold, so a sale does not
- * lower it), reserved = held for online orders, sold = units that left through a sale,
- * available = on hand − reserved.
+ * Quantity buckets: stock = on hand before the row's sale (a sale shows under sold,
+ * not as a stock change), reserved = held for online orders, sold = units that left
+ * through a sale, available = on hand − reserved.
  */
 const change = (onHand, reserved, sold) => ({
     stock: onHand + sold,
@@ -367,67 +367,54 @@ const MOVEMENT_FIELDS =
 const isFromReservation = (m) => String(m.remarks || "").includes("reserved→out");
 
 /**
- * Reserved and cumulative sold units on the same inventory row right after each movement.
- * reserved (only online-order holds change reservedStock): hold (Adjustment OUT) +q,
- * release (Adjustment IN) −q, ship from hold (Sale reserved→out) −q.
- * sold: Sale OUT +q, Sales Return IN −q, stocked sales order trashed (Sales Order Adjustment IN) −q.
+ * Reserved units on the same inventory row right after each movement.
+ * Only online-order holds change reservedStock, and each writes a movement:
+ * hold (Adjustment OUT) +q, release (Adjustment IN) −q, ship from hold (Sale reserved→out) −q.
  */
 const bucketBalances = async (companyId, movements, StockMovement) => {
     const result = new Map();
     const keyed = movements.filter((m) => m.warehouseId && m.productId);
     if (!keyed.length) return result;
     const maxId = keyed.reduce((max, m) => (String(m._id) > String(max) ? m._id : max), keyed[0]._id);
-    const history = await StockMovement.find({
+    const holds = await StockMovement.find({
         ...companyFilter(companyId),
+        referenceType: "Marketplace Order",
         productId: { $in: [...new Set(keyed.map((m) => String(m.productId)))].map(toOid) },
         warehouseId: { $in: [...new Set(keyed.map((m) => String(m.warehouseId)))].map(toOid) },
         _id: { $lte: maxId },
-        $or: [
-            { referenceType: "Marketplace Order" },
-            { movementType: { $in: ["Sale", "Sales Return"] } },
-            { referenceType: "Sales Order", movementType: "Adjustment" },
-        ],
     })
-        .select("warehouseId productId productVariantId movementType movementDirection quantity remarks referenceType")
+        .select("warehouseId productId productVariantId movementType movementDirection quantity remarks")
         .sort({ _id: 1 })
         .lean();
 
     const byKey = new Map();
-    for (const h of history) {
+    for (const h of holds) {
         const q = Number(h.quantity) || 0;
-        const out = h.movementDirection === "OUT";
-        let reserved = 0;
-        let sold = 0;
-        if (h.movementType === "Adjustment") {
-            if (h.referenceType === "Marketplace Order") reserved = out ? q : -q;
-            else if (h.referenceType === "Sales Order" && !out) sold = -q;
-        } else if (h.movementType === "Sale" || h.movementType === "Sales Return") {
-            sold = out ? q : -q;
-            if (isFromReservation(h)) reserved = -q;
-        }
-        if (!reserved && !sold) continue;
+        let delta = 0;
+        if (h.movementType === "Adjustment") delta = h.movementDirection === "OUT" ? q : -q;
+        else if (h.movementType === "Sale" && isFromReservation(h)) delta = -q;
+        if (!delta) continue;
         const key = stockKey(h);
         if (!byKey.has(key)) byKey.set(key, []);
-        byKey.get(key).push({ id: String(h._id), reserved, sold });
+        byKey.get(key).push({ id: String(h._id), delta });
     }
     for (const m of keyed) {
         let reserved = 0;
-        let sold = 0;
         for (const h of byKey.get(stockKey(m)) || []) {
             if (h.id > String(m._id)) break;
-            reserved = Math.max(reserved + h.reserved, 0);
-            sold = Math.max(sold + h.sold, 0);
+            reserved = Math.max(reserved + h.delta, 0);
         }
-        result.set(String(m._id), { reserved, sold });
+        result.set(String(m._id), { reserved });
     }
     return result;
 };
 
-const balanceOf = (m, buckets) => {
+/** stock = on hand before this row's sale (on hand after + units this row sold). */
+const balanceOf = (m, buckets, soldInRow = 0) => {
     const onHand = Number(m.currentStock) || 0;
     const reserved = buckets?.reserved || 0;
     return {
-        stock: onHand + (buckets?.sold || 0),
+        stock: onHand + soldInRow,
         reserved,
         available: Math.max(onHand - reserved, 0),
     };
@@ -669,21 +656,24 @@ const presentRows = async (companyId, rows = []) => {
         if (movement) {
             row.stockBefore = Number(movement.previousStock) || 0;
             row.stockAfter = Number(movement.currentStock) || 0;
-            row.balanceAfter = balanceOf(movement, buckets.get(String(movement._id)));
+            row.balanceAfter = balanceOf(movement, buckets.get(String(movement._id)), row.qtyChange.sold);
         }
         if (ownMovements.has(i)) {
             applyLines(
                 row,
-                ownMovements.get(i).map((m) => ({
-                    productName: m.productName || "",
-                    sku: m.sku || "",
-                    quantity: Number(m.quantity) || 0,
-                    imeis: m.serialNumbers || [],
-                    qtyChange: orderMovementChange(m),
-                    stockBefore: Number(m.previousStock) || 0,
-                    stockAfter: Number(m.currentStock) || 0,
-                    balanceAfter: balanceOf(m, buckets.get(String(m._id))),
-                }))
+                ownMovements.get(i).map((m) => {
+                    const lineChange = orderMovementChange(m);
+                    return {
+                        productName: m.productName || "",
+                        sku: m.sku || "",
+                        quantity: Number(m.quantity) || 0,
+                        imeis: m.serialNumbers || [],
+                        qtyChange: lineChange,
+                        stockBefore: Number(m.previousStock) || 0,
+                        stockAfter: Number(m.currentStock) || 0,
+                        balanceAfter: balanceOf(m, buckets.get(String(m._id)), lineChange.sold),
+                    };
+                })
             );
         }
         if (paymentAnchors.has(i)) {
@@ -699,7 +689,7 @@ const presentRows = async (companyId, rows = []) => {
                         quantity: q,
                         imeis: sale.serialNumbers || [],
                         qtyChange: { stock: 0, reserved: 0, sold: q, available: 0 },
-                        balanceAfter: balanceOf(anchor, buckets.get(String(anchor._id))),
+                        balanceAfter: balanceOf(anchor, buckets.get(String(anchor._id)), q),
                     };
                 })
             );
