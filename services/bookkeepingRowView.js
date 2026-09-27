@@ -208,25 +208,29 @@ const kindOf = (row) => {
     }
 };
 
-/** Change to available / reserved / sold counts caused by one stock movement row. */
+/**
+ * Change caused by one stock movement row, using the inventory screen's terms:
+ * stock = on hand (includes reserved), reserved = held for online orders,
+ * sold = units that left through a sale, available = stock − reserved.
+ */
 const qtyChange = (row, kind) => {
-    const zero = { available: 0, reserved: 0, sold: 0 };
-    if (row.sourceType !== "StockMovement") return zero;
+    const change = (stock, reserved, sold) => ({ stock, reserved, sold, available: stock - reserved });
+    if (row.sourceType !== "StockMovement") return change(0, 0, 0);
     const q = Number(row.quantity) || 0;
     const sign = row.direction === "in" ? 1 : -1;
     switch (kind) {
         case "reserved":
-            return { available: -q, reserved: q, sold: 0 };
+            return change(0, q, 0);
         case "released":
-            return { available: q, reserved: -q, sold: 0 };
+            return change(0, -q, 0);
         case "sold":
             return String(row.description || "").includes("reserved→out")
-                ? { available: 0, reserved: -q, sold: q }
-                : { available: -q, reserved: 0, sold: q };
+                ? change(-q, -q, q)
+                : change(-q, 0, q);
         case "returned":
-            return { available: q, reserved: 0, sold: -q };
+            return change(q, 0, -q);
         default:
-            return { available: sign * q, reserved: 0, sold: 0 };
+            return change(sign * q, 0, 0);
     }
 };
 
@@ -352,7 +356,20 @@ const loadDocs = async (companyId, refs) => {
 const presentRows = async (companyId, rows = []) => {
     if (!rows.length) return rows;
     const refs = rows.map(docRefOf);
-    const { docs, checkouts } = await loadDocs(companyId, refs);
+    const movementIds = rows
+        .filter((r) => r.sourceType === "StockMovement")
+        .map((r) => toOid(r.sourceId))
+        .filter(Boolean);
+    const [{ docs, checkouts }, movements] = await Promise.all([
+        loadDocs(companyId, refs),
+        movementIds.length
+            ? require("../model/StockMovement")
+                  .find({ _id: { $in: movementIds }, ...companyFilter(companyId) })
+                  .select("previousStock currentStock")
+                  .lean()
+            : [],
+    ]);
+    const onHand = new Map(movements.map((m) => [String(m._id), m]));
 
     rows.forEach((row, i) => {
         const ref = refs[i];
@@ -387,6 +404,11 @@ const presentRows = async (companyId, rows = []) => {
                 : own || fromDoc || methodLabel(row.paymentMethod, row.paymentProvider);
 
         row.qtyChange = qtyChange(row, kind);
+        const movement = onHand.get(String(row.sourceId));
+        if (movement) {
+            row.stockBefore = Number(movement.previousStock) || 0;
+            row.stockAfter = Number(movement.currentStock) || 0;
+        }
     });
     return rows;
 };
