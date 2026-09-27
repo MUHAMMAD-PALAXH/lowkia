@@ -5,6 +5,7 @@ const BookkeepingEntry = require("../model/bookkeepingEntry");
 const AppError = require("../utils/appError");
 const { companyFilter } = require("../utils/tenantScope");
 const { DEFAULT_CURRENCY } = require("../config/finance");
+const { presentRows } = require("./bookkeepingRowView");
 
 const NOT_DELETED = { isDeleted: { $ne: true } };
 
@@ -320,7 +321,7 @@ const buildLedgerMatch = (companyId, query = {}, managedBranchIds = null) => {
 };
 
 const LEDGER_LIST_FIELDS =
-    "entryNumber transactionDate transactionType sourceModule sourceType sourceId sourceNumber description partyType partyId partyName branchId toBranchId warehouseId toWarehouseId productName sku imeis quantity amount account direction cashIn cashOut currency paymentMethod paymentProvider paymentReference status isReversal createdByName createdAt";
+    "entryNumber transactionDate transactionType sourceModule sourceType sourceId sourceNumber description partyType partyId partyName branchId toBranchId warehouseId toWarehouseId productName sku imeis quantity amount account direction cashIn cashOut currency paymentMethod paymentProvider paymentReference status isReversal createdByName createdAt relatedDocuments metadata.movementType";
 
 const listEntries = async (companyId, query = {}, managedBranchIds = null) => {
     const { match, from, to } = buildLedgerMatch(companyId, query, managedBranchIds);
@@ -341,6 +342,7 @@ const listEntries = async (companyId, query = {}, managedBranchIds = null) => {
             .lean(),
         BookkeepingEntry.countDocuments(match),
     ]);
+    await presentRows(companyId, rows);
 
     return {
         entries: rows,
@@ -414,6 +416,7 @@ const getEntry = async (companyId, id, managedBranchIds = null) => {
     ) {
         throw new AppError("You cannot view entries outside your branches.", 403);
     }
+    await presentRows(companyId, [entry]);
 
     const relatedIds = [
         entry.sourceId,
@@ -660,50 +663,62 @@ const exportLedger = async (companyId, query = {}, managedBranchIds = null) => {
         .limit(EXPORT_LIMIT)
         .lean();
 
+    for (let i = 0; i < rows.length; i += 1000) {
+        await presentRows(companyId, rows.slice(i, i + 1000));
+    }
+
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Bookkeeping");
     sheet.columns = [
-        { header: "Date", key: "date", width: 20 },
         { header: "Entry No.", key: "entryNumber", width: 14 },
+        { header: "Date", key: "date", width: 20 },
         { header: "Type", key: "type", width: 20 },
-        { header: "Source", key: "sourceModule", width: 16 },
+        { header: "Source", key: "source", width: 16 },
+        { header: "Document No.", key: "documentNumber", width: 18 },
         { header: "Reference", key: "sourceNumber", width: 18 },
         { header: "Description", key: "description", width: 40 },
+        { header: "Product", key: "productName", width: 28 },
         { header: "Party", key: "partyName", width: 24 },
         { header: "Branch", key: "branch", width: 18 },
-        { header: "Account", key: "account", width: 12 },
+        { header: "Available", key: "available", width: 10 },
+        { header: "Reserved", key: "reserved", width: 10 },
+        { header: "Sold", key: "sold", width: 10 },
+        { header: "Amount", key: "amount", width: 14 },
         { header: "Money In", key: "moneyIn", width: 14 },
         { header: "Money Out", key: "moneyOut", width: 14 },
-        { header: "Amount", key: "amount", width: 14 },
-        { header: "Qty", key: "quantity", width: 8 },
+        { header: "Payment Status", key: "paymentStatus", width: 16 },
+        { header: "Payment Method", key: "paymentWay", width: 20 },
+        { header: "Payment Ref.", key: "paymentReference", width: 20 },
         { header: "SKU", key: "sku", width: 16 },
         { header: "IMEI", key: "imeis", width: 24 },
-        { header: "Payment", key: "paymentMethod", width: 16 },
-        { header: "Payment Ref.", key: "paymentReference", width: 20 },
-        { header: "Status", key: "status", width: 12 },
         { header: "Created By", key: "createdByName", width: 20 },
     ];
     sheet.getRow(1).font = { bold: true };
+    const qtyOnly = (r) => ["StockMovement", "BranchTransfer"].includes(r.sourceType);
     for (const r of rows) {
+        const q = r.qtyChange || {};
         sheet.addRow({
-            date: r.transactionDate ? new Date(r.transactionDate).toISOString().replace("T", " ").slice(0, 16) : "",
             entryNumber: r.entryNumber,
-            type: String(r.transactionType || "").replace(/_/g, " "),
-            sourceModule: r.sourceModule,
+            date: r.transactionDate ? new Date(r.transactionDate).toISOString().replace("T", " ").slice(0, 16) : "",
+            type: r.typeLabel,
+            source: r.sourceLabel,
+            documentNumber: r.documentNumber,
             sourceNumber: r.sourceNumber,
             description: r.description,
+            productName: r.productName,
             partyName: r.partyName,
             branch: r.branchId?.name || "",
-            account: r.account,
+            available: q.available || null,
+            reserved: q.reserved || null,
+            sold: q.sold || null,
+            amount: qtyOnly(r) ? null : r.amount || null,
             moneyIn: r.cashIn || null,
             moneyOut: r.cashOut || null,
-            amount: r.amount,
-            quantity: r.quantity || null,
+            paymentStatus: String(r.paymentStatus || "").replace(/_/g, " "),
+            paymentWay: r.paymentWay,
+            paymentReference: r.paymentReference,
             sku: r.sku,
             imeis: (r.imeis || []).join(", "),
-            paymentMethod: [r.paymentMethod, r.paymentProvider].filter(Boolean).join(" / "),
-            paymentReference: r.paymentReference,
-            status: r.status,
             createdByName: r.createdByName,
         });
     }
