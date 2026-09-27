@@ -64,6 +64,11 @@ const productUnitBarcodeSchema = new mongoose.Schema(
                 ref: "SalesOrder",
                 default: null,
             },
+            onlineOrderId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "Order",
+                default: null,
+            },
             soldAt: { type: Date, default: null },
         },
     },

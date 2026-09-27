@@ -9,18 +9,171 @@ const Order = require('../model/order');
 const Product = require('../model/product');
 const ProductVariant = require('../model/productVariant');
 const Settings = require('../model/settings');
+const ItemTrack = require('../model/itemTrack');
+const ProductUnitBarcode = require('../model/productUnitBarcode');
+const Branch = require('../model/branch');
+const Employee = require('../model/employee');
 
 const mongoose = require('mongoose');
 const { protect } = require('../middleware/auth');
 const { resolveTenant, requireCompany } = require('../middleware/tenant');
 const { companyFilter, stampCompany } = require('../utils/tenantScope');
 const { assertDocumentCompany } = require('../services/companyService');
+const { isCompanyEmployee } = require('../utils/roleAccess');
+const unitBarcodeService = require('../services/productUnitBarcodeService');
 const { exportOnlineOrdersExcel } = require('../services/onlineOrderService');
 const {
   backfillOnlineOrdersForCompany,
 } = require('../services/marketplace/marketplaceOnlineOrderBridgeService');
 
 router.use(protect, resolveTenant, requireCompany);
+
+// ────────────────────────────────────────────────
+// Branch scope + fulfillment code helpers
+// ────────────────────────────────────────────────
+
+/**
+ * Employee / branch_manager → their assigned branch id (string).
+ * Owners, or staff without an assigned branch → null (no branch restriction).
+ */
+async function resolveStaffBranchId(req) {
+  if (!isCompanyEmployee(req.user?.role) || !req.user?._id) return null;
+  const employee = await Employee.findOne({
+    userId: req.user._id,
+    isDeleted: { $ne: true }
+  })
+    .select('branchId')
+    .lean();
+  return employee?.branchId ? String(employee.branchId) : null;
+}
+
+const normalizeCode = (value) =>
+  String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+
+function computeWarrantyExpiry(product, soldDate) {
+  const type = product?.warrantyType || 'No Warranty';
+  const period = Number(product?.warrantyPeriod) || 0;
+  if (type === 'Lifetime') return new Date('9999-12-31T00:00:00.000Z');
+  if (type === 'No Warranty' || period <= 0) return null;
+  const expiry = new Date(soldDate);
+  if (type === 'Days') expiry.setDate(expiry.getDate() + period);
+  else if (type === 'Months') expiry.setMonth(expiry.getMonth() + period);
+  else if (type === 'Years') expiry.setFullYear(expiry.getFullYear() + period);
+  else return null;
+  return expiry;
+}
+
+/**
+ * Classify every assigned code on the order against its line product:
+ * IMEI (ItemTrack) → per-unit barcode (ProductUnitBarcode) → shared
+ * product/variant barcode. Returns resolved rows or a list of problems.
+ */
+async function resolveOrderCodes(order, tenant, branchId) {
+  const lines = (order.items || []).map((item) => ({
+    item,
+    productId: String(item.productID || ''),
+    codes: [...new Set((item.imeis || []).map(normalizeCode).filter(Boolean))]
+  }));
+  const allCodes = lines.flatMap((l) => l.codes);
+  const result = { tracks: [], units: [], shared: [], errors: [] };
+  if (!allCodes.length) return result;
+
+  const [tracks, units, products, variants] = await Promise.all([
+    ItemTrack.find({ imei: { $in: allCodes }, ...tenant })
+      .select('imei productId variantId status currentBranchId')
+      .lean(),
+    ProductUnitBarcode.find({
+      barcode: { $in: allCodes },
+      status: { $ne: 'void' },
+      isDeleted: { $ne: true },
+      ...tenant
+    })
+      .select('barcode productId productVariantId status branchId')
+      .lean(),
+    Product.find({ barcode: { $in: allCodes }, ...tenant })
+      .select('_id barcode')
+      .lean(),
+    ProductVariant.find({
+      barcode: { $in: allCodes },
+      isDeleted: { $ne: true },
+      ...tenant
+    })
+      .select('_id productId barcode')
+      .lean()
+  ]);
+
+  const trackBy = new Map(tracks.map((t) => [normalizeCode(t.imei), t]));
+  const unitBy = new Map(units.map((u) => [normalizeCode(u.barcode), u]));
+  const productBy = new Map(products.map((p) => [normalizeCode(p.barcode), p]));
+  const variantBy = new Map(variants.map((v) => [normalizeCode(v.barcode), v]));
+
+  const seen = new Set();
+  for (const line of lines) {
+    const label = line.item.productName || 'item';
+    for (const code of line.codes) {
+      if (seen.has(code)) {
+        result.errors.push(`${code} is assigned more than once`);
+        continue;
+      }
+      seen.add(code);
+
+      const track = trackBy.get(code);
+      if (track) {
+        if (String(track.productId) !== line.productId) {
+          result.errors.push(`${code} belongs to a different product than "${label}"`);
+        } else if (track.status !== 'available') {
+          result.errors.push(`${code} is not available (${track.status})`);
+        } else if (
+          branchId &&
+          track.currentBranchId &&
+          String(track.currentBranchId) !== branchId
+        ) {
+          result.errors.push(`${code} is stocked in another branch`);
+        } else {
+          result.tracks.push(track);
+        }
+        continue;
+      }
+
+      const unit = unitBy.get(code);
+      if (unit) {
+        if (String(unit.productId) !== line.productId) {
+          result.errors.push(`${code} belongs to a different product than "${label}"`);
+        } else if (unit.status !== 'available') {
+          result.errors.push(`${code} is already ${unit.status}`);
+        } else if (branchId && unit.branchId && String(unit.branchId) !== branchId) {
+          result.errors.push(`${code} is stocked in another branch`);
+        } else {
+          result.units.push(unit);
+        }
+        continue;
+      }
+
+      const product = productBy.get(code);
+      const variant = variantBy.get(code);
+      const sharedProductId = product
+        ? String(product._id)
+        : variant
+          ? String(variant.productId)
+          : '';
+      if (sharedProductId) {
+        if (sharedProductId !== line.productId) {
+          result.errors.push(`${code} belongs to a different product than "${label}"`);
+        } else {
+          result.shared.push({
+            code,
+            productId: line.productId,
+            productVariantId: variant ? variant._id : null
+          });
+        }
+        continue;
+      }
+
+      result.errors.push(`${code} was not found in inventory`);
+    }
+  }
+  return result;
+}
 
 // ────────────────────────────────────────────────
 // Helper: Get or initialize company settings document
@@ -278,6 +431,12 @@ router.get('/', asyncHandler(async (req, res) => {
   const tenant = companyFilter(req.companyId);
   const filter = userId ? { userID: userId, ...tenant } : { ...tenant };
 
+  // Branch staff see their own branch's orders plus unassigned ones they can claim.
+  const staffBranchId = await resolveStaffBranchId(req);
+  if (staffBranchId) {
+    filter.$or = [{ branchId: staffBranchId }, { branchId: null }];
+  }
+
   // Catch marketplace checkouts completed before the Online Order bridge.
   try {
     await backfillOnlineOrdersForCompany(req.companyId, { limit: 200 });
@@ -313,6 +472,14 @@ router.get('/:id', asyncHandler(async (req, res) => {
     .lean();
 
   if (!order) return res.status(404).json({ success: false, message: 'Not found' });
+
+  const staffBranchId = await resolveStaffBranchId(req);
+  if (staffBranchId && order.branchId && String(order.branchId) !== staffBranchId) {
+    return res.status(403).json({
+      success: false,
+      message: 'This online order belongs to another branch.'
+    });
+  }
 
   for (const item of order.items) {
     if (item.productID && mongoose.isValidObjectId(item.productID)) {
@@ -378,16 +545,54 @@ router.post('/', asyncHandler(async (req, res) => {
 }));
 
 router.put('/:id', asyncHandler(async (req, res) => {
-  const { orderStatus, trackingUrl, items } = req.body;
+  const { orderStatus, trackingUrl, items, branchId } = req.body;
   if (!orderStatus) {
     return res.status(400).json({ success: false, message: 'orderStatus required' });
   }
 
-  const ItemTrack = require('../model/itemTrack');
   const tenant = companyFilter(req.companyId);
   const order = await Order.findOne({ _id: req.params.id, ...tenant });
   if (!order) {
     return res.status(404).json({ success: false, message: 'Order not found' });
+  }
+
+  const staffBranchId = await resolveStaffBranchId(req);
+  const currentBranchId = order.branchId ? String(order.branchId) : null;
+  if (staffBranchId && currentBranchId && currentBranchId !== staffBranchId) {
+    return res.status(403).json({
+      success: false,
+      message: 'This online order belongs to another branch.'
+    });
+  }
+
+  const requestedBranchId = String(branchId || '').trim();
+  let targetBranchId = currentBranchId;
+  if (requestedBranchId) {
+    if (!mongoose.isValidObjectId(requestedBranchId)) {
+      return res.status(400).json({ success: false, message: 'Invalid branch.' });
+    }
+    if (staffBranchId && requestedBranchId !== staffBranchId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only fulfill online orders for your own branch.'
+      });
+    }
+    const branch = await Branch.findOne({
+      _id: requestedBranchId,
+      isDeleted: { $ne: true },
+      ...tenant
+    })
+      .select('_id')
+      .lean();
+    if (!branch) {
+      return res.status(404).json({ success: false, message: 'Branch not found.' });
+    }
+    targetBranchId = requestedBranchId;
+  } else if (staffBranchId && !currentBranchId) {
+    targetBranchId = staffBranchId;
+  }
+  if (targetBranchId !== currentBranchId) {
+    order.branchId = targetBranchId;
   }
 
   const previousStatus = order.orderStatus;
@@ -403,59 +608,114 @@ router.put('/:id', asyncHandler(async (req, res) => {
           String(it.productID || '') === String(incoming.productID || '')
       );
       if (line && Array.isArray(incoming.imeis)) {
-        line.imeis = incoming.imeis.map((e) => String(e).trim()).filter(Boolean);
+        line.imeis = [
+          ...new Set(incoming.imeis.map(normalizeCode).filter(Boolean))
+        ];
       }
     }
     order.markModified('items');
   }
 
-  if (orderStatus === 'delivered' && previousStatus !== 'delivered') {
-    const allImeis = [];
+  const delivering = orderStatus === 'delivered' && previousStatus !== 'delivered';
+  if (delivering) {
     for (const item of order.items || []) {
-      const imeis = Array.isArray(item.imeis) ? item.imeis : [];
+      const assigned = Array.isArray(item.imeis) ? item.imeis.length : 0;
       const qty = Number(item.quantity) || 0;
-      if (imeis.length > 0 && imeis.length < qty) {
+      if (assigned > 0 && assigned < qty) {
         return res.status(400).json({
           success: false,
-          message: `Assign ${qty} IMEI(s) for "${item.productName}" before marking delivered.`
+          message: `Assign ${qty} barcode/IMEI code(s) for "${item.productName}" before marking delivered.`
         });
       }
-      allImeis.push(...imeis.map((i) => String(i).trim()).filter(Boolean));
+    }
+  }
+
+  // Codes are checked while the order is still open; delivered orders already consumed them.
+  const shouldCheckCodes =
+    previousStatus !== 'delivered' && orderStatus !== 'cancelled';
+  const resolved = shouldCheckCodes
+    ? await resolveOrderCodes(order, tenant, targetBranchId)
+    : null;
+  if (resolved && resolved.errors.length) {
+    const preview = resolved.errors.slice(0, 5).join('; ');
+    const more = resolved.errors.length > 5 ? ` (+${resolved.errors.length - 5} more)` : '';
+    return res.status(400).json({ success: false, message: `${preview}${more}` });
+  }
+
+  if (delivering && resolved) {
+    const soldDate = new Date();
+
+    if (resolved.tracks.length) {
+      const productIds = [...new Set(resolved.tracks.map((t) => String(t.productId)))];
+      const products = await Product.find({ _id: { $in: productIds }, ...tenant })
+        .select('warrantyType warrantyPeriod')
+        .lean();
+      const productById = new Map(products.map((p) => [String(p._id), p]));
+
+      for (const pid of productIds) {
+        const ids = resolved.tracks
+          .filter((t) => String(t.productId) === pid)
+          .map((t) => t._id);
+        const warrantyExpiry = computeWarrantyExpiry(productById.get(pid), soldDate);
+        const set = {
+          status: 'sold',
+          currentBranchId: null,
+          'saleInfo.orderId': order._id,
+          'saleInfo.customerPhone': order.shippingAddress?.phone || '',
+          'saleInfo.soldDate': soldDate
+        };
+        if (warrantyExpiry) set.warrantyExpiry = warrantyExpiry;
+        const update = await ItemTrack.updateMany(
+          { _id: { $in: ids }, status: 'available', ...tenant },
+          {
+            $set: set,
+            $push: {
+              history: {
+                status: 'sold',
+                branchId: targetBranchId || undefined,
+                updatedBy: req.user?._id,
+                date: soldDate,
+                notes: `Delivered via online order ${order._id}`
+              }
+            }
+          }
+        );
+        if (update.modifiedCount !== ids.length) {
+          return res.status(409).json({
+            success: false,
+            message: 'Some IMEIs changed status while delivering. Refresh the order and try again.'
+          });
+        }
+      }
     }
 
-    if (allImeis.length) {
-      const unique = [...new Set(allImeis)];
-      const available = await ItemTrack.find({
-        imei: { $in: unique },
-        status: 'available',
-        ...tenant
-      });
-      if (available.length !== unique.length) {
-        const found = available.map((t) => t.imei);
-        const missing = unique.filter((i) => !found.includes(i));
-        return res.status(400).json({
-          success: false,
-          message: `These IMEIs are not available: ${missing.join(', ')}`
-        });
-      }
-
-      await ItemTrack.updateMany(
-        { imei: { $in: unique }, ...tenant },
+    if (resolved.units.length) {
+      const ids = resolved.units.map((u) => u._id);
+      const update = await ProductUnitBarcode.updateMany(
+        { _id: { $in: ids }, status: 'available', ...tenant },
         {
           $set: {
             status: 'sold',
-            'saleInfo.orderId': order._id,
-            'saleInfo.soldDate': new Date()
-          },
-          $push: {
-            history: {
-              status: 'sold',
-              date: new Date(),
-              notes: `Delivered via online order ${order._id}`
-            }
+            'soldInfo.onlineOrderId': order._id,
+            'soldInfo.soldAt': soldDate
           }
         }
       );
+      if (update.modifiedCount !== ids.length) {
+        return res.status(409).json({
+          success: false,
+          message: 'Some unit barcodes were sold elsewhere. Refresh the order and try again.'
+        });
+      }
+    }
+
+    for (const row of resolved.shared) {
+      await unitBarcodeService.markSoldFifo({
+        companyId: req.companyId,
+        productId: row.productId,
+        productVariantId: row.productVariantId,
+        quantity: 1
+      });
     }
   }
 
