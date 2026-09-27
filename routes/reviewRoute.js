@@ -41,7 +41,8 @@ router.post('/:productId', asyncHandler(async (req, res) => {
         return res.status(400).json({ success: false, message: "You already reviewed this product." });
     }
 
-    const newReview = new Review({ productId, userId, rating, comment });
+    const source = ['app', 'website'].includes(req.body.source) ? req.body.source : undefined;
+    const newReview = new Review({ productId, userId, rating, comment, source });
     await newReview.save();
 
     res.json({ success: true, message: "Review added successfully.", data: newReview });

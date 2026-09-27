@@ -20,6 +20,7 @@ const { resolveTenant, requireCompany } = require('../middleware/tenant');
 const { companyFilter, stampCompany } = require('../utils/tenantScope');
 const { assertDocumentCompany } = require('../services/companyService');
 const { isCompanyEmployee } = require('../utils/roleAccess');
+const { resolveStaffBranchScope } = require('../utils/staffBranchScope');
 const unitBarcodeService = require('../services/productUnitBarcodeService');
 const CompanyOrder = require('../model/marketplace/companyOrder');
 const MasterOrder = require('../model/marketplace/masterOrder');
@@ -50,38 +51,6 @@ router.use(protect, resolveTenant, requireCompany);
 // ────────────────────────────────────────────────
 // Branch scope + fulfillment code helpers
 // ────────────────────────────────────────────────
-
-/**
- * Employee / branch_manager → { defaultBranchId, branchIds } where branchIds is
- * the assigned branch plus branches they manage (Branch.managerIds / managerId).
- * Owners, or staff with no branch at all → null (no branch restriction).
- */
-async function resolveStaffBranchScope(req) {
-  if (!isCompanyEmployee(req.user?.role) || !req.user?._id) return null;
-  const employee = await Employee.findOne({
-    userId: req.user._id,
-    isDeleted: { $ne: true }
-  })
-    .select('_id branchId')
-    .lean();
-
-  const managerMatch = [{ managerId: req.user._id }];
-  if (employee?._id) managerMatch.push({ managerIds: employee._id });
-  const managed = await Branch.find({
-    ...companyFilter(req.companyId),
-    isDeleted: { $ne: true },
-    $or: managerMatch
-  })
-    .select('_id')
-    .lean();
-
-  const defaultBranchId = employee?.branchId ? String(employee.branchId) : null;
-  const branchIds = [
-    ...new Set([defaultBranchId, ...managed.map((b) => String(b._id))].filter(Boolean))
-  ];
-  if (!branchIds.length) return null;
-  return { defaultBranchId: defaultBranchId || branchIds[0], branchIds };
-}
 
 const scopeAllows = (scope, branchId) =>
   !scope || scope.branchIds.includes(String(branchId));

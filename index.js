@@ -207,6 +207,7 @@ app.use('/api/company/marketplace-orders', require('./routes/companyMarketplaceO
 app.use('/api/company/marketplace-shipments', require('./routes/companyMarketplaceShipment'));
 app.use('/api/company/marketplace-couriers', require('./routes/companyMarketplaceCourier'));
 app.use('/api/company/marketplace-refunds', require('./routes/companyMarketplaceRefund'));
+app.use('/api/company/reviews', require('./routes/companyReview'));
 // Finance Phase 2 — supplier payable
 app.use('/api/supplier-payables', require('./routes/supplierPayable'));
 // Finance Phase 3 — supplier payments

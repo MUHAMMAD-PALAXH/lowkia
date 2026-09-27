@@ -19,7 +19,10 @@ const reviewSchema = new Schema({
     likes: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     // The replies array must contain the sub-schema or objects with the correct ref
     replies: [replySchema], // <-- Ensure this is correctly defined and referenced
+    source: { type: String, enum: ['app', 'website'] },
 }, { timestamps: true });
+
+reviewSchema.index({ productId: 1, createdAt: -1 });
 
 reviewSchema.plugin(tenantPlugin);
 
