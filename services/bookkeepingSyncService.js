@@ -470,6 +470,30 @@ const syncRepairTicket = async (ticket, opts = {}) => {
         createdBy: ticket.updatedBy?._id || ticket.updatedBy || ticket.createdBy?._id || ticket.createdBy || null,
     });
 
+    // Intake record only: revenue and customer due are booked by repair_charge on completion.
+    if (!ticket.isDeleted) {
+        const intakeBy = ticket.createdBy?._id || ticket.createdBy || null;
+        await postEntry(
+            {
+                ...(await common()),
+                companyId: ticket.companyId,
+                sourceId: ticket._id,
+                transactionType: "repair_order",
+                idempotencyKey: `rep-order:${ticket._id}`,
+                transactionDate: ticket.receivedDate || ticket.createdAt || new Date(),
+                description: `Repair ticket ${ticket.ticketNumber || ""} received`.trim(),
+                amount: Math.max(round2(ticket.totalAmount), 0),
+                account: "RECEIVABLE",
+                direction: "none",
+                effects: [],
+                createdBy: intakeBy,
+                createdByName: await adminName(intakeBy, session),
+                metadata: { informational: true, serviceType: ticket.serviceType || "" },
+            },
+            { session, dryRun }
+        );
+    }
+
     const chargeTarget =
         REPAIR_DONE.has(ticket.status) && !ticket.isDeleted
             ? Number(ticket.totalAmount) || 0

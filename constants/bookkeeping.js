@@ -45,6 +45,7 @@ const BK_TRANSACTION_TYPES = Object.freeze([
     "online_sale_reversal",
     "online_payment",
     "online_refund",
+    "repair_order",
     "repair_charge",
     "repair_charge_reversal",
     "repair_payment",

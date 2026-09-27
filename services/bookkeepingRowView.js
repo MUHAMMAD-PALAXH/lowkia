@@ -107,6 +107,7 @@ const REPAIR_METHOD_LABEL = { CashOnDelivery: "Cash", Bank: "Bank" };
 
 const TYPE_LABEL = {
     ordered: "Ordered",
+    completed: "Completed",
     cancelled: "Cancelled",
     reserved: "Reserved",
     released: "Released",
@@ -162,8 +163,10 @@ const kindOf = (row) => {
     switch (t) {
         case "sale":
         case "online_sale":
-        case "repair_charge":
+        case "repair_order":
             return "ordered";
+        case "repair_charge":
+            return "completed";
         case "sale_reversal":
         case "online_sale_reversal":
         case "repair_charge_reversal":
